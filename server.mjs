@@ -719,6 +719,12 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (message.type === "ping") {
+      currentPlayer.lastSeen = Date.now();
+      send(currentPlayer.ws, { type: "pong", at: Number(message.at) || 0, serverAt: Date.now() });
+      return;
+    }
+
     if (message.type === "pong") {
       currentPlayer.lastSeen = Date.now();
     }

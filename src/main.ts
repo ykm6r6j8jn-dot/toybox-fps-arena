@@ -367,6 +367,9 @@ const donPunchPositionScratch = new THREE.Vector3();
 const maxPixelRatio = () => Math.min(window.devicePixelRatio, window.innerWidth < 860 ? 1.08 : 1.45);
 let activePixelRatio = maxPixelRatio();
 let frameAverageMs = 16.7;
+let measuredFps: number | null = null;
+let fpsFrameCount = 0;
+let fpsWindowStartedAt = 0;
 let lastQualityCheckAt = 0;
 let lastClockText = "";
 
@@ -1373,6 +1376,12 @@ function handleMessage(event: MessageEvent<string>) {
     startCelebration(winner);
     showResults(winner);
   }
+  if (message.type === "pong") {
+    const sentAt = Number(message.at);
+    if (Number.isFinite(sentAt) && sentAt > 0) {
+      self.latency = Math.max(0, performance.now() - sentAt);
+    }
+  }
   if (message.type === "error") showToast(message.message);
 }
 
@@ -1550,7 +1559,7 @@ function playGunSound(gun: Gun) {
 function ping() {
   if (!self.joined) return;
   self.pingStarted = performance.now();
-  send({ type: "pong", at: self.pingStarted });
+  send({ type: "ping", at: self.pingStarted });
   setTimeout(ping, 2500);
 }
 
@@ -2327,13 +2336,16 @@ function updateHud(feed: FeedItem[]) {
   donPunchButton.classList.toggle("super", charge >= 8);
   if (ready && !lastDonPunchReady) showToast(charge >= 8 ? "ドンパチ発動可能" : "アシナガバチ発動可能");
   lastDonPunchReady = ready;
-  const latency = self.latency ? Math.round(self.latency) : 24;
-  const fps = Math.round(1000 / Math.max(8, frameAverageMs));
-  latencyEl.textContent = `${latency}ms ${fps}fps`;
+  const latency = self.latency > 0 ? Math.round(self.latency) : null;
+  const fps = measuredFps;
+  latencyEl.textContent = `${latency === null ? "--" : latency}ms ${fps === null ? "--" : fps}fps`;
   const latencyBox = latencyEl.parentElement;
-  latencyBox?.classList.toggle("bad", latency > 140 || fps < 35);
-  latencyBox?.classList.toggle("ok", (latency > 80 || fps < 50) && !(latency > 140 || fps < 35));
-  latencyBox?.classList.toggle("good", latency <= 80 && fps >= 50);
+  const badConnection = (latency !== null && latency > 140) || (fps !== null && fps < 35);
+  const okConnection = !badConnection && ((latency !== null && latency > 80) || (fps !== null && fps < 50));
+  const goodConnection = latency !== null && fps !== null && latency <= 80 && fps >= 50;
+  latencyBox?.classList.toggle("bad", badConnection);
+  latencyBox?.classList.toggle("ok", okConnection);
+  latencyBox?.classList.toggle("good", goodConnection);
   playerCountEl.textContent = `(${players.size}/8)`;
   updateSlots();
   updateScoreboard();
@@ -2497,14 +2509,33 @@ function updateAdaptiveQuality(delta: number, now: number) {
   }
 }
 
+function updateMeasuredFps(now: number) {
+  if (!fpsWindowStartedAt) {
+    fpsWindowStartedAt = now;
+    fpsFrameCount = 0;
+    measuredFps = null;
+  }
+  fpsFrameCount += 1;
+  const elapsed = now - fpsWindowStartedAt;
+  if (elapsed >= 1000) {
+    measuredFps = Math.max(1, Math.round((fpsFrameCount * 1000) / elapsed));
+    fpsWindowStartedAt = now;
+    fpsFrameCount = 0;
+  }
+}
+
 function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
   const now = performance.now();
   if (document.hidden) {
+    fpsWindowStartedAt = 0;
+    fpsFrameCount = 0;
+    measuredFps = null;
     syncState(now);
     requestAnimationFrame(animate);
     return;
   }
+  updateMeasuredFps(now);
   updateAdaptiveQuality(delta, now);
   roundSeconds = Math.max(0, roundSeconds - delta);
   const minutes = Math.floor(roundSeconds / 60).toString().padStart(2, "0");
