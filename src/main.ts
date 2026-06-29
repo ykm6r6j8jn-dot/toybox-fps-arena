@@ -303,6 +303,8 @@ let winnerName = "";
 let celebrationSeenWinner = "";
 let weaponView: THREE.Group | null = null;
 let scoped = false;
+let weaponKick = 0;
+let weaponSwayClock = 0;
 
 const palette = {
   concrete: 0xe9edf0,
@@ -428,6 +430,9 @@ const materials = {
   purple: makeMaterial(palette.purple),
   cyan: makeMaterial(palette.cyan),
   dark: makeMaterial(palette.dark, 0.65),
+  metal: makeMaterial(0x5e6971, 0.42),
+  rubber: makeMaterial(0x12181d, 0.78),
+  light: new THREE.MeshBasicMaterial({ color: 0xfff0a8 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x8bd7ff, roughness: 0.2, metalness: 0.02, transparent: true, opacity: 0.34 })
 };
 
@@ -610,7 +615,7 @@ function addRealismDetails() {
   scene.add(roadLines);
 
   const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x243847 });
-  const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.52, 0.34), windowMaterial, 96);
+  const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.52, 0.34), windowMaterial, 176);
   let windowIndex = 0;
   const addWindowFace = (
     x: number,
@@ -648,6 +653,12 @@ function addRealismDetails() {
   addWindowFace(56, 2.0, 56.54, 3, 5, 1.0, 1.1, "north");
   addWindowFace(-34, 1.7, 36.04, 7, 3, 1.35, 1.0, "north");
   addWindowFace(54, 1.7, -48.94, 7, 3, 1.35, 1.0, "south");
+  addWindowFace(-36, 1.9, -31.45, 6, 4, 1.16, 1.02, "south");
+  addWindowFace(35, 1.9, 31.45, 5, 4, 1.18, 1.04, "north");
+  addWindowFace(18, 1.7, -52.94, 7, 3, 1.22, 0.98, "south");
+  addWindowFace(-16, 2.0, 56.55, 5, 4, 1.18, 1.04, "north");
+  addWindowFace(47.52, 2.0, -44, 3, 5, 0.92, 1.02, "west");
+  addWindowFace(-49.52, 2.0, 0, 3, 7, 0.92, 1.02, "east");
   windows.instanceMatrix.needsUpdate = true;
   scene.add(windows);
 
@@ -662,6 +673,66 @@ function addRealismDetails() {
   }
   vents.instanceMatrix.needsUpdate = true;
   scene.add(vents);
+
+  const roofProps = new THREE.InstancedMesh(new THREE.BoxGeometry(1.05, 0.44, 0.78), materials.metal, 36);
+  for (let i = 0; i < roofProps.count; i += 1) {
+    const roof = [
+      [-12.8, 12.28, 23],
+      [8.2, 13.88, -24],
+      [25.2, 10.73, 0],
+      [36, 12.93, -33],
+      [-47, 15.02, 0],
+      [56, 10.62, 54],
+      [18, 5.35, -55],
+      [-16, 6.45, 54],
+      [54, 4.84, -52]
+    ][i % 9];
+    const offset = (i % 4) - 1.5;
+    detail.position.set(roof[0] + offset * 1.08, roof[1], roof[2] + Math.sin(i * 1.7) * 1.65);
+    detail.rotation.set(0, i * 0.83, 0);
+    detail.updateMatrix();
+    roofProps.setMatrixAt(i, detail.matrix);
+  }
+  roofProps.instanceMatrix.needsUpdate = true;
+  scene.add(roofProps);
+
+  const railMaterial = new THREE.MeshBasicMaterial({ color: 0xdfe7ec });
+  const rails = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.08, 0.08), railMaterial, 56);
+  const railCenters: Array<[number, number, number, number]> = [
+    [-12.8, 12.42, 25.65, 0],
+    [-12.8, 12.42, 20.35, 0],
+    [8.2, 14.02, -21.35, 0],
+    [8.2, 14.02, -26.65, 0],
+    [36, 13.08, -29.8, 0],
+    [36, 13.08, -36.2, 0],
+    [-47, 15.18, 2.65, 0],
+    [-47, 15.18, -2.65, 0]
+  ];
+  let railIndex = 0;
+  for (const [x, y, z, yaw] of railCenters) {
+    for (let i = -3; i <= 3 && railIndex < rails.count; i += 1) {
+      detail.position.set(x + i * 1.15, y, z);
+      detail.rotation.set(0, yaw, 0);
+      detail.updateMatrix();
+      rails.setMatrixAt(railIndex, detail.matrix);
+      railIndex += 1;
+    }
+  }
+  rails.instanceMatrix.needsUpdate = true;
+  scene.add(rails);
+
+  const lightMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0a8 });
+  const laneLights = new THREE.InstancedMesh(new THREE.BoxGeometry(0.28, 0.08, 0.28), lightMaterial, 48);
+  for (let i = 0; i < laneLights.count; i += 1) {
+    const along = -54 + (i % 24) * 4.7;
+    const side = i < 24 ? -1 : 1;
+    detail.position.set(along, 0.035, side * 35);
+    detail.rotation.set(0, i * 0.4, 0);
+    detail.updateMatrix();
+    laneLights.setMatrixAt(i, detail.matrix);
+  }
+  laneLights.instanceMatrix.needsUpdate = true;
+  scene.add(laneLights);
 }
 
 function addArena() {
@@ -731,6 +802,14 @@ function addArena() {
   addBox("north mini tower", [18, 2.6, -55], [10, 5.2, 4], materials.orange);
   addBox("right long cover", [44, 1.2, 18], [4, 2.4, 12], materials.cyan);
   addBox("purple roof deck", [36, 12.55, -33], [5.8, 0.35, 6.2], materials.purple, false);
+  addBox("metro station", [-48, 2.05, -24], [12, 4.1, 4.8], materials.wall);
+  addBox("metro roof deck", [-48, 4.28, -24], [12.4, 0.35, 5.2], materials.cyan, false);
+  addBox("corner hotel", [51, 6.4, 24], [5.8, 12.8, 5.8], materials.wall);
+  addBox("corner hotel roof", [51, 12.98, 24], [6.4, 0.35, 6.4], materials.orange, false);
+  addBox("broadcast mast base", [0, 4.7, 48], [4.4, 9.4, 4.4], materials.purple);
+  addBox("broadcast mast roof", [0, 9.6, 48], [5.2, 0.35, 5.2], materials.yellow, false);
+  addBox("underpass cover a", [-44, 0.75, -43], [10, 1.5, 2.4], materials.green);
+  addBox("underpass cover b", [43, 0.75, 43], [10, 1.5, 2.4], materials.blue);
   addRealismDetails();
   addWalkSurface([36, 12.55, -33], [5.8, 0.35, 6.2]);
   addWalkSurface([-12.8, 11.9, 23], [4.2, 0.35, 5.2]);
@@ -746,6 +825,9 @@ function addArena() {
   addWalkSurface([47, 4.5, -44], [7, 9, 5]);
   addWalkSurface([-16, 3.1, 54], [8, 6.2, 5]);
   addWalkSurface([18, 2.6, -55], [10, 5.2, 4]);
+  addWalkSurface([-48, 4.28, -24], [12.4, 0.35, 5.2]);
+  addWalkSurface([51, 12.98, 24], [6.4, 0.35, 6.4]);
+  addWalkSurface([0, 9.6, 48], [5.2, 0.35, 5.2]);
 
   addStairs("stairs center", [-1.8, 0.15, -18], 6, 0.55, 1.3, 0);
   addStairs("stairs west", [-20, 0.15, 10], 5, 0.5, 1.2, Math.PI / 2);
@@ -757,6 +839,9 @@ function addArena() {
   addStairs("outer purple stairs", [36, 0.15, -41], 24, 0.48, 0.9, 0);
   addStairs("west mega stairs", [-51, 0.15, 0], 30, 0.48, 0.9, Math.PI / 2);
   addStairs("east outer stairs", [42.5, 0.15, -44], 18, 0.47, 0.92, -Math.PI / 2);
+  addStairs("metro stairs", [-52.5, 0.15, -24], 9, 0.47, 0.9, Math.PI / 2);
+  addStairs("hotel stairs", [55, 0.15, 24], 27, 0.48, 0.9, Math.PI / 2);
+  addStairs("broadcast stairs", [-4.2, 0.15, 48], 20, 0.47, 0.9, -Math.PI / 2);
   addTrampoline("trampoline center", 0, 8, 2.4, 14.8);
   addTrampoline("trampoline west", -18, -14, 2.2, 13.6);
   addTrampoline("trampoline east", 20, 12, 2.2, 13.6);
@@ -774,6 +859,12 @@ function addArena() {
     addBox(`paint-${i}`, [Math.sin(i * 2.7) * 26, 0.01, Math.cos(i * 1.8) * 26], [1.8, 0.04, 0.4], color, false)
       .rotation.y = i * 0.72;
   }
+
+  addSign("METRO", [-48, 3.35, -21.55], 0, "#1598f0");
+  addSign("HOTEL", [47.95, 8.3, 24], -Math.PI / 2, "#ff8a2a");
+  addSign("BROADCAST", [0, 7.0, 45.75], 0, "#9a62ff");
+  addSign("ROOF ROUTE", [15, 4.8, -17.72], Math.PI, "#93e43c");
+  addSign("CENTER", [0, 2.35, -57.45], Math.PI, "#111827");
 }
 
 function addStairs(name: string, origin: [number, number, number], count: number, rise: number, run: number, yaw: number) {
@@ -792,6 +883,33 @@ function addStairs(name: string, origin: [number, number, number], count: number
     const step = addBox(`${name}-${i}`, [center.x, center.y, center.z], [3.2, rise, run], i % 2 ? materials.wall : materials.green, false);
     step.rotation.y = yaw;
   }
+}
+
+function makeSignMaterial(label: string, background: string, foreground = "#f7fbff") {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 256;
+  textureCanvas.height = 96;
+  const context = textureCanvas.getContext("2d")!;
+  context.fillStyle = background;
+  context.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
+  context.strokeStyle = "rgba(255,255,255,0.42)";
+  context.lineWidth = 8;
+  context.strokeRect(6, 6, textureCanvas.width - 12, textureCanvas.height - 12);
+  context.fillStyle = foreground;
+  context.font = "900 34px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(label, textureCanvas.width / 2, textureCanvas.height / 2);
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshBasicMaterial({ map: texture });
+}
+
+function addSign(label: string, position: [number, number, number], yaw: number, background: string) {
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.18), makeSignMaterial(label, background));
+  sign.position.set(position[0], position[1], position[2]);
+  sign.rotation.y = yaw;
+  scene.add(sign);
 }
 
 function addSky() {
@@ -815,34 +933,51 @@ function addWeapon() {
   if (weaponView) camera.remove(weaponView);
   const gun = currentGun();
   const weapon = new THREE.Group();
-  const receiverLength = gun.kind === "shotgun" ? 1.24 : gun.kind === "smg" ? 0.78 : gun.kind === "marksman" ? 1.32 : 1.1;
-  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, receiverLength), materials.dark);
-  receiver.position.set(0.42, -0.33, -0.82);
-  const barrelLength = gun.kind === "marksman" ? 1.34 : gun.kind === "shotgun" ? 1.05 : gun.kind === "smg" ? 0.62 : 0.95;
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, gun.kind === "shotgun" ? 0.075 : 0.055, barrelLength, 12), materials.dark);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0.42, -0.29, -1.08 - barrelLength / 2);
-  const handguard = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.17, 0.58), materials.dark);
-  handguard.position.set(0.42, -0.3, -1.22);
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(gun.kind === "smg" ? 0.18 : 0.26, 0.2, gun.kind === "smg" ? 0.3 : 0.52), materials.dark);
-  stock.position.set(0.45, -0.34, -0.18);
-  stock.rotation.x = -0.16;
-  const magazine = new THREE.Mesh(new THREE.BoxGeometry(0.18, gun.kind === "smg" ? 0.48 : gun.kind === "shotgun" ? 0.16 : 0.34, 0.24), materials.dark);
-  magazine.position.set(0.42, -0.55, -0.72);
-  magazine.rotation.x = 0.18;
-  const sightBase = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.32), materials.dark);
-  sightBase.position.set(0.42, -0.16, -1.02);
-  const sightRing = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.014, 8, 16), materials.yellow);
-  sightRing.rotation.y = Math.PI / 2;
-  sightRing.position.set(0.42, -0.08, -1.1);
-  const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.18, 12), materials.dark);
-  muzzle.rotation.x = Math.PI / 2;
-  muzzle.position.set(0.42, -0.29, -2.04);
-  const accent = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.22), materials.yellow);
-  accent.position.set(0.27, -0.21, -0.8);
-  const labelPlate = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.16), makeMaterial(gun.tracerColor, 0.45));
-  labelPlate.position.set(0.24, -0.19, -0.55);
-  weapon.add(receiver, barrel, handguard, stock, magazine, sightBase, sightRing, muzzle, accent, labelPlate);
+  weapon.name = "weaponView";
+  const receiverLength = gun.kind === "shotgun" ? 1.34 : gun.kind === "smg" ? 0.82 : gun.kind === "marksman" ? 1.42 : 1.12;
+  const barrelLength = gun.kind === "marksman" ? 1.46 : gun.kind === "shotgun" ? 1.08 : gun.kind === "smg" ? 0.66 : 0.96;
+  const addPart = (mesh: THREE.Mesh, position: [number, number, number], rotation: [number, number, number] = [0, 0, 0]) => {
+    mesh.position.set(position[0], position[1], position[2]);
+    mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
+    weapon.add(mesh);
+    return mesh;
+  };
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.24, receiverLength), materials.rubber), [0.42, -0.33, -0.8]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.64), materials.metal), [0.42, -0.18, -0.86]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.18, gun.kind === "smg" ? 0.44 : 0.7), materials.metal), [0.42, -0.3, -1.2]);
+  addPart(
+    new THREE.Mesh(new THREE.CylinderGeometry(gun.kind === "shotgun" ? 0.088 : 0.048, gun.kind === "shotgun" ? 0.088 : 0.058, barrelLength, 14), materials.dark),
+    [0.42, -0.29, -1.06 - barrelLength / 2],
+    [Math.PI / 2, 0, 0]
+  );
+  addPart(
+    new THREE.Mesh(new THREE.CylinderGeometry(gun.kind === "shotgun" ? 0.12 : 0.076, gun.kind === "shotgun" ? 0.12 : 0.076, 0.2, 14), materials.metal),
+    [0.42, -0.29, -1.08 - barrelLength],
+    [Math.PI / 2, 0, 0]
+  );
+  const stockLength = gun.kind === "smg" ? 0.28 : gun.kind === "shotgun" ? 0.62 : 0.54;
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, stockLength), materials.rubber), [0.45, -0.34, -0.14], [-0.16, 0, 0]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.12), materials.rubber), [0.45, -0.42, 0.18], [-0.18, 0, 0]);
+  const magHeight = gun.kind === "smg" ? 0.54 : gun.kind === "shotgun" ? 0.18 : gun.kind === "marksman" ? 0.28 : 0.38;
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.19, magHeight, 0.26), materials.metal), [0.42, -0.54, -0.68], [0.22, 0, 0]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.34, 0.14), materials.rubber), [0.42, -0.54, -0.38], [-0.22, 0, 0]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.72), materials.metal), [0.25, -0.21, -0.95]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.72), materials.metal), [0.59, -0.21, -0.95]);
+  if (gun.kind === "marksman") {
+    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.72, 16), materials.rubber), [0.42, -0.08, -0.92], [0, 0, Math.PI / 2]);
+    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), materials.metal), [0.78, -0.08, -0.92], [0, 0, Math.PI / 2]);
+    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), materials.metal), [0.06, -0.08, -0.92], [0, 0, Math.PI / 2]);
+  } else {
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.06), materials.metal), [0.42, -0.08, -1.28]);
+    addPart(new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.012, 8, 16), materials.yellow), [0.42, -0.08, -1.1], [0, Math.PI / 2, 0]);
+  }
+  if (gun.kind === "shotgun") {
+    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.96, 12), materials.rubber), [0.42, -0.43, -1.18], [Math.PI / 2, 0, 0]);
+  } else if (gun.kind !== "smg") {
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.34, 0.16), materials.rubber), [0.42, -0.55, -1.08], [-0.28, 0, 0]);
+  }
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.16), makeMaterial(gun.tracerColor, 0.45)), [0.24, -0.19, -0.55]);
+  weapon.scale.setScalar(0.54);
   camera.add(weapon);
   weaponView = weapon;
   scene.add(camera);
@@ -858,7 +993,13 @@ function createPlayerMesh(player: PlayerState) {
   const marker = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.32, 3), makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757)));
   marker.position.y = 2.25;
   marker.rotation.x = Math.PI;
-  const weapon = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.8), materials.dark);
+  const weapon = new THREE.Group();
+  const weaponBody = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.11, 0.58), materials.dark);
+  const weaponBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.5, 8), materials.metal);
+  weaponBody.position.set(0, 0, -0.1);
+  weaponBarrel.rotation.x = Math.PI / 2;
+  weaponBarrel.position.set(0, 0.01, -0.55);
+  weapon.add(weaponBody, weaponBarrel);
   weapon.position.set(0.36, 1.08, -0.42);
   const shield = new THREE.Mesh(
     new THREE.BoxGeometry(1.35, 1.85, 1.35),
@@ -1776,6 +1917,7 @@ function shoot() {
   }
   self.lastShot = now;
   self.ammo -= 1;
+  weaponKick = Math.min(1, weaponKick + (gun.kind === "shotgun" ? 0.42 : gun.kind === "marksman" ? 0.32 : 0.22));
   flashMuzzle();
   for (let i = 0; i < gun.pelletCount; i += 1) {
     const direction = getLookDirection();
@@ -1829,6 +1971,23 @@ function switchGun(index: number) {
   reloadTimer = 0;
   addWeapon();
   showToast(`${currentGun().name} に変更`);
+}
+
+function updateWeaponMotion(delta: number) {
+  if (!weaponView) return;
+  weaponSwayClock += delta * (keys.size > 0 ? 8 : 3.2);
+  weaponKick = Math.max(0, weaponKick - delta * 5.8);
+  const walkSway = keys.size > 0 ? 1 : 0.32;
+  weaponView.position.set(
+    0.22 + Math.sin(weaponSwayClock) * 0.012 * walkSway,
+    -0.18 + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.01 * walkSway - weaponKick * 0.035,
+    -0.3 + weaponKick * 0.16
+  );
+  weaponView.rotation.set(
+    -weaponKick * 0.22 + Math.sin(weaponSwayClock * 0.8) * 0.006 * walkSway,
+    Math.sin(weaponSwayClock * 0.55) * 0.006 * walkSway,
+    Math.sin(weaponSwayClock) * 0.012 * walkSway
+  );
 }
 
 function getLookDirection() {
@@ -2550,6 +2709,7 @@ function animate() {
   if (self.joined && (desktopFiring || mobileFiring)) shoot();
   updateKillcam();
   updateCamera();
+  updateWeaponMotion(delta);
   updateRemotePlayers();
   updateTracers(delta);
   updateDonPunches(delta);
