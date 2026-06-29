@@ -38,6 +38,12 @@ type PlayerState = {
   score: number;
   kills: number;
   deaths: number;
+  damageDealt?: number;
+  damageTaken?: number;
+  hits?: number;
+  healsUsed?: number;
+  specialsUsed?: number;
+  barrierPickups?: number;
   lives?: number;
   eliminated?: boolean;
   creative?: boolean;
@@ -51,6 +57,7 @@ type PlayerState = {
   pitch: number;
   lastSeen: number;
   isBot?: boolean;
+  weapon?: string;
 };
 
 type FeedItem = {
@@ -177,6 +184,12 @@ const mobileReload = $("#mobileReload") as HTMLButtonElement;
 const mobileScope = $("#mobileScope") as HTMLButtonElement;
 const mobileSkill = $("#mobileSkill") as HTMLButtonElement;
 const hitMarker = $("#hitMarker");
+const killcamCard = $("#killcamCard");
+const killcamTitle = $("#killcamTitle");
+const killcamDetail = $("#killcamDetail");
+const spectatorCard = $("#spectatorCard");
+const spectatorLabel = $("#spectatorLabel");
+const spectatorNext = $("#spectatorNext") as HTMLButtonElement;
 const healthEl = $("#health");
 const healthBar = $("#healthBar");
 const ammoEl = $("#ammo");
@@ -191,6 +204,13 @@ const feedEl = $("#feed");
 const chatMessagesEl = $("#chatMessages");
 const chatForm = $("#chatForm") as HTMLFormElement;
 const chatInput = $("#chatInput") as HTMLInputElement;
+const mobileSensitivity = $("#mobileSensitivity") as HTMLInputElement;
+const mobileFireSize = $("#mobileFireSize") as HTMLInputElement;
+const mobileJumpOffset = $("#mobileJumpOffset") as HTMLInputElement;
+const resultPanel = $("#resultPanel");
+const resultTitle = $("#resultTitle");
+const closeResult = $("#closeResult") as HTMLButtonElement;
+const resultRows = $("#resultRows");
 const toast = $("#toast");
 const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
@@ -336,6 +356,12 @@ let mobileAimPointer: number | null = null;
 let mobileAimLastX = 0;
 let mobileAimLastY = 0;
 let mobileStickPointer: number | null = null;
+let mobileAimSensitivityValue = Number(localStorage.getItem("toybox-mobile-sensitivity") || "1");
+let mobileFireSizeValue = Number(localStorage.getItem("toybox-mobile-fire-size") || "88");
+let mobileJumpOffsetValue = Number(localStorage.getItem("toybox-mobile-jump-offset") || "128");
+let killcamUntil = 0;
+let spectatorTargetId = "";
+let resultWinnerSeen = "";
 const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
 const maxPixelRatio = () => Math.min(window.devicePixelRatio, window.innerWidth < 860 ? 1.08 : 1.45);
@@ -1056,6 +1082,25 @@ mobileFullscreen.addEventListener("pointerdown", (event) => {
 document.addEventListener("fullscreenchange", updateFullscreenButton);
 document.addEventListener("webkitfullscreenchange", updateFullscreenButton);
 
+function applyMobileTuning() {
+  mobileAimSensitivityValue = THREE.MathUtils.clamp(Number(mobileSensitivity.value) || 1, 0.65, 1.65);
+  mobileFireSizeValue = THREE.MathUtils.clamp(Number(mobileFireSize.value) || 88, 72, 112);
+  mobileJumpOffsetValue = THREE.MathUtils.clamp(Number(mobileJumpOffset.value) || 128, 96, 176);
+  localStorage.setItem("toybox-mobile-sensitivity", String(mobileAimSensitivityValue));
+  localStorage.setItem("toybox-mobile-fire-size", String(mobileFireSizeValue));
+  localStorage.setItem("toybox-mobile-jump-offset", String(mobileJumpOffsetValue));
+  document.documentElement.style.setProperty("--mobile-fire-size", `${mobileFireSizeValue}px`);
+  document.documentElement.style.setProperty("--mobile-jump-right", `${mobileJumpOffsetValue}px`);
+}
+
+mobileSensitivity.value = String(mobileAimSensitivityValue);
+mobileFireSize.value = String(mobileFireSizeValue);
+mobileJumpOffset.value = String(mobileJumpOffsetValue);
+for (const input of [mobileSensitivity, mobileFireSize, mobileJumpOffset]) {
+  input.addEventListener("input", applyMobileTuning);
+}
+applyMobileTuning();
+
 mobileAimZone.addEventListener("pointerdown", (event) => {
   if (!self.joined) return;
   event.preventDefault();
@@ -1071,8 +1116,8 @@ mobileAimZone.addEventListener("pointermove", (event) => {
   const dy = event.clientY - mobileAimLastY;
   mobileAimLastX = event.clientX;
   mobileAimLastY = event.clientY;
-  self.yaw -= dx * 0.0042;
-  self.pitch -= dy * 0.0036;
+  self.yaw -= dx * 0.0042 * mobileAimSensitivityValue;
+  self.pitch -= dy * 0.0036 * mobileAimSensitivityValue;
   self.pitch = THREE.MathUtils.clamp(self.pitch, -1.15, 1.1);
 });
 const releaseMobileAim = (event: PointerEvent) => {
@@ -1234,6 +1279,8 @@ function handleMessage(event: MessageEvent<string>) {
     self.id = message.id;
     self.room = message.room;
     self.joined = true;
+    resultWinnerSeen = "";
+    resultPanel.classList.remove("open");
     self.position.set(message.spawn.x, message.spawn.y, message.spawn.z);
     self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z);
     self.pitch = 0;
@@ -1251,6 +1298,10 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "snapshot") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
+    if (!message.winner) {
+      resultWinnerSeen = "";
+      resultPanel.classList.remove("open");
+    }
     castleEndsAt = Number(message.castleEndsAt) || 0;
     if (gameMode === "castle" && castleEndsAt && typeof message.now === "number") {
       roundSeconds = Math.max(0, (castleEndsAt - Number(message.now)) / 1000);
@@ -1265,11 +1316,16 @@ function handleMessage(event: MessageEvent<string>) {
     const snapshotCores = message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined;
     blueScoreEl.textContent = gameMode === "castle" && snapshotCores?.blue ? String(Math.ceil(snapshotCores.blue.health)) : String(message.blueScore);
     redScoreEl.textContent = gameMode === "castle" && snapshotCores?.red ? String(Math.ceil(snapshotCores.red.health)) : String(message.redScore);
-    if (message.winner) startCelebration(message.winner.name || "勝利チーム");
+    if (message.winner) {
+      const winner = message.winner.name || "勝利チーム";
+      startCelebration(winner);
+      showResults(winner);
+    }
     syncDonPunchSnapshots((message.donPunches || []) as DonPunchSnapshot[]);
     updateCastleCores(snapshotCores);
     updateBarrierPowerup(message.barrier as BarrierSnapshot | undefined);
     updateHealthPickup(message.healthPickup as HealthPickupSnapshot | undefined);
+    updateSpectatorState();
     updateHud(message.feed || []);
     updateChat(message.chat || []);
     return;
@@ -1298,6 +1354,7 @@ function handleMessage(event: MessageEvent<string>) {
     showHitIndicator(damagedSelf, damage);
     if (damagedSelf && damage > 0) playDamageSound();
   }
+  if (message.type === "death_info") showKillcam(message);
   if (message.type === "sound") playGameSound(message.sound);
   if (message.type === "ashinaga") addAshinagaBurst(message.origin, message.target, message.shooter === self.id);
   if (message.type === "donpunch") showToast("ドンパンチ接近");
@@ -1308,9 +1365,14 @@ function handleMessage(event: MessageEvent<string>) {
     self.pitch = 0;
     self.velocity.set(0, 0, 0);
     self.health = 100;
+    spectatorCard.classList.remove("show");
     showToast("リスポーン");
   }
-  if (message.type === "celebration") startCelebration(message.winner?.name || "勝利チーム");
+  if (message.type === "celebration") {
+    const winner = message.winner?.name || "勝利チーム";
+    startCelebration(winner);
+    showResults(winner);
+  }
   if (message.type === "error") showToast(message.message);
 }
 
@@ -1638,8 +1700,13 @@ function resetSelf() {
   trampolineChainActive = false;
   scoped = false;
   celebrationSeenWinner = "";
+  resultWinnerSeen = "";
+  killcamUntil = 0;
   endCelebration();
   document.body.classList.remove("scoped");
+  killcamCard.classList.remove("show");
+  spectatorCard.classList.remove("show");
+  resultPanel.classList.remove("open");
   lastSafePosition.copy(self.position);
   send({ type: "reset_room" });
   for (const tracer of tracers.splice(0)) {
@@ -1761,11 +1828,99 @@ function getLookDirection() {
   return direction.normalize();
 }
 
+function spectatorTargets() {
+  const me = players.get(self.id);
+  const alive = [...players.values()].filter((player) => player.id !== self.id && !player.eliminated && player.health > 0);
+  const teammates = me ? alive.filter((player) => player.color === me.color) : [];
+  return teammates.length ? teammates : alive;
+}
+
+function isSpectating() {
+  const me = players.get(self.id);
+  return Boolean(me && (me.eliminated || me.health <= 0));
+}
+
+function pickSpectatorTarget(next = false) {
+  const targets = spectatorTargets();
+  if (targets.length === 0) {
+    spectatorTargetId = "";
+    return null;
+  }
+  const currentIndex = targets.findIndex((player) => player.id === spectatorTargetId);
+  const target = targets[next || currentIndex < 0 ? (currentIndex + 1 + targets.length) % targets.length : currentIndex];
+  spectatorTargetId = target.id;
+  return target;
+}
+
+function updateSpectatorState() {
+  if (!isSpectating()) {
+    spectatorCard.classList.remove("show");
+    spectatorTargetId = "";
+    return null;
+  }
+  const target = pickSpectatorTarget(false);
+  spectatorCard.classList.add("show");
+  spectatorLabel.textContent = target ? `観戦中 ${target.name}` : "観戦待機";
+  return target;
+}
+
+spectatorNext.addEventListener("click", () => {
+  const target = pickSpectatorTarget(true);
+  spectatorLabel.textContent = target ? `観戦中 ${target.name}` : "観戦待機";
+});
+
+function showKillcam(message: { shooter?: string; weapon?: string; from?: { x: number; y: number; z: number } }) {
+  const from = message.from;
+  const distance = from ? Math.hypot(from.x - self.position.x, from.y - self.position.y, from.z - self.position.z) : 0;
+  const angle = from ? Math.atan2(from.x - self.position.x, from.z - self.position.z) : 0;
+  const relative = THREE.MathUtils.radToDeg(THREE.MathUtils.euclideanModulo(angle - self.yaw + Math.PI, Math.PI * 2) - Math.PI);
+  const side = Math.abs(relative) < 35 ? "正面" : Math.abs(relative) > 145 ? "背後" : relative > 0 ? "右側" : "左側";
+  killcamTitle.textContent = `${message.shooter || "敵"} に倒された`;
+  killcamDetail.textContent = `${message.weapon || "攻撃"} / ${side}${distance ? ` / 約${Math.round(distance)}m` : ""}`;
+  killcamUntil = performance.now() + 2000;
+  killcamCard.classList.add("show");
+}
+
+function updateKillcam() {
+  if (killcamUntil && performance.now() > killcamUntil) {
+    killcamUntil = 0;
+    killcamCard.classList.remove("show");
+  }
+}
+
+function showResults(name: string) {
+  if (resultWinnerSeen === name) return;
+  resultWinnerSeen = name;
+  resultTitle.textContent = `${name} 勝利 - リザルト`;
+  const rows = [...players.values()].sort((a, b) => b.score - a.score || b.kills - a.kills || (b.damageDealt || 0) - (a.damageDealt || 0));
+  resultRows.innerHTML = rows.map((player, index) => `
+    <div class="result-row ${player.color}">
+      <span>#${index + 1} ${escapeHtml(player.name)}</span>
+      <strong>${player.score}pt</strong>
+      <small>${player.kills}K/${player.deaths}D  与${Math.round(player.damageDealt || 0)}  被${Math.round(player.damageTaken || 0)}  命中${player.hits || 0}  回復${player.healsUsed || 0}  必殺${player.specialsUsed || 0}</small>
+    </div>
+  `).join("");
+  resultPanel.classList.add("open");
+}
+
+closeResult.addEventListener("click", () => resultPanel.classList.remove("open"));
+
 function updateCamera() {
-  camera.position.copy(self.position);
-  camera.rotation.order = "YXZ";
-  camera.rotation.y = self.yaw;
-  camera.rotation.x = self.pitch;
+  const spectated = updateSpectatorState();
+  if (spectated) {
+    const yaw = spectated.yaw || 0;
+    camera.position.set(
+      spectated.x + Math.sin(yaw) * 4.2,
+      spectated.y + 2.25,
+      spectated.z + Math.cos(yaw) * 4.2
+    );
+    camera.lookAt(spectated.x, spectated.y + 0.85, spectated.z);
+  } else {
+    camera.position.copy(self.position);
+    camera.rotation.order = "YXZ";
+    camera.rotation.y = self.yaw;
+    camera.rotation.x = self.pitch;
+  }
   const targetFov = scoped && currentGun().kind === "marksman" ? 31 : 72;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
     camera.fov += (targetFov - camera.fov) * 0.28;
@@ -2172,7 +2327,13 @@ function updateHud(feed: FeedItem[]) {
   donPunchButton.classList.toggle("super", charge >= 8);
   if (ready && !lastDonPunchReady) showToast(charge >= 8 ? "ドンパチ発動可能" : "アシナガバチ発動可能");
   lastDonPunchReady = ready;
-  latencyEl.textContent = self.latency ? `${Math.round(self.latency)}ms` : "24ms";
+  const latency = self.latency ? Math.round(self.latency) : 24;
+  const fps = Math.round(1000 / Math.max(8, frameAverageMs));
+  latencyEl.textContent = `${latency}ms ${fps}fps`;
+  const latencyBox = latencyEl.parentElement;
+  latencyBox?.classList.toggle("bad", latency > 140 || fps < 35);
+  latencyBox?.classList.toggle("ok", (latency > 80 || fps < 50) && !(latency > 140 || fps < 35));
+  latencyBox?.classList.toggle("good", latency <= 80 && fps >= 50);
   playerCountEl.textContent = `(${players.size}/8)`;
   updateSlots();
   updateScoreboard();
@@ -2216,14 +2377,14 @@ function updateSlots() {
 
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.score - a.score);
-  const signature = rows.map((player) => `${player.id}:${player.score}:${player.kills}:${player.deaths}:${player.ready}:${player.lives}:${player.eliminated}`).join("|");
+  const signature = rows.map((player) => `${player.id}:${player.score}:${player.kills}:${player.deaths}:${player.damageDealt}:${player.hits}:${player.ready}:${player.lives}:${player.eliminated}`).join("|");
   if (signature === scoreboardSignature) return;
   scoreboardSignature = signature;
-  scoreRows.innerHTML = rows.map((player) => `
+  scoreRows.innerHTML = rows.map((player, index) => `
     <div class="score-row ${player.color}">
-      <span>${escapeHtml(player.name)}</span>
+      <span>#${index + 1} ${escapeHtml(player.name)}</span>
       <strong>${player.score}</strong>
-      <small>${player.kills}K / ${player.deaths}D</small>
+      <small>${player.kills}K/${player.deaths}D  与${Math.round(player.damageDealt || 0)}  命中${player.hits || 0}</small>
       <em>${player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : player.ready ? "ready" : "wait"}</em>
     </div>
   `).join("");
@@ -2356,6 +2517,7 @@ function animate() {
 
   if (self.joined) move(delta);
   if (self.joined && (desktopFiring || mobileFiring)) shoot();
+  updateKillcam();
   updateCamera();
   updateRemotePlayers();
   updateTracers(delta);

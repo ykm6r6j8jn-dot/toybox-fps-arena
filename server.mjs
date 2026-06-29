@@ -303,6 +303,12 @@ function publicPlayer(player) {
     score: player.score,
     kills: player.kills,
     deaths: player.deaths,
+    damageDealt: player.damageDealt || 0,
+    damageTaken: player.damageTaken || 0,
+    hits: player.hits || 0,
+    healsUsed: player.healsUsed || 0,
+    specialsUsed: player.specialsUsed || 0,
+    barrierPickups: player.barrierPickups || 0,
     lives: player.lives || 0,
     eliminated: Boolean(player.eliminated),
     creative: Boolean(player.creative),
@@ -523,6 +529,12 @@ wss.on("connection", (ws) => {
         score: 0,
         kills: 0,
         deaths: 0,
+        damageDealt: 0,
+        damageTaken: 0,
+        hits: 0,
+        healsUsed: 0,
+        specialsUsed: 0,
+        barrierPickups: 0,
         lives: initialLivesForMode(room.mode),
         eliminated: false,
         creative: false,
@@ -638,6 +650,7 @@ wss.on("connection", (ws) => {
       if (currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.creative) return;
       if ((currentPlayer.healPacks || 0) <= 0 || currentPlayer.health >= 100) return;
       currentPlayer.healPacks -= 1;
+      currentPlayer.healsUsed = (currentPlayer.healsUsed || 0) + 1;
       currentPlayer.health = Math.min(100, currentPlayer.health + healPackAmount);
       addFeed(currentRoom, `${currentPlayer.name} が回復アイテムを使用`, currentPlayer.color);
       send(currentPlayer.ws, { type: "sound", sound: "heal" });
@@ -675,6 +688,7 @@ wss.on("connection", (ws) => {
           return;
         }
         currentPlayer.donPunchCharge -= 8;
+        currentPlayer.specialsUsed = (currentPlayer.specialsUsed || 0) + 1;
         spawnDonpachi(currentRoom, currentPlayer, target);
         return;
       }
@@ -685,11 +699,12 @@ wss.on("connection", (ws) => {
         return;
       }
       currentPlayer.donPunchCharge -= 4;
+      currentPlayer.specialsUsed = (currentPlayer.specialsUsed || 0) + 1;
       const origin = { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z };
       const targetPoint = { x: target.x, y: target.y, z: target.z };
       addFeed(currentRoom, `${currentPlayer.name} がアシナガバチを刺した`, currentPlayer.color);
       broadcast(currentRoom, { type: "ashinaga", shooter: currentPlayer.id, origin, target: targetPoint });
-      applyDirectDamage(currentRoom, currentPlayer, target, ashinagaDamage);
+      applyDirectDamage(currentRoom, currentPlayer, target, ashinagaDamage, "アシナガバチ");
       return;
     }
 
@@ -815,7 +830,7 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   }
 
   if (!best || bestDistance >= 0.8) return;
-  applyDirectDamage(room, shooter, best, damage);
+  applyDirectDamage(room, shooter, best, damage, weapon);
 }
 
 function nearestCastleCoreHit(room, shooter, origin, direction, range) {
@@ -834,10 +849,13 @@ function nearestCastleCoreHit(room, shooter, origin, direction, range) {
 function applyCastleCoreDamage(room, shooter, core, damage) {
   if (room.winner || !core || core.health <= 0) return;
   const scaledDamage = Math.max(10, Math.round(damage * 1.1));
+  const appliedDamage = Math.min(core.health, scaledDamage);
   core.health = Math.max(0, core.health - scaledDamage);
   shooter.score += 1;
+  shooter.hits = (shooter.hits || 0) + 1;
+  shooter.damageDealt = (shooter.damageDealt || 0) + appliedDamage;
   addFeed(room, `${shooter.name} が敵の白を攻撃`, shooter.color);
-  broadcast(room, { type: "hit", shooter: shooter.id, target: `${core.team}-castle-core`, damage: scaledDamage });
+  broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: `${core.team}-castle-core`, damage: scaledDamage, weapon: "白攻撃" });
 }
 
 function resolveCastleRoundByTimer(room, now) {
@@ -869,28 +887,40 @@ function resolveCastleRoundByTimer(room, now) {
   broadcast(room, { type: "celebration", winner: room.winner });
 }
 
-function applyDirectDamage(room, shooter, target, damage) {
+function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメージ") {
   if (target.creative) {
-    broadcast(room, { type: "hit", shooter: shooter.id, target: target.id, damage: 0, blocked: true });
+    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
     return;
   }
   if ((target.shieldUntil || 0) > Date.now()) {
     addFeed(room, `${target.name} がバリアで防いだ`, target.color);
-    broadcast(room, { type: "hit", shooter: shooter.id, target: target.id, damage: 0, blocked: true });
+    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
     return;
   }
+  const appliedDamage = Math.min(target.health, damage);
   target.health = Math.max(0, target.health - damage);
+  shooter.hits = (shooter.hits || 0) + 1;
+  shooter.damageDealt = (shooter.damageDealt || 0) + appliedDamage;
+  target.damageTaken = (target.damageTaken || 0) + appliedDamage;
   if (target.health === 0) {
     shooter.score += 1;
     shooter.kills += 1;
     shooter.donPunchCharge = Math.min(8, (shooter.donPunchCharge || 0) + 1);
     target.deaths += 1;
     addFeed(room, `${shooter.name} が ${target.name} をヒット`, shooter.color);
+    if (!target.isBot) {
+      send(target.ws, {
+        type: "death_info",
+        shooter: shooter.name,
+        weapon,
+        from: { x: shooter.x, y: shooter.y, z: shooter.z }
+      });
+    }
     handleDeath(room, shooter, target);
   } else {
     addFeed(room, `${shooter.name} -> ${target.name}`, shooter.color);
   }
-  broadcast(room, { type: "hit", shooter: shooter.id, target: target.id, damage });
+  broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage, weapon });
 }
 
 function handleDeath(room, shooter, target) {
@@ -961,10 +991,11 @@ function checkSurvivalWinner(room, shooter) {
 }
 
 function applyHadeonBurst(room, shooter) {
+  shooter.specialsUsed = (shooter.specialsUsed || 0) + 1;
   addFeed(room, `${shooter.name} が銃ダメージ`, shooter.color);
   for (const target of room.players.values()) {
     if (target.id === shooter.id || target.creative || target.eliminated || target.health <= 0) continue;
-    applyDirectDamage(room, shooter, target, 95);
+    applyDirectDamage(room, shooter, target, 95, "銃ダメージ");
   }
   broadcast(room, { type: "feed", feed: room.feed });
 }
@@ -1011,6 +1042,12 @@ function setCpuCount(room, count) {
       score: 0,
       kills: 0,
       deaths: 0,
+      damageDealt: 0,
+      damageTaken: 0,
+      hits: 0,
+      healsUsed: 0,
+      specialsUsed: 0,
+      barrierPickups: 0,
       lives: initialLivesForMode(room.mode),
       eliminated: false,
       creative: false,
@@ -1067,6 +1104,12 @@ function resetRoomScores(room) {
     player.score = 0;
     player.kills = 0;
     player.deaths = 0;
+    player.damageDealt = 0;
+    player.damageTaken = 0;
+    player.hits = 0;
+    player.healsUsed = 0;
+    player.specialsUsed = 0;
+    player.barrierPickups = 0;
     player.lives = initialLivesForMode(room.mode);
     player.eliminated = false;
     player.creative = false;
@@ -1095,6 +1138,7 @@ function tryPickupBarrier(room, player) {
   room.barrier.pickedBy = player.name;
   room.barrier.respawnAt = Date.now() + barrierRespawnMs;
   player.shieldUntil = Date.now() + barrierDurationMs;
+  player.barrierPickups = (player.barrierPickups || 0) + 1;
   addFeed(room, `${player.name} が隠しバリアを拾った`, player.color);
   send(player.ws, { type: "sound", sound: "barrier" });
   broadcast(room, { type: "feed", feed: room.feed });
@@ -1113,6 +1157,7 @@ function tryPickupHealth(room, player) {
   const distance = Math.hypot(player.x - room.healthPickup.x, player.y - room.healthPickup.y, player.z - room.healthPickup.z);
   if (distance > 1.9) return;
   player.health = 100;
+  player.healsUsed = (player.healsUsed || 0) + 1;
   room.healthPickup.available = false;
   room.healthPickup.respawnAt = nextHealthPickupAt();
   addFeed(room, `${player.name} が全回復アイテムを取得`, player.color);
@@ -1167,7 +1212,7 @@ function updateDonPunchProjectiles(room, now) {
     const distance = Math.hypot(target.x - punch.x, target.y + 0.35 - punch.y, target.z - punch.z);
     if (distance <= Math.max(0.9, step + 0.32)) {
       room.donPunches.delete(punch.id);
-      applyDirectDamage(room, shooter, target, donpachiDamage);
+      applyDirectDamage(room, shooter, target, donpachiDamage, "ドンパチ");
       continue;
     }
     punch.x += direction.x * step;

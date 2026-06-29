@@ -79,6 +79,15 @@
       </section>
 
       <section class="hit-marker" id="hitMarker">HIT</section>
+      <section class="killcam-card" id="killcamCard" aria-live="polite">
+        <span>キル情報</span>
+        <strong id="killcamTitle">---</strong>
+        <small id="killcamDetail">---</small>
+      </section>
+      <section class="spectator-card" id="spectatorCard">
+        <span id="spectatorLabel">観戦中</span>
+        <button id="spectatorNext" type="button">次</button>
+      </section>
 
       <section class="mobile-controls" aria-label="モバイル操作">
         <div class="mobile-aim-zone" id="mobileAimZone" aria-label="視点操作"></div>
@@ -139,6 +148,24 @@
             <button data-cpu="3">3</button>
             <button data-cpu="4">4</button>
           </div>
+        </div>
+        <div class="setting-block">
+          <div class="setting-block-title">
+            <span>スマホ操作</span>
+            <small>感度とボタン調整</small>
+          </div>
+          <label class="range-setting">
+            <span>視点感度</span>
+            <input id="mobileSensitivity" type="range" min="0.65" max="1.65" step="0.05" />
+          </label>
+          <label class="range-setting">
+            <span>射撃ボタン</span>
+            <input id="mobileFireSize" type="range" min="72" max="112" step="4" />
+          </label>
+          <label class="range-setting">
+            <span>ジャンプ位置</span>
+            <input id="mobileJumpOffset" type="range" min="96" max="176" step="4" />
+          </label>
         </div>
         <div class="setting-block">
           <div class="setting-block-title">
@@ -233,6 +260,16 @@
             <div id="onlinePlayers">確認中...</div>
           </div>
           <small>クリックで視点操作、WASDで移動、左クリックで射撃、Qで必殺技。</small>
+        </div>
+      </section>
+
+      <section class="result-panel" id="resultPanel" aria-label="試合結果">
+        <div class="result-card">
+          <header>
+            <strong id="resultTitle">試合結果</strong>
+            <button id="closeResult" class="icon-button" aria-label="閉じる"><i data-lucide="x"></i></button>
+          </header>
+          <div id="resultRows" class="result-rows"></div>
         </div>
       </section>
 

@@ -14,6 +14,8 @@
   --red: #ff4d4d;
   --text: #f7fbff;
   --muted: rgba(247, 251, 255, 0.72);
+  --mobile-fire-size: 88px;
+  --mobile-jump-right: 128px;
 }
 
 * {
@@ -59,7 +61,8 @@ button {
 .join-panel,
 .chat-panel,
 .scoreboard,
-.settings-panel {
+.settings-panel,
+.result-panel {
   pointer-events: auto;
 }
 
@@ -72,7 +75,8 @@ button {
 .lobby-strip,
 .scoreboard,
 .settings-panel,
-.toast {
+.toast,
+.result-panel {
   position: absolute;
   z-index: 4;
 }
@@ -159,6 +163,14 @@ button {
 
 .latency svg {
   color: var(--green);
+}
+
+.latency.ok svg {
+  color: var(--yellow);
+}
+
+.latency.bad svg {
+  color: var(--red);
 }
 
 .keycap {
@@ -374,6 +386,62 @@ button {
   color: white;
 }
 
+.killcam-card,
+.spectator-card {
+  position: absolute;
+  left: 50%;
+  z-index: 7;
+  display: grid;
+  gap: 3px;
+  width: min(320px, calc(100vw - 40px));
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(12, 22, 32, 0.86);
+  box-shadow: 0 14px 34px rgba(8, 18, 28, 0.22);
+  opacity: 0;
+  transform: translate(-50%, -8px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.killcam-card {
+  top: calc(50% + 96px);
+  text-align: center;
+}
+
+.killcam-card.show,
+.spectator-card.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.killcam-card span,
+.killcam-card small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.killcam-card strong {
+  font-size: 18px;
+}
+
+.spectator-card {
+  top: 150px;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  pointer-events: none;
+}
+
+.spectator-card button {
+  min-width: 44px;
+  height: 34px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.14);
+  pointer-events: auto;
+}
+
 @keyframes hit-pop {
   0% {
     opacity: 0;
@@ -544,14 +612,14 @@ body.scoped .center-reticle::after {
 .fire-button {
   right: max(26px, env(safe-area-inset-right));
   bottom: max(22px, env(safe-area-inset-bottom));
-  width: 88px;
-  height: 88px;
+  width: var(--mobile-fire-size);
+  height: var(--mobile-fire-size);
   border-radius: 50%;
   background: rgba(255, 77, 77, 0.82);
 }
 
 .mobile-jump {
-  right: max(128px, calc(env(safe-area-inset-right) + 128px));
+  right: max(var(--mobile-jump-right), calc(env(safe-area-inset-right) + var(--mobile-jump-right)));
   bottom: max(42px, calc(env(safe-area-inset-bottom) + 42px));
   width: 66px;
   height: 66px;
@@ -887,7 +955,7 @@ body:not(.celebrating) .donpunch-button {
 .scoreboard {
   top: 76px;
   right: 18px;
-  width: min(360px, calc(100vw - 36px));
+  width: min(430px, calc(100vw - 36px));
   max-height: calc(100vh - 190px);
   padding: 14px;
   border: 1px solid var(--line);
@@ -920,7 +988,7 @@ body:not(.celebrating) .donpunch-button {
 
 .score-row {
   display: grid;
-  grid-template-columns: 1fr 44px 78px 48px;
+  grid-template-columns: 1fr 44px 138px 48px;
   align-items: center;
   gap: 8px;
   min-height: 42px;
@@ -968,6 +1036,86 @@ body:not(.celebrating) .donpunch-button {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
+}
+
+.result-panel {
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 12, 18, 0.28);
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.16s ease, visibility 0.16s ease;
+}
+
+.result-panel.open {
+  visibility: visible;
+  opacity: 1;
+}
+
+.result-card {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(72vh, 620px);
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(12, 24, 36, 0.94);
+  box-shadow: 0 24px 70px rgba(4, 12, 22, 0.38);
+}
+
+.result-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.result-card header strong {
+  font-size: 20px;
+}
+
+.result-rows {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: 1fr 64px minmax(250px, 1.5fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 9px 11px;
+  border-left: 4px solid var(--blue);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.result-row.red {
+  border-left-color: var(--red);
+}
+
+.result-row span,
+.result-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-row span,
+.result-row strong {
+  font-weight: 900;
+}
+
+.result-row small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .join-card {
@@ -1161,6 +1309,25 @@ body:not(.celebrating) .donpunch-button {
 .color-swatches button.active {
   border-color: #fff;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22);
+}
+
+.range-setting {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.range-setting span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.range-setting input {
+  width: 100%;
+  accent-color: var(--green);
 }
 
 .cpu-buttons button {
@@ -1525,6 +1692,22 @@ body.celebrating::after {
   .ready-button svg {
     width: 32px;
     height: 32px;
+  }
+
+  .score-row {
+    grid-template-columns: 1fr 40px 96px 40px;
+  }
+
+  .result-card {
+    max-height: 82vh;
+  }
+
+  .result-row {
+    grid-template-columns: 1fr 58px;
+  }
+
+  .result-row small {
+    grid-column: 1 / -1;
   }
 }
 
