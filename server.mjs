@@ -640,6 +640,7 @@ wss.on("connection", (ws) => {
       currentPlayer.healPacks -= 1;
       currentPlayer.health = Math.min(100, currentPlayer.health + healPackAmount);
       addFeed(currentRoom, `${currentPlayer.name} が回復アイテムを使用`, currentPlayer.color);
+      send(currentPlayer.ws, { type: "sound", sound: "heal" });
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
       return;
     }
@@ -1095,6 +1096,7 @@ function tryPickupBarrier(room, player) {
   room.barrier.respawnAt = Date.now() + barrierRespawnMs;
   player.shieldUntil = Date.now() + barrierDurationMs;
   addFeed(room, `${player.name} が隠しバリアを拾った`, player.color);
+  send(player.ws, { type: "sound", sound: "barrier" });
   broadcast(room, { type: "feed", feed: room.feed });
 }
 
@@ -1114,6 +1116,7 @@ function tryPickupHealth(room, player) {
   room.healthPickup.available = false;
   room.healthPickup.respawnAt = nextHealthPickupAt();
   addFeed(room, `${player.name} が全回復アイテムを取得`, player.color);
+  send(player.ws, { type: "sound", sound: "heal" });
   broadcast(room, { type: "feed", feed: room.feed });
 }
 

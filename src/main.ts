@@ -313,6 +313,7 @@ let lastWDownAt = 0;
 let sprintUntil = 0;
 let lastTrampolineHitAt = 0;
 let trampolineBoost = 1;
+let lastRunSoundAt = 0;
 let lastHudRenderedAt = 0;
 let lastMinimapRenderedAt = 0;
 let slotsSignature = "";
@@ -1291,8 +1292,12 @@ function handleMessage(event: MessageEvent<string>) {
     guns.find((gun) => gun.kind === message.weapon)?.tracerColor
   );
   if (message.type === "hit" && (message.target === self.id || message.shooter === self.id)) {
-    showHitIndicator(message.target === self.id, Number(message.damage) || 0);
+    const damagedSelf = message.target === self.id;
+    const damage = Number(message.damage) || 0;
+    showHitIndicator(damagedSelf, damage);
+    if (damagedSelf && damage > 0) playDamageSound();
   }
+  if (message.type === "sound") playGameSound(message.sound);
   if (message.type === "ashinaga") addAshinagaBurst(message.origin, message.target, message.shooter === self.id);
   if (message.type === "donpunch") showToast("ドンパンチ接近");
   if (message.type === "respawn" && message.target === self.id) {
@@ -1350,6 +1355,7 @@ function setSoundEnabled(enabled: boolean) {
 function playTone(frequency: number, duration = 0.07, volume = 0.04) {
   if (!soundEnabled) return;
   audioContext ||= new AudioContext();
+  void audioContext.resume();
   const oscillator = audioContext.createOscillator();
   const gain = audioContext.createGain();
   oscillator.frequency.value = frequency;
@@ -1359,6 +1365,80 @@ function playTone(frequency: number, duration = 0.07, volume = 0.04) {
   oscillator.connect(gain).connect(audioContext.destination);
   oscillator.start();
   oscillator.stop(audioContext.currentTime + duration);
+}
+
+function playSweep(start: number, end: number, duration: number, volume = 0.045, type: OscillatorType = "sine") {
+  if (!soundEnabled) return;
+  audioContext ||= new AudioContext();
+  void audioContext.resume();
+  const now = audioContext.currentTime;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(start, now);
+  oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, end), now + duration);
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  oscillator.connect(gain).connect(audioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration);
+}
+
+function playNoiseHit(duration = 0.12, volume = 0.08, frequency = 360) {
+  if (!soundEnabled) return;
+  audioContext ||= new AudioContext();
+  void audioContext.resume();
+  const now = audioContext.currentTime;
+  const samples = Math.max(1, Math.floor(audioContext.sampleRate * duration));
+  const buffer = audioContext.createBuffer(1, samples, audioContext.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < samples; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / samples);
+  const source = audioContext.createBufferSource();
+  source.buffer = buffer;
+  const filter = audioContext.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.value = frequency;
+  filter.Q.value = 1.1;
+  const gain = audioContext.createGain();
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  source.connect(filter).connect(gain).connect(audioContext.destination);
+  source.start(now);
+  source.stop(now + duration);
+}
+
+function playDamageSound() {
+  playNoiseHit(0.16, 0.12, 260);
+  playSweep(170, 74, 0.18, 0.05, "sawtooth");
+}
+
+function playRunSound() {
+  playNoiseHit(0.045, 0.026, 155);
+  playSweep(90, 64, 0.04, 0.018, "triangle");
+}
+
+function playReloadSound() {
+  playSweep(520, 270, 0.08, 0.035, "triangle");
+  window.setTimeout(() => playSweep(330, 760, 0.09, 0.026, "square"), 95);
+}
+
+function playJumpSound() {
+  playSweep(180, 430, 0.13, 0.042, "triangle");
+}
+
+function playBarrierSound() {
+  playSweep(420, 1080, 0.18, 0.048, "sine");
+  window.setTimeout(() => playSweep(620, 1480, 0.22, 0.034, "triangle"), 55);
+}
+
+function playHealSound() {
+  playSweep(310, 620, 0.1, 0.038, "sine");
+  window.setTimeout(() => playSweep(520, 980, 0.13, 0.034, "sine"), 85);
+}
+
+function playGameSound(name: unknown) {
+  if (name === "barrier") playBarrierSound();
+  if (name === "heal") playHealSound();
 }
 
 function playGunSound(gun: Gun) {
@@ -1462,9 +1542,14 @@ function move(delta: number) {
 
   const groundY = groundHeightAt(self.position.x, self.position.z, self.position.y);
   const grounded = Math.abs(self.position.y - groundY) < 0.34 && self.velocity.y <= 0.35;
+  if (sprinting && wish.lengthSq() > 0 && grounded && now - lastRunSoundAt > 255) {
+    lastRunSoundAt = now;
+    playRunSound();
+  }
   if (grounded && self.position.y < groundY) self.position.y = groundY;
   if (jumpQueued && grounded) {
     self.velocity.y = jumpVelocity;
+    playJumpSound();
   }
   jumpQueued = false;
   for (const trampoline of trampolines) {
@@ -1639,6 +1724,7 @@ function flashMuzzle() {
 function reload() {
   if (reloadTimer > 0 || self.ammo === currentGun().magSize || self.reserve <= 0) return;
   reloadTimer = 1.15;
+  playReloadSound();
   showToast("リロード");
 }
 
