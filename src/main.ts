@@ -309,10 +309,11 @@ type StairZone = {
 const stairZones: StairZone[] = [];
 const walkSurfaces: { minX: number; maxX: number; minZ: number; maxZ: number; y: number }[] = [];
 const trampolines: { x: number; z: number; radius: number; force: number }[] = [];
+const trampolineBoostSteps = [1, 1.5, 2.5, 3.5, 5, 6, 8, 10];
 let lastWDownAt = 0;
 let sprintUntil = 0;
 let lastTrampolineHitAt = 0;
-let trampolineBoost = 1;
+let trampolineBoostStep = 0;
 let lastRunSoundAt = 0;
 let lastHudRenderedAt = 0;
 let lastMinimapRenderedAt = 0;
@@ -1556,8 +1557,9 @@ function move(delta: number) {
     const dx = self.position.x - trampoline.x;
     const dz = self.position.z - trampoline.z;
     if (dx * dx + dz * dz <= trampoline.radius * trampoline.radius && self.position.y <= groundY + 0.35 && self.velocity.y <= 1) {
-      trampolineBoost = now - lastTrampolineHitAt < 4200 ? Math.min(trampolineBoost * 1.5, 5.1) : 1;
+      trampolineBoostStep = now - lastTrampolineHitAt < 4200 ? Math.min(trampolineBoostStep + 1, trampolineBoostSteps.length - 1) : 0;
       lastTrampolineHitAt = now;
+      const trampolineBoost = trampolineBoostSteps[trampolineBoostStep];
       self.velocity.y = trampoline.force * trampolineBoost;
       showToast(`トランポリン x${trampolineBoost.toFixed(1)}`);
       break;
@@ -1628,7 +1630,7 @@ function resetSelf() {
   self.yaw = 0;
   self.health = 100;
   reloadTimer = 0;
-  trampolineBoost = 1;
+  trampolineBoostStep = 0;
   scoped = false;
   celebrationSeenWinner = "";
   endCelebration();
