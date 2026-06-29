@@ -312,8 +312,8 @@ const trampolines: { x: number; z: number; radius: number; force: number }[] = [
 const trampolineBoostSteps = [1, 1.5, 2.5, 3.5, 5, 6, 8, 10];
 let lastWDownAt = 0;
 let sprintUntil = 0;
-let lastTrampolineHitAt = 0;
 let trampolineBoostStep = 0;
+let trampolineChainActive = false;
 let lastRunSoundAt = 0;
 let lastHudRenderedAt = 0;
 let lastMinimapRenderedAt = 0;
@@ -1557,8 +1557,8 @@ function move(delta: number) {
     const dx = self.position.x - trampoline.x;
     const dz = self.position.z - trampoline.z;
     if (dx * dx + dz * dz <= trampoline.radius * trampoline.radius && self.position.y <= groundY + 0.35 && self.velocity.y <= 1) {
-      trampolineBoostStep = now - lastTrampolineHitAt < 4200 ? Math.min(trampolineBoostStep + 1, trampolineBoostSteps.length - 1) : 0;
-      lastTrampolineHitAt = now;
+      trampolineBoostStep = trampolineChainActive ? Math.min(trampolineBoostStep + 1, trampolineBoostSteps.length - 1) : 0;
+      trampolineChainActive = true;
       const trampolineBoost = trampolineBoostSteps[trampolineBoostStep];
       self.velocity.y = trampoline.force * trampolineBoost;
       showToast(`トランポリン x${trampolineBoost.toFixed(1)}`);
@@ -1571,6 +1571,10 @@ function move(delta: number) {
   if (self.position.y < landingY) {
     self.position.y = landingY;
     self.velocity.y = 0;
+    if (!isOverTrampoline(self.position.x, self.position.z)) {
+      trampolineBoostStep = 0;
+      trampolineChainActive = false;
+    }
   }
 
   if (reloadTimer > 0) {
@@ -1631,6 +1635,7 @@ function resetSelf() {
   self.health = 100;
   reloadTimer = 0;
   trampolineBoostStep = 0;
+  trampolineChainActive = false;
   scoped = false;
   celebrationSeenWinner = "";
   endCelebration();
@@ -1663,6 +1668,14 @@ function moveWithSlide(wish: THREE.Vector3) {
   if (!collides(nextZ)) {
     self.position.z = nextZ.z;
   }
+}
+
+function isOverTrampoline(x: number, z: number) {
+  return trampolines.some((trampoline) => {
+    const dx = x - trampoline.x;
+    const dz = z - trampoline.z;
+    return dx * dx + dz * dz <= trampoline.radius * trampoline.radius;
+  });
 }
 
 function collides(position: THREE.Vector3) {
