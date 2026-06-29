@@ -9,7 +9,9 @@ import {
   Check,
   Copy,
   Crosshair,
+  Maximize2,
   MicOff,
+  Minimize2,
   Repeat2,
   RotateCcw,
   Scan,
@@ -119,7 +121,9 @@ createIcons({
     Check,
     Copy,
     Crosshair,
+    Maximize2,
     MicOff,
+    Minimize2,
     Repeat2,
     RotateCcw,
     Scan,
@@ -164,6 +168,7 @@ const resetButton = $("#resetButton") as HTMLButtonElement;
 const endCelebrationButton = $("#endCelebration") as HTMLButtonElement;
 const donPunchButton = $("#donPunchButton") as HTMLButtonElement;
 const mobileAimZone = $("#mobileAimZone");
+const mobileFullscreen = $("#mobileFullscreen") as HTMLButtonElement;
 const mobileStick = $("#mobileStick");
 const mobileStickKnob = $("#mobileStickKnob");
 const mobileJump = $("#mobileJump") as HTMLButtonElement;
@@ -1014,6 +1019,41 @@ for (const button of cpuButtons.querySelectorAll<HTMLButtonElement>("button")) {
   });
 }
 endCelebrationButton.addEventListener("click", () => endCelebration());
+
+function isFullscreenActive() {
+  return Boolean(document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement);
+}
+
+function updateFullscreenButton() {
+  mobileFullscreen.innerHTML = isFullscreenActive() ? '<i data-lucide="minimize-2"></i>' : '<i data-lucide="maximize-2"></i>';
+  mobileFullscreen.setAttribute("aria-label", isFullscreenActive() ? "全画面解除" : "全画面");
+  createIcons({ icons: { Maximize2, Minimize2 } });
+}
+
+async function toggleMobileFullscreen() {
+  try {
+    if (isFullscreenActive()) {
+      const exitFullscreen = document.exitFullscreen?.bind(document);
+      const webkitExitFullscreen = (document as Document & { webkitExitFullscreen?: () => Promise<void> | void }).webkitExitFullscreen?.bind(document);
+      await (exitFullscreen?.() || webkitExitFullscreen?.());
+    } else {
+      const target = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+      await (target.requestFullscreen?.({ navigationUI: "hide" }) || target.webkitRequestFullscreen?.());
+    }
+    updateFullscreenButton();
+  } catch {
+    showToast("全画面にできませんでした。ブラウザ側の許可を確認してください。");
+  }
+}
+
+mobileFullscreen.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleMobileFullscreen();
+});
+document.addEventListener("fullscreenchange", updateFullscreenButton);
+document.addEventListener("webkitfullscreenchange", updateFullscreenButton);
+
 mobileAimZone.addEventListener("pointerdown", (event) => {
   if (!self.joined) return;
   event.preventDefault();

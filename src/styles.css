@@ -588,6 +588,14 @@ body.scoped .center-reticle::after {
   color: #111;
 }
 
+.mobile-fullscreen {
+  left: max(18px, env(safe-area-inset-left));
+  top: max(70px, calc(env(safe-area-inset-top) + 70px));
+  width: 48px;
+  height: 48px;
+  background: rgba(12, 24, 36, 0.72);
+}
+
 .health-card,
 .ammo-card,
 .movement-card {
