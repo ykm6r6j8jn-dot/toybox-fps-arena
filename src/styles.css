@@ -1112,6 +1112,31 @@ body:not(.celebrating) .donpunch-button {
   border-top: 1px solid var(--line);
 }
 
+.setting-block {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.setting-block-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.setting-block-title span {
+  font-weight: 950;
+}
+
+.setting-block-title small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
 .color-swatches,
 .cpu-buttons {
   display: flex;
@@ -1142,6 +1167,32 @@ body:not(.celebrating) .donpunch-button {
 .cpu-buttons button.active {
   background: var(--green);
   color: #19331f;
+}
+
+.settings-mode-select,
+.settings-team-select {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-team-select {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-mode-select button,
+.settings-team-select button {
+  min-height: 48px;
+  padding: 8px;
+}
+
+.settings-mode-select strong,
+.settings-team-select strong {
+  font-size: 12px;
+}
+
+.settings-mode-select span,
+.settings-team-select span {
+  font-size: 10px;
 }
 
 .setting-toggle {

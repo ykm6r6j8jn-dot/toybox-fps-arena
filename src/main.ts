@@ -141,6 +141,8 @@ const roomInput = $("#roomInput") as HTMLInputElement;
 const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
 const teamSelect = $("#teamSelect");
+const settingsModeSelect = $("#settingsModeSelect");
+const settingsTeamSelect = $("#settingsTeamSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
 const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
@@ -344,7 +346,7 @@ function gameModeLabel(mode: GameMode) {
 function setGameMode(mode: GameMode) {
   gameMode = mode;
   if (mode === "castle" && !castleEndsAt) roundSeconds = 240;
-  for (const button of modeSelect.querySelectorAll<HTMLButtonElement>("button")) {
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
   modeLabel.textContent = mode === "score10" ? "目標スコア" : "ゲームモード";
@@ -354,9 +356,25 @@ function setGameMode(mode: GameMode) {
 function setTeamChoice(team: TeamChoice) {
   teamChoice = team === "blue" || team === "red" ? team : "auto";
   localStorage.setItem("toybox-team", teamChoice);
-  for (const button of teamSelect.querySelectorAll<HTMLButtonElement>("button")) {
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-team]")) {
     button.classList.toggle("active", button.dataset.team === teamChoice);
   }
+}
+
+function isHostPlayer() {
+  return (nameInput.value.trim() || "プレイヤー") === "ひでお";
+}
+
+function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice) {
+  if (!self.joined) return false;
+  if (!isHostPlayer()) {
+    showToast("試合設定はホスト「ひでお」が変更できます。");
+    setGameMode(gameMode);
+    setTeamChoice(teamChoice);
+    return true;
+  }
+  send({ type: "set_room_config", gameMode: nextMode, team: nextTeam });
+  return true;
 }
 
 function makeMaterial(color: number, roughness = 0.82) {
@@ -955,12 +973,26 @@ playerSlots.addEventListener("click", (event) => {
   if (team !== "blue" && team !== "red") return;
   send({ type: "change_team", team, targetId: button.dataset.playerId || self.id });
 });
-for (const button of modeSelect.querySelectorAll<HTMLButtonElement>("button")) {
-  button.addEventListener("click", () => setGameMode((button.dataset.mode as GameMode) || "score10"));
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
+  button.addEventListener("click", () => {
+    const mode = (button.dataset.mode as GameMode) || "score10";
+    if (self.joined) {
+      requestRoomConfig(mode, teamChoice);
+      return;
+    }
+    setGameMode(mode);
+  });
 }
 
-for (const button of teamSelect.querySelectorAll<HTMLButtonElement>("button")) {
-  button.addEventListener("click", () => setTeamChoice((button.dataset.team as TeamChoice) || "auto"));
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-team]")) {
+  button.addEventListener("click", () => {
+    const team = (button.dataset.team as TeamChoice) || "auto";
+    if (self.joined) {
+      requestRoomConfig(gameMode, team);
+      return;
+    }
+    setTeamChoice(team);
+  });
 }
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1166,6 +1198,7 @@ function handleMessage(event: MessageEvent<string>) {
     gameMode = (message.gameMode as GameMode) || "score10";
     targetScore = Number(message.targetScore) || 10;
     setGameMode(gameMode);
+    setTeamChoice((message.team as TeamChoice) || teamChoice);
     roomCodeEl.textContent = self.room;
     joinPanel.classList.add("hidden");
     history.replaceState(null, "", `?room=${self.room}`);
@@ -1175,7 +1208,7 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (message.type === "snapshot") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
-    if (message.gameMode && message.gameMode !== gameMode) setGameMode(message.gameMode as GameMode);
+    if (message.gameMode) setGameMode(message.gameMode as GameMode);
     castleEndsAt = Number(message.castleEndsAt) || 0;
     if (gameMode === "castle" && castleEndsAt && typeof message.now === "number") {
       roundSeconds = Math.max(0, (castleEndsAt - Number(message.now)) / 1000);
@@ -1185,6 +1218,7 @@ function handleMessage(event: MessageEvent<string>) {
     const me = players.get(self.id);
     if (me) {
       self.health = me.health;
+      setTeamChoice(me.color);
     }
     const snapshotCores = message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined;
     blueScoreEl.textContent = gameMode === "castle" && snapshotCores?.blue ? String(Math.ceil(snapshotCores.blue.health)) : String(message.blueScore);
@@ -1196,6 +1230,15 @@ function handleMessage(event: MessageEvent<string>) {
     updateHealthPickup(message.healthPickup as HealthPickupSnapshot | undefined);
     updateHud(message.feed || []);
     updateChat(message.chat || []);
+    return;
+  }
+  if (message.type === "room_config") {
+    if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
+    if (message.gameMode) setGameMode(message.gameMode as GameMode);
+    castleEndsAt = Number(message.castleEndsAt) || 0;
+    updateCastleCores(message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined);
+    updateFeed(message.feed || []);
+    showToast("ホスト設定を反映しました。");
     return;
   }
   if (message.type === "feed") updateFeed(message.feed || []);

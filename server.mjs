@@ -189,6 +189,13 @@ function normalizeGameMode(value) {
   return gameModes.has(mode) ? mode : "score10";
 }
 
+function modeLabel(mode) {
+  if (mode === "duel") return "1:1";
+  if (mode === "life3") return "ライフ3";
+  if (mode === "castle") return "城攻め";
+  return "10目標";
+}
+
 function normalizeTeam(value, room) {
   const requested = String(value || "auto");
   if (room.mode === "castle") {
@@ -531,8 +538,13 @@ wss.on("connection", (ws) => {
       room.players.set(id, player);
       currentRoom = room;
       currentPlayer = player;
+      if (player.name === "ひでお") {
+        applyRoomConfig(room, player, message.gameMode, message.team);
+        addFeed(room, `ひでお が ${modeLabel(room.mode)} に変更`, player.color);
+      }
       addFeed(room, `${player.name} が参加`, player.color);
-      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, team: player.color, targetScore: room.targetScore, maxPlayers, spawn });
+      const welcomeSpawn = { x: player.x, y: player.y, z: player.z, yaw: player.yaw };
+      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, team: player.color, targetScore: room.targetScore, maxPlayers, spawn: welcomeSpawn });
       broadcast(room, { type: "feed", feed: room.feed });
       return;
     }
@@ -593,6 +605,24 @@ wss.on("connection", (ws) => {
       targetPlayer.cosmeticColor = targetPlayer.cosmeticColor || (requestedTeam === "blue" ? "#1598f0" : "#ff4d4d");
       addFeed(currentRoom, `${targetPlayer.name} が${requestedTeam === "blue" ? "青" : "赤"}チームへ移動`, targetPlayer.color);
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
+      return;
+    }
+
+    if (message.type === "set_room_config") {
+      if (currentPlayer.name !== "ひでお") {
+        send(currentPlayer.ws, { type: "error", message: "試合設定はホスト「ひでお」が変更できます。" });
+        return;
+      }
+      applyRoomConfig(currentRoom, currentPlayer, message.gameMode, message.team);
+      addFeed(currentRoom, `ひでお が ${modeLabel(currentRoom.mode)} に変更`, currentPlayer.color);
+      broadcast(currentRoom, {
+        type: "room_config",
+        gameMode: currentRoom.mode,
+        targetScore: currentRoom.targetScore || defaultTargetScore,
+        feed: currentRoom.feed,
+        castleCores: currentRoom.castleCores,
+        castleEndsAt: currentRoom.castleEndsAt || 0
+      });
       return;
     }
 
@@ -1000,6 +1030,31 @@ function setCpuCount(room, count) {
   room.cpuCount = target;
 }
 
+function applyRoomConfig(room, host, mode, teamChoice) {
+  const nextMode = normalizeGameMode(mode);
+  const requestedTeam = teams.has(String(teamChoice || "")) ? String(teamChoice) : "";
+  room.mode = nextMode;
+  room.targetScore = nextMode === "score10" ? defaultTargetScore : 0;
+  room.playerTeam = nextMode === "castle" ? requestedTeam || host.color || "blue" : null;
+
+  if (nextMode === "castle") {
+    for (const player of room.players.values()) {
+      player.color = player.isBot ? oppositeTeam(room.playerTeam) : room.playerTeam;
+      player.cosmeticColor = player.cosmeticColor || (player.color === "blue" ? "#1598f0" : "#ff4d4d");
+    }
+  } else if (requestedTeam) {
+    host.color = requestedTeam;
+    host.cosmeticColor = host.cosmeticColor || (requestedTeam === "blue" ? "#1598f0" : "#ff4d4d");
+  }
+
+  resetRoomScores(room);
+  if (room.cpuCount > 0) {
+    const cpuCount = room.cpuCount;
+    setCpuCount(room, 0);
+    setCpuCount(room, cpuCount);
+  }
+}
+
 function resetRoomScores(room) {
   room.winner = null;
   if (room.mode === "castle" && !room.playerTeam) {
@@ -1023,6 +1078,7 @@ function resetRoomScores(room) {
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
     index += 1;
   }
+  if (room.mode !== "castle") room.playerTeam = null;
   room.donPunches.clear();
   room.castleCores = createCastleCores(room.playerTeam || "blue");
   room.castleEndsAt = room.mode === "castle" ? Date.now() + castleRoundMs : 0;
