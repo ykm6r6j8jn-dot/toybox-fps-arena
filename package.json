@@ -1,0 +1,31 @@
+{
+  "name": "toybox-fps-arena",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "node server.mjs",
+    "build": "tsc && vite build",
+    "start": "NODE_ENV=production node server.mjs",
+    "preview": "NODE_ENV=production node server.mjs",
+    "check": "tsc --noEmit",
+    "test:smoke": "node scripts/smoke-multiplayer.mjs",
+    "test:controls": "node scripts/control-physics-test.mjs",
+    "verify:public": "node scripts/verify-public-url.mjs"
+  },
+  "dependencies": {
+    "lucide": "^0.468.0",
+    "three": "^0.166.1",
+    "vite": "^5.3.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/three": "^0.185.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.5.3"
+  }
+}

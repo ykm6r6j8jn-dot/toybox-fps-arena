@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Toybox FPS Arena</title>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <main class="hud" id="hud">
+      <section class="top-left">
+        <div class="room-pill">
+          <span>ルームコード</span>
+          <strong id="roomCode">----</strong>
+          <button id="copyInvite" class="icon-button" aria-label="招待リンクをコピー" title="招待リンクをコピー">
+            <i data-lucide="copy"></i>
+          </button>
+        </div>
+        <button id="inviteButton" class="hud-button">
+          <i data-lucide="users"></i>
+          <span>フレンドを招待</span>
+        </button>
+      </section>
+
+      <section class="top-center">
+        <strong id="blueScore">0</strong>
+        <div class="score-orb">
+          <span id="modeLabel">目標スコア</span>
+          <strong>10</strong>
+          <small id="roundClock">08:45</small>
+        </div>
+        <strong id="redScore">0</strong>
+      </section>
+
+      <section class="top-right">
+        <div class="latency"><i data-lucide="signal"></i><span id="latency">--ms</span></div>
+        <button id="muteButton" class="icon-button" aria-label="ミュート" title="ミュート"><i data-lucide="mic-off"></i></button>
+        <button id="settingsButton" class="icon-button" aria-label="設定" title="設定"><i data-lucide="settings"></i></button>
+        <button id="resetButton" class="hud-button"><span>リセット</span></button>
+        <button id="scoreboardToggle" class="hud-button"><span class="keycap">Tab</span><span>スコアボード</span></button>
+      </section>
+
+      <section class="minimap" aria-label="ミニマップ">
+        <canvas id="minimap" width="220" height="220"></canvas>
+      </section>
+
+      <section class="feed" id="feed"></section>
+
+      <section class="chat-panel" id="chatPanel" aria-label="リアルタイムチャット">
+        <div id="chatMessages" class="chat-messages"></div>
+        <form id="chatForm" class="chat-form">
+          <input id="chatInput" maxlength="80" placeholder="チャット" autocomplete="off" />
+          <button id="chatSend" type="submit" aria-label="送信" title="送信"><i data-lucide="send"></i></button>
+        </form>
+      </section>
+
+      <section class="center-reticle">
+        <span></span><span></span><span></span><span></span>
+      </section>
+
+      <section class="status-strip">
+        <div class="health-card">
+          <div class="face">:)</div>
+          <div>
+            <strong><span id="health">100</span><small>/100</small></strong>
+            <div class="health-bar"><span id="healthBar"></span></div>
+          </div>
+        </div>
+        <div class="ammo-card">
+          <strong><span id="ammo">30</span><small>/120</small></strong>
+          <span>ammo</span>
+        </div>
+        <div class="movement-card">
+          <strong id="movementStatus">WALK  高度 0.0m</strong>
+          <span>move</span>
+        </div>
+        <button id="donPunchButton" class="donpunch-button" type="button">アシナガバチ 0/4</button>
+      </section>
+
+      <section class="hit-marker" id="hitMarker">HIT</section>
+
+      <section class="mobile-controls" aria-label="モバイル操作">
+        <div class="mobile-aim-zone" id="mobileAimZone" aria-label="視点操作"></div>
+        <div class="move-stick" id="mobileStick" aria-label="移動スティック">
+          <div id="mobileStickKnob"></div>
+        </div>
+        <button class="mobile-action mobile-jump" id="mobileJump" aria-label="ジャンプ"><i data-lucide="chevrons-up"></i></button>
+        <button class="mobile-action mobile-weapon" id="mobileWeapon" aria-label="武器切替"><i data-lucide="repeat-2"></i></button>
+        <button class="mobile-action mobile-reload" id="mobileReload" aria-label="リロード"><i data-lucide="rotate-ccw"></i></button>
+        <button class="mobile-action mobile-scope" id="mobileScope" aria-label="スコープ"><i data-lucide="scan"></i></button>
+        <button class="mobile-action mobile-skill" id="mobileSkill" aria-label="必殺技"><i data-lucide="zap"></i></button>
+        <button class="fire-button" id="mobileFire" aria-label="射撃"><i data-lucide="crosshair"></i></button>
+      </section>
+
+      <section class="lobby-strip">
+        <div class="lobby-title">
+          <strong>準備ルーム</strong>
+          <span id="playerCount">(0/8)</span>
+        </div>
+        <div class="player-slots" id="playerSlots"></div>
+        <button id="readyButton" class="ready-button"><i data-lucide="check"></i><span>準備完了</span></button>
+      </section>
+
+      <aside class="scoreboard" id="scoreboard" aria-label="スコアボード">
+        <header>
+          <strong>スコアボード</strong>
+          <button id="closeScoreboard" class="icon-button" aria-label="閉じる"><i data-lucide="x"></i></button>
+        </header>
+        <div id="scoreRows" class="score-rows"></div>
+      </aside>
+
+      <aside class="settings-panel" id="settingsPanel" aria-label="設定">
+        <header>
+          <strong>設定</strong>
+          <button id="closeSettings" class="icon-button" aria-label="閉じる"><i data-lucide="x"></i></button>
+        </header>
+        <div class="setting-row">
+          <span>キャラ色</span>
+          <div class="color-swatches" id="colorSwatches">
+            <button data-color="#1598f0" aria-label="青"></button>
+            <button data-color="#ff4d4d" aria-label="赤"></button>
+            <button data-color="#93e43c" aria-label="緑"></button>
+            <button data-color="#ffd23a" aria-label="黄"></button>
+            <button data-color="#ff4dff" aria-label="紫"></button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span>音</span>
+          <button id="soundToggle" class="setting-toggle" type="button">ON</button>
+        </div>
+        <div class="setting-row">
+          <span>CPU</span>
+          <div class="cpu-buttons" id="cpuButtons">
+            <button data-cpu="0">0</button>
+            <button data-cpu="1">1</button>
+            <button data-cpu="2">2</button>
+            <button data-cpu="3">3</button>
+            <button data-cpu="4">4</button>
+          </div>
+        </div>
+      </aside>
+
+      <section class="join-panel" id="joinPanel">
+        <div class="join-card">
+          <strong>Toybox FPS Arena</strong>
+          <p>友達にリンクを送って、同じルームで軽く撃ち合えます。</p>
+          <label>
+            ニックネーム
+            <input id="nameInput" maxlength="14" placeholder="プレイヤー" autocomplete="nickname" />
+          </label>
+          <label>
+            ルームコード
+            <input id="roomInput" maxlength="6" placeholder="空なら新規作成" />
+          </label>
+          <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
+            <button type="button" class="active" data-mode="score10">
+              <strong>10目標</strong>
+              <span>10点で勝利</span>
+            </button>
+            <button type="button" data-mode="duel">
+              <strong>1:1</strong>
+              <span>一回死亡で終了</span>
+            </button>
+            <button type="button" data-mode="life3">
+              <strong>ライフ3</strong>
+              <span>3ライフ制</span>
+            </button>
+            <button type="button" data-mode="castle">
+              <strong>城攻め</strong>
+              <span>敵の白を破壊</span>
+            </button>
+          </div>
+          <div class="team-select" id="teamSelect" role="group" aria-label="チーム選択">
+            <button type="button" class="active" data-team="auto">
+              <strong>自動</strong>
+              <span>人数で振分</span>
+            </button>
+            <button type="button" data-team="blue">
+              <strong>青チーム</strong>
+              <span>協力して守る</span>
+            </button>
+            <button type="button" data-team="red">
+              <strong>赤チーム</strong>
+              <span>協力して攻める</span>
+            </button>
+          </div>
+          <div class="join-actions">
+            <button id="createRoom">ルーム作成</button>
+            <button id="joinRoom">参加</button>
+          </div>
+          <div class="online-panel">
+            <strong>現在オンライン</strong>
+            <div id="onlinePlayers">確認中...</div>
+          </div>
+          <small>クリックで視点操作、WASDで移動、左クリックで射撃、Qで必殺技。</small>
+        </div>
+      </section>
+
+      <section class="toast" id="toast" aria-live="polite"></section>
+      <button id="endCelebration" class="end-celebration" type="button">首領蜂祝い終了</button>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
