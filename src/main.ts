@@ -189,6 +189,10 @@ const hitMarker = $("#hitMarker");
 const killcamCard = $("#killcamCard");
 const killcamTitle = $("#killcamTitle");
 const killcamDetail = $("#killcamDetail");
+const flowCard = $("#flowCard");
+const flowLabel = $("#flowLabel");
+const flowText = $("#flowText");
+const flowBar = $("#flowBar") as HTMLElement;
 const spectatorCard = $("#spectatorCard");
 const spectatorLabel = $("#spectatorLabel");
 const spectatorNext = $("#spectatorNext") as HTMLButtonElement;
@@ -355,6 +359,13 @@ let chatSignature = "";
 let lastToastAt = 0;
 let jumpQueued = false;
 let lastDonPunchReady = false;
+let flowScore = 0;
+let flowCombo = 0;
+let flowUntil = 0;
+let lastFlowAt = 0;
+let lastSelfKills = 0;
+let lastSelfScore = 0;
+let lastSelfHealth = 100;
 let shotNoiseBuffer: AudioBuffer | null = null;
 let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
@@ -1571,6 +1582,14 @@ function handleMessage(event: MessageEvent<string>) {
     self.position.set(message.spawn.x, message.spawn.y, message.spawn.z);
     self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z);
     self.pitch = 0;
+    flowScore = 0;
+    flowCombo = 0;
+    flowUntil = 0;
+    lastFlowAt = 0;
+    lastSelfKills = 0;
+    lastSelfScore = 0;
+    lastSelfHealth = 100;
+    updateFlowHud(performance.now());
     gameMode = (message.gameMode as GameMode) || "score10";
     arenaChoice = message.arena === "okakoj" ? "okakoj" : "toybox";
     targetScore = Number(message.targetScore) || 10;
@@ -2006,6 +2025,14 @@ function resetSelf() {
   celebrationSeenWinner = "";
   resultWinnerSeen = "";
   killcamUntil = 0;
+  flowScore = 0;
+  flowCombo = 0;
+  flowUntil = 0;
+  lastFlowAt = 0;
+  lastSelfKills = 0;
+  lastSelfScore = 0;
+  lastSelfHealth = 100;
+  updateFlowHud(performance.now());
   endCelebration();
   document.body.classList.remove("scoped");
   killcamCard.classList.remove("show");
@@ -2622,8 +2649,17 @@ function updateFireworks(delta: number) {
 function updateHud(feed: FeedItem[]) {
   const now = performance.now();
   if (now - lastHudRenderedAt < 240) return;
+  updateFlowHud(now);
   lastHudRenderedAt = now;
   const me = players.get(self.id);
+  if (me) {
+    if (me.kills > lastSelfKills) addFlowReward(34 + Math.min(18, (me.kills - lastSelfKills - 1) * 6), "連続キル");
+    if (me.score > lastSelfScore && me.kills === lastSelfKills) addFlowReward(18, "チーム前進");
+    if (me.health < lastSelfHealth - 12) addFlowReward(8, "立て直し");
+    lastSelfKills = me.kills;
+    lastSelfScore = me.score;
+    lastSelfHealth = me.health;
+  }
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${Math.max(0, me?.health ?? self.health)}%`;
   ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
@@ -2647,7 +2683,10 @@ function updateHud(feed: FeedItem[]) {
       : `アシナガバチ(Q) ${charge}/4`;
   donPunchButton.classList.toggle("ready", ready);
   donPunchButton.classList.toggle("super", charge >= 8);
-  if (ready && !lastDonPunchReady) showToast(charge >= 8 ? "ドンパチ発動可能" : "アシナガバチ発動可能");
+  if (ready && !lastDonPunchReady) {
+    addFlowReward(charge >= 8 ? 24 : 16, charge >= 8 ? "ドンパチ準備完了" : "必殺準備完了");
+    showToast(charge >= 8 ? "ドンパチ発動可能" : "アシナガバチ発動可能");
+  }
   lastDonPunchReady = ready;
   const latency = self.latency > 0 ? Math.round(self.latency) : null;
   const fps = measuredFps;
@@ -2663,7 +2702,7 @@ function updateHud(feed: FeedItem[]) {
   updateSlots();
   updateScoreboard();
   updateFeed(feed);
-  if (now - lastMinimapRenderedAt > 500) {
+  if (now - lastMinimapRenderedAt > 100) {
     lastMinimapRenderedAt = now;
     drawMinimap();
   }
@@ -2675,6 +2714,41 @@ function showHitIndicator(damagedSelf: boolean, damage: number) {
   hitMarker.classList.remove("show");
   void hitMarker.offsetWidth;
   hitMarker.classList.add("show");
+  if (!damagedSelf && damage > 0) addFlowReward(Math.min(22, 8 + damage / 5), damage >= 70 ? "大ダメージ" : "命中継続");
+}
+
+function addFlowReward(amount: number, label: string) {
+  const now = performance.now();
+  flowScore = Math.min(100, flowScore + amount);
+  flowCombo = now < flowUntil ? Math.min(9, flowCombo + 1) : 1;
+  flowUntil = now + 2600;
+  flowLabel.textContent = flowCombo >= 3 ? `FLOW x${flowCombo}` : "FLOW";
+  flowText.textContent = label;
+  flowCard.classList.remove("pulse");
+  void flowCard.offsetWidth;
+  flowCard.classList.add("pulse");
+  updateFlowHud(now);
+}
+
+function updateFlowHud(now = performance.now()) {
+  const elapsed = Math.min(0.5, Math.max(0, (now - (lastFlowAt || now)) / 1000));
+  lastFlowAt = now;
+  if (now > flowUntil) {
+    flowScore = Math.max(0, flowScore - elapsed * 10);
+    flowCombo = 0;
+    if (flowScore <= 1) {
+      flowLabel.textContent = "FLOW";
+      flowText.textContent = "次の一撃";
+    }
+  } else {
+    flowScore = Math.max(0, flowScore - elapsed * 2.2);
+  }
+  const hot = flowScore >= 68;
+  const active = flowScore >= 12 || now < flowUntil;
+  flowBar.style.width = `${Math.round(flowScore)}%`;
+  flowCard.classList.toggle("active", active);
+  flowCard.classList.toggle("hot", hot);
+  document.body.classList.toggle("flowing", hot);
 }
 
 function updateSlots() {
@@ -2755,13 +2829,22 @@ function drawMinimap() {
     );
   }
   const me = players.get(self.id);
-  if (me) {
-    const selfX = 110 + me.x * mapScale;
-    const selfZ = 110 + me.z * mapScale;
-    const yaw = me.yaw ?? self.yaw;
+  if (me || self.joined) {
+    const selfX = 110 + self.position.x * mapScale;
+    const selfZ = 110 + self.position.z * mapScale;
+    const yaw = self.yaw;
+    const forwardX = Math.sin(yaw) * -1;
+    const forwardZ = -Math.cos(yaw);
     minimap.save();
     minimap.translate(selfX, selfZ);
-    minimap.rotate(yaw);
+    minimap.strokeStyle = "rgba(147, 228, 60, .55)";
+    minimap.lineWidth = 5;
+    minimap.lineCap = "round";
+    minimap.beginPath();
+    minimap.moveTo(0, 0);
+    minimap.lineTo(forwardX * 25, forwardZ * 25);
+    minimap.stroke();
+    minimap.rotate(-yaw);
     minimap.fillStyle = "#ffffff";
     minimap.strokeStyle = "rgba(147, 228, 60, .95)";
     minimap.lineWidth = 3;

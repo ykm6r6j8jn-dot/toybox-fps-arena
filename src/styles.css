@@ -71,6 +71,7 @@ button {
 .top-center,
 .minimap,
 .feed,
+.flow-card,
 .status-strip,
 .lobby-strip,
 .scoreboard,
@@ -386,6 +387,79 @@ button {
   color: white;
 }
 
+.flow-card {
+  left: 24px;
+  top: 324px;
+  width: 220px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(18, 34, 48, 0.58);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(9, 26, 40, 0.14);
+  opacity: 0.62;
+  transform: translateY(0);
+  transition: opacity 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+
+.flow-card span {
+  display: block;
+  color: rgba(211, 231, 243, 0.82);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.flow-card strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.flow-card div {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.flow-card i {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #93e43c, #fff36b);
+  transition: width 0.2s ease;
+}
+
+.flow-card.active {
+  opacity: 0.92;
+  border-color: rgba(147, 228, 60, 0.48);
+  transform: translateY(-2px);
+}
+
+.flow-card.hot {
+  background: rgba(26, 45, 54, 0.72);
+  box-shadow: 0 0 0 2px rgba(255, 243, 107, 0.22), 0 0 22px rgba(147, 228, 60, 0.18);
+}
+
+.flow-card.hot i {
+  background: linear-gradient(90deg, #93e43c, #fff36b, #ff8a2a);
+}
+
+.flow-card.pulse {
+  animation: flow-pulse 0.42s ease-out;
+}
+
+body.flowing .center-reticle span {
+  background: rgba(255, 243, 107, 0.96);
+  box-shadow: 0 0 12px rgba(255, 243, 107, 0.34);
+}
+
 .killcam-card,
 .spectator-card {
   position: absolute;
@@ -454,6 +528,18 @@ button {
   100% {
     opacity: 0;
     transform: translate(-50%, -12px) scale(1);
+  }
+}
+
+@keyframes flow-pulse {
+  0% {
+    transform: translateY(3px) scale(0.98);
+  }
+  48% {
+    transform: translateY(-3px) scale(1.02);
+  }
+  100% {
+    transform: translateY(-2px) scale(1);
   }
 }
 
@@ -1621,6 +1707,17 @@ body.celebrating::after {
   .minimap canvas {
     width: 132px;
     height: 132px;
+  }
+
+  .flow-card {
+    top: 262px;
+    left: 10px;
+    width: 132px;
+    padding: 8px;
+  }
+
+  .flow-card strong {
+    font-size: 12px;
   }
 
   .feed {

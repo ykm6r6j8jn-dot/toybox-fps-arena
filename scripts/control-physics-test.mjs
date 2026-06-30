@@ -18,6 +18,13 @@ function movementBasis(yaw) {
   return { forward, right };
 }
 
+function minimapForward(yaw) {
+  return {
+    x: -Math.sin(yaw),
+    z: -Math.cos(yaw)
+  };
+}
+
 function near(actual, expected, label) {
   assert(Math.abs(actual - expected) < 0.001, `${label}: expected ${expected}, got ${actual}`);
 }
@@ -40,6 +47,18 @@ function near(actual, expected, label) {
   const { forward } = movementBasis(-Math.PI / 2);
   near(forward.x, 1, "yaw-90 forward x");
   near(forward.z, 0, "yaw-90 forward z");
+}
+
+{
+  const north = minimapForward(0);
+  near(north.x, 0, "minimap yaw0 x");
+  near(north.z, -1, "minimap yaw0 z");
+  const west = minimapForward(Math.PI / 2);
+  near(west.x, -1, "minimap yaw+90 x");
+  near(west.z, 0, "minimap yaw+90 z");
+  const east = minimapForward(-Math.PI / 2);
+  near(east.x, 1, "minimap yaw-90 x");
+  near(east.z, 0, "minimap yaw-90 z");
 }
 
 const colliders = [
