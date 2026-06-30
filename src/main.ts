@@ -27,6 +27,7 @@ import {
 type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
 type GameMode = "score10" | "duel" | "life3" | "castle";
+type ArenaId = "toybox" | "okakoj";
 
 type PlayerState = {
   id: string;
@@ -152,6 +153,7 @@ const roomInput = $("#roomInput") as HTMLInputElement;
 const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
 const teamSelect = $("#teamSelect");
+const arenaSelect = $("#arenaSelect");
 const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
@@ -242,13 +244,14 @@ const tracers: { mesh: THREE.Group; life: number }[] = [];
 const fireworks: { mesh: THREE.Points; velocities: THREE.Vector3[]; life: number }[] = [];
 const donPunches = new Map<string, { mesh: THREE.Group; expiresAt: number; targetId: string }>();
 const players = new Map<string, PlayerState>();
+const arenaObjects: THREE.Object3D[] = [];
 const minimapBoxes: { x: number; z: number; w: number; h: number }[] = [];
 const keys = new Set<string>();
 const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "Space"]);
 const arenaHalfSize = 66;
 const playerRadius = 0.24;
 const jumpVelocity = 7.2;
-type GunKind = "rifle" | "smg" | "shotgun" | "marksman" | "burst";
+type GunKind = "rifle" | "ak47" | "aug" | "smg" | "shotgun" | "marksman" | "awm" | "type95";
 type Gun = {
   kind: GunKind;
   name: string;
@@ -261,13 +264,17 @@ type Gun = {
 };
 const guns: Gun[] = [
   { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, tracerColor: 0xfff36b },
+  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, tracerColor: 0xffb347 },
+  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, tracerColor: 0x78f5ff },
   { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, tracerColor: 0x44d7ff },
   { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, tracerColor: 0xff8a3d },
   { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, tracerColor: 0xdfff7a },
-  { kind: "burst", name: "BRST", magSize: 24, fireDelay: 190, pelletCount: 3, spread: 0.01, range: 64, tracerColor: 0xff4dff }
+  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, tracerColor: 0xffffff },
+  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, tracerColor: 0xff4dff }
 ];
 let currentGunIndex = 0;
 const currentGun = () => guns[currentGunIndex];
+const isScopedGun = (gun = currentGun()) => gun.kind === "marksman" || gun.kind === "awm";
 let soundEnabled = localStorage.getItem("toybox-sound") !== "off";
 let customColor = localStorage.getItem("toybox-color") || "#1598f0";
 let audioContext: AudioContext | null = null;
@@ -296,6 +303,8 @@ let reloadTimer = 0;
 let roundSeconds = 525;
 let targetScore = 10;
 let gameMode: GameMode = "score10";
+let arenaChoice: ArenaId = (localStorage.getItem("toybox-arena") as ArenaId) === "okakoj" ? "okakoj" : "toybox";
+let currentArena: ArenaId = "toybox";
 let teamChoice: TeamChoice = (localStorage.getItem("toybox-team") as TeamChoice) || "auto";
 let celebrationUntil = 0;
 let lastFireworkAt = 0;
@@ -415,6 +424,55 @@ function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice) {
   return true;
 }
 
+function setArenaChoice(arena: ArenaId) {
+  arenaChoice = arena === "okakoj" ? "okakoj" : "toybox";
+  localStorage.setItem("toybox-arena", arenaChoice);
+  for (const button of arenaSelect.querySelectorAll<HTMLButtonElement>("[data-arena]")) {
+    button.classList.toggle("active", button.dataset.arena === arenaChoice);
+  }
+}
+
+function trackArenaObject<T extends THREE.Object3D>(object: T) {
+  arenaObjects.push(object);
+  scene.add(object);
+  return object;
+}
+
+function clearArenaObjects() {
+  for (const object of arenaObjects.splice(0)) {
+    scene.remove(object);
+    object.traverse((child) => {
+      const mesh = child as THREE.Mesh | THREE.Line | THREE.Points;
+      mesh.geometry?.dispose();
+      const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(material)) {
+        for (const item of material) item.dispose();
+      } else {
+        material?.dispose();
+      }
+    });
+  }
+  colliders.length = 0;
+  minimapBoxes.length = 0;
+  stairZones.length = 0;
+  walkSurfaces.length = 0;
+  trampolines.length = 0;
+  barrierMesh = null;
+  healthPickupMesh = null;
+  castleCoreMeshes.clear();
+  castleCores.clear();
+}
+
+function switchArena(arena: ArenaId) {
+  const nextArena = arena === "okakoj" ? "okakoj" : "toybox";
+  if (currentArena === nextArena && arenaObjects.length > 0) return;
+  clearArenaObjects();
+  currentArena = nextArena;
+  if (nextArena === "okakoj") addOkakoJArena();
+  else addToyboxArena();
+  lastSafePosition.copy(self.position);
+}
+
 function makeMaterial(color: number, roughness = 0.82) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.04 });
 }
@@ -453,7 +511,7 @@ function addBox(
   const box = new THREE.Mesh(new THREE.BoxGeometry(scale[0], scale[1], scale[2]), material);
   box.name = name;
   box.position.set(position[0], position[1], position[2]);
-  scene.add(box);
+  trackArenaObject(box);
   if (collidable) {
     const collider = new THREE.Box3().setFromObject(box);
     colliders.push(collider);
@@ -485,7 +543,8 @@ function addTrampoline(name: string, x: number, z: number, radius = 2.2, force =
   const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.08, 6, 16), materials.yellow);
   ring.rotation.x = Math.PI / 2;
   ring.position.set(x, 0.24, z);
-  scene.add(pad, ring);
+  trackArenaObject(pad);
+  trackArenaObject(ring);
 }
 
 function addBarrierPowerup() {
@@ -501,7 +560,7 @@ function addBarrierPowerup() {
   ringB.position.y = 0.78;
   group.add(base, core, ringA, ringB);
   group.position.set(-60, 0.16, 60);
-  scene.add(group);
+  trackArenaObject(group);
   barrierMesh = group;
 }
 
@@ -518,7 +577,7 @@ function addHealthPickupMesh() {
   ring.rotation.x = Math.PI / 2;
   group.add(base, vertical, horizontal, ring);
   group.visible = false;
-  scene.add(group);
+  trackArenaObject(group);
   healthPickupMesh = group;
 }
 
@@ -559,7 +618,7 @@ function createCastleCoreMesh(team: PlayerColor) {
   flag.position.set(-0.92, 2.35, 0);
   group.add(base, plinth, core, glow, ring, halo, beam, mast, flag);
   group.visible = false;
-  scene.add(group);
+  trackArenaObject(group);
   return group;
 }
 
@@ -612,7 +671,7 @@ function addRealismDetails() {
     lineIndex += 1;
   }
   roadLines.instanceMatrix.needsUpdate = true;
-  scene.add(roadLines);
+  trackArenaObject(roadLines);
 
   const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x243847 });
   const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.52, 0.34), windowMaterial, 176);
@@ -660,7 +719,7 @@ function addRealismDetails() {
   addWindowFace(47.52, 2.0, -44, 3, 5, 0.92, 1.02, "west");
   addWindowFace(-49.52, 2.0, 0, 3, 7, 0.92, 1.02, "east");
   windows.instanceMatrix.needsUpdate = true;
-  scene.add(windows);
+  trackArenaObject(windows);
 
   const ventMaterial = new THREE.MeshBasicMaterial({ color: 0x6c757c });
   const vents = new THREE.InstancedMesh(new THREE.BoxGeometry(0.75, 0.28, 0.5), ventMaterial, 18);
@@ -672,7 +731,7 @@ function addRealismDetails() {
     vents.setMatrixAt(i, detail.matrix);
   }
   vents.instanceMatrix.needsUpdate = true;
-  scene.add(vents);
+  trackArenaObject(vents);
 
   const roofProps = new THREE.InstancedMesh(new THREE.BoxGeometry(1.05, 0.44, 0.78), materials.metal, 36);
   for (let i = 0; i < roofProps.count; i += 1) {
@@ -694,7 +753,7 @@ function addRealismDetails() {
     roofProps.setMatrixAt(i, detail.matrix);
   }
   roofProps.instanceMatrix.needsUpdate = true;
-  scene.add(roofProps);
+  trackArenaObject(roofProps);
 
   const railMaterial = new THREE.MeshBasicMaterial({ color: 0xdfe7ec });
   const rails = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.08, 0.08), railMaterial, 56);
@@ -719,7 +778,7 @@ function addRealismDetails() {
     }
   }
   rails.instanceMatrix.needsUpdate = true;
-  scene.add(rails);
+  trackArenaObject(rails);
 
   const lightMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0a8 });
   const laneLights = new THREE.InstancedMesh(new THREE.BoxGeometry(0.28, 0.08, 0.28), lightMaterial, 48);
@@ -732,10 +791,10 @@ function addRealismDetails() {
     laneLights.setMatrixAt(i, detail.matrix);
   }
   laneLights.instanceMatrix.needsUpdate = true;
-  scene.add(laneLights);
+  trackArenaObject(laneLights);
 }
 
-function addArena() {
+function addToyboxArena() {
   addBox("floor", [0, -0.05, 0], [136, 0.1, 136], materials.floor, false);
 
   addBox("north wall", [0, 1.2, -67.5], [136, 2.4, 1], materials.wall);
@@ -852,7 +911,7 @@ function addArena() {
   const ramp = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.28, 3.4), materials.green);
   ramp.rotation.x = -0.45;
   ramp.position.set(18, 0.9, 10);
-  scene.add(ramp);
+  trackArenaObject(ramp);
 
   for (let i = 0; i < 14; i += 1) {
     const color = i % 3 === 0 ? materials.green : i % 3 === 1 ? materials.blue : materials.yellow;
@@ -865,6 +924,80 @@ function addArena() {
   addSign("BROADCAST", [0, 7.0, 45.75], 0, "#9a62ff");
   addSign("ROOF ROUTE", [15, 4.8, -17.72], Math.PI, "#93e43c");
   addSign("CENTER", [0, 2.35, -57.45], Math.PI, "#111827");
+}
+
+function addOkakoJArena() {
+  addBox("okako field", [0, -0.05, 0], [136, 0.1, 136], makeMaterial(0x9ecb72, 0.96), false);
+  addBox("okako north fence", [0, 1.2, -67.5], [136, 2.4, 1], materials.wall);
+  addBox("okako south fence", [0, 1.2, 67.5], [136, 2.4, 1], materials.wall);
+  addBox("okako west fence", [-67.5, 1.2, 0], [1, 2.4, 136], materials.wall);
+  addBox("okako east fence", [67.5, 1.2, 0], [1, 2.4, 136], materials.wall);
+
+  const floorMat = makeMaterial(0xd9dde0, 0.9);
+  const wallMat = makeMaterial(0xe8ecef, 0.82);
+  const gymMat = makeMaterial(0xb8d4e8, 0.86);
+  const labMat = makeMaterial(0xd7ddc7, 0.84);
+  const trackMat = makeMaterial(0xb86551, 0.94);
+
+  const addSchoolBuilding = (prefix: string, x: number, z: number, w: number, d: number, h: number, mat: THREE.Material) => {
+    addBox(`${prefix} floor`, [x, 0.04, z], [w, 0.12, d], floorMat, false);
+    addBox(`${prefix} roof`, [x, h + 0.08, z], [w, 0.18, d], materials.metal, false);
+    addBox(`${prefix} back wall`, [x, h / 2, z - d / 2], [w, h, 0.42], mat);
+    addBox(`${prefix} front wall left`, [x - w * 0.31, h / 2, z + d / 2], [w * 0.38, h, 0.42], mat);
+    addBox(`${prefix} front wall right`, [x + w * 0.31, h / 2, z + d / 2], [w * 0.38, h, 0.42], mat);
+    addBox(`${prefix} side wall west`, [x - w / 2, h / 2, z], [0.42, h, d], mat);
+    addBox(`${prefix} side wall east`, [x + w / 2, h / 2, z], [0.42, h, d], mat);
+    addBox(`${prefix} corridor line`, [x, 0.08, z + d * 0.18], [w - 3, 0.08, 0.32], materials.yellow, false);
+    for (let i = -2; i <= 2; i += 1) {
+      addBox(`${prefix} classroom partition ${i}`, [x + i * (w / 6), 1.25, z - d * 0.05], [0.24, 2.5, d * 0.55], wallMat);
+      addBox(`${prefix} desk row ${i}`, [x + i * (w / 6), 0.44, z + d * 0.15], [2.2, 0.42, 0.72], materials.dark, false);
+    }
+    addWalkSurface([x, h + 0.08, z], [w, 0.18, d]);
+  };
+
+  addSchoolBuilding("okako main school", -22, -28, 48, 14, 4.4, wallMat);
+  addSchoolBuilding("okako lab wing", 36, -24, 24, 16, 5.2, labMat);
+  addSchoolBuilding("okako club wing", -44, 22, 22, 12, 3.8, wallMat);
+
+  addBox("okako gym floor", [30, 0.05, 28], [28, 0.12, 22], floorMat, false);
+  addBox("okako gym north wall", [30, 3.1, 17], [28, 6.2, 0.48], gymMat);
+  addBox("okako gym south wall left", [21.5, 3.1, 39], [9, 6.2, 0.48], gymMat);
+  addBox("okako gym south wall right", [39.5, 3.1, 39], [9, 6.2, 0.48], gymMat);
+  addBox("okako gym west wall", [16, 3.1, 28], [0.48, 6.2, 22], gymMat);
+  addBox("okako gym east wall", [44, 3.1, 28], [0.48, 6.2, 22], gymMat);
+  addBox("okako gym roof", [30, 6.3, 28], [29, 0.28, 23], materials.metal, false);
+  addBox("okako gym court", [30, 0.11, 28], [22, 0.08, 15], makeMaterial(0xe3b36c, 0.9), false);
+  addBox("okako gym stage", [30, 0.55, 18.8], [12, 1.1, 2.5], materials.red);
+  addWalkSurface([30, 6.3, 28], [29, 0.28, 23]);
+
+  addBox("okako workshop machine a", [34, 0.62, -27], [3.2, 1.24, 1.8], materials.metal);
+  addBox("okako workshop machine b", [41, 0.62, -22], [3.2, 1.24, 1.8], materials.metal);
+  addBox("okako workshop table a", [29, 0.48, -19], [5.2, 0.96, 1.2], materials.dark);
+  addBox("okako workshop table b", [39, 0.48, -30], [5.2, 0.96, 1.2], materials.dark);
+
+  addBox("okako athletic track north", [-8, 0.04, 27], [44, 0.08, 2.2], trackMat, false);
+  addBox("okako athletic track south", [-8, 0.04, 49], [44, 0.08, 2.2], trackMat, false);
+  addBox("okako athletic track west", [-31, 0.04, 38], [2.2, 0.08, 22], trackMat, false);
+  addBox("okako athletic track east", [15, 0.04, 38], [2.2, 0.08, 22], trackMat, false);
+  addBox("okako soccer goal north", [-8, 1.0, 25], [8, 2, 0.4], materials.wall, false);
+  addBox("okako soccer goal south", [-8, 1.0, 51], [8, 2, 0.4], materials.wall, false);
+  addBox("okako bleacher a", [-50, 0.45, 39], [11, 0.9, 2], materials.blue);
+  addBox("okako bleacher b", [-50, 1.15, 43], [11, 0.9, 2], materials.blue);
+  addBox("okako bleacher c", [-50, 1.85, 47], [11, 0.9, 2], materials.blue);
+
+  addBox("okako sky bridge", [5, 3.2, -25], [20, 0.52, 2.4], materials.glass, false);
+  addWalkSurface([5, 3.2, -25], [20, 0.52, 2.4]);
+  addStairs("okako main stairs", [-42, 0.15, -20], 10, 0.44, 0.9, Math.PI / 2);
+  addStairs("okako lab stairs", [24, 0.15, -15], 12, 0.44, 0.88, -Math.PI / 2);
+  addStairs("okako gym stairs", [18, 0.15, 40], 14, 0.44, 0.9, Math.PI);
+
+  addTrampoline("okako long jump pad", -20, 32, 2.2, 13.2);
+  addBarrierPowerup();
+  addHealthPickupMesh();
+  addSign("OKAKO-J", [-22, 5.2, -20.75], 0, "#1598f0");
+  addSign("LAB", [35.8, 5.8, -15.75], 0, "#5f7d3b");
+  addSign("GYM", [30, 4.7, 39.35], Math.PI, "#2563eb");
+  addSign("FIELD", [-8, 1.8, 24], 0, "#b86551");
 }
 
 function addStairs(name: string, origin: [number, number, number], count: number, rise: number, run: number, yaw: number) {
@@ -909,7 +1042,7 @@ function addSign(label: string, position: [number, number, number], yaw: number,
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.18), makeSignMaterial(label, background));
   sign.position.set(position[0], position[1], position[2]);
   sign.rotation.y = yaw;
-  scene.add(sign);
+  trackArenaObject(sign);
 }
 
 function addSky() {
@@ -934,8 +1067,8 @@ function addWeapon() {
   const gun = currentGun();
   const weapon = new THREE.Group();
   weapon.name = "weaponView";
-  const receiverLength = gun.kind === "shotgun" ? 1.34 : gun.kind === "smg" ? 0.82 : gun.kind === "marksman" ? 1.42 : 1.12;
-  const barrelLength = gun.kind === "marksman" ? 1.46 : gun.kind === "shotgun" ? 1.08 : gun.kind === "smg" ? 0.66 : 0.96;
+  const receiverLength = gun.kind === "shotgun" ? 1.34 : gun.kind === "smg" ? 0.82 : isScopedGun(gun) ? 1.42 : 1.12;
+  const barrelLength = isScopedGun(gun) ? 1.46 : gun.kind === "shotgun" ? 1.08 : gun.kind === "smg" ? 0.66 : 0.96;
   const addPart = (mesh: THREE.Mesh, position: [number, number, number], rotation: [number, number, number] = [0, 0, 0]) => {
     mesh.position.set(position[0], position[1], position[2]);
     mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
@@ -958,12 +1091,12 @@ function addWeapon() {
   const stockLength = gun.kind === "smg" ? 0.28 : gun.kind === "shotgun" ? 0.62 : 0.54;
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, stockLength), materials.rubber), [0.45, -0.34, -0.14], [-0.16, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.12), materials.rubber), [0.45, -0.42, 0.18], [-0.18, 0, 0]);
-  const magHeight = gun.kind === "smg" ? 0.54 : gun.kind === "shotgun" ? 0.18 : gun.kind === "marksman" ? 0.28 : 0.38;
+  const magHeight = gun.kind === "smg" ? 0.54 : gun.kind === "shotgun" ? 0.18 : isScopedGun(gun) ? 0.28 : 0.38;
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.19, magHeight, 0.26), materials.metal), [0.42, -0.54, -0.68], [0.22, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.34, 0.14), materials.rubber), [0.42, -0.54, -0.38], [-0.22, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.72), materials.metal), [0.25, -0.21, -0.95]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.72), materials.metal), [0.59, -0.21, -0.95]);
-  if (gun.kind === "marksman") {
+  if (isScopedGun(gun)) {
     addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.72, 16), materials.rubber), [0.42, -0.08, -0.92], [0, 0, Math.PI / 2]);
     addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), materials.metal), [0.78, -0.08, -0.92], [0, 0, Math.PI / 2]);
     addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), materials.metal), [0.06, -0.08, -0.92], [0, 0, Math.PI / 2]);
@@ -1037,7 +1170,7 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 addLights();
-addArena();
+switchArena(arenaChoice);
 addSky();
 addWeapon();
 
@@ -1076,7 +1209,7 @@ document.addEventListener("keydown", (event) => {
     scoreboard.classList.add("open");
   }
   if (event.code === "KeyR") reload();
-  if (["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"].includes(event.code)) switchGun(Number(event.code.slice(-1)) - 1);
+  if (/^Digit[1-8]$/.test(event.code)) switchGun(Number(event.code.slice(-1)) - 1);
 });
 
 document.addEventListener("keyup", (event) => {
@@ -1104,7 +1237,7 @@ canvas.addEventListener("pointerdown", (event) => {
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
   }
-  if (event.button === 2 && currentGun().kind === "marksman") {
+  if (event.button === 2 && isScopedGun()) {
     scoped = !scoped;
     document.body.classList.toggle("scoped", scoped);
     return;
@@ -1169,6 +1302,15 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-team]")
       return;
     }
     setTeamChoice(team);
+  });
+}
+
+for (const button of arenaSelect.querySelectorAll<HTMLButtonElement>("[data-arena]")) {
+  button.addEventListener("click", () => {
+    const arena = button.dataset.arena === "okakoj" ? "okakoj" : "toybox";
+    setArenaChoice(arena);
+    if (!self.joined) switchArena(arenaChoice);
+    else showToast("会場は新しいルーム作成時に反映されます。");
   });
 }
 chatForm.addEventListener("submit", (event) => {
@@ -1362,8 +1504,8 @@ mobileReload.addEventListener("pointerdown", (event) => {
 mobileScope.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (currentGun().kind !== "marksman") {
-    showToast("DMRのみスコープ");
+  if (!isScopedGun()) {
+    showToast("DMR/AWMのみスコープ");
     return;
   }
   scoped = !scoped;
@@ -1378,6 +1520,7 @@ setCustomColor(customColor);
 setSoundEnabled(soundEnabled);
 setGameMode(gameMode);
 setTeamChoice(teamChoice);
+setArenaChoice(arenaChoice);
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -1409,7 +1552,7 @@ function join(room: string) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
 socket.addEventListener("open", () => {
-    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, team: teamChoice, cosmeticColor: customColor });
+    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, cosmeticColor: customColor });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -1429,8 +1572,11 @@ function handleMessage(event: MessageEvent<string>) {
     self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z);
     self.pitch = 0;
     gameMode = (message.gameMode as GameMode) || "score10";
+    arenaChoice = message.arena === "okakoj" ? "okakoj" : "toybox";
     targetScore = Number(message.targetScore) || 10;
     setGameMode(gameMode);
+    setArenaChoice(arenaChoice);
+    switchArena(arenaChoice);
     setTeamChoice((message.team as TeamChoice) || teamChoice);
     roomCodeEl.textContent = self.room;
     joinPanel.classList.add("hidden");
@@ -1442,6 +1588,11 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "snapshot") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
+    if (message.arena) {
+      arenaChoice = message.arena === "okakoj" ? "okakoj" : "toybox";
+      setArenaChoice(arenaChoice);
+      switchArena(arenaChoice);
+    }
     if (!message.winner) {
       resultWinnerSeen = "";
       resultPanel.classList.remove("open");
@@ -1666,10 +1817,13 @@ function playGunSound(gun: Gun) {
   const now = audioContext.currentTime;
   const profile = {
     rifle: { thump: 92, crack: 760, dur: 0.11, vol: 0.16 },
+    ak47: { thump: 74, crack: 720, dur: 0.13, vol: 0.18 },
+    aug: { thump: 96, crack: 940, dur: 0.1, vol: 0.14 },
     smg: { thump: 118, crack: 980, dur: 0.075, vol: 0.11 },
     shotgun: { thump: 64, crack: 520, dur: 0.18, vol: 0.22 },
     marksman: { thump: 78, crack: 1220, dur: 0.15, vol: 0.18 },
-    burst: { thump: 104, crack: 860, dur: 0.09, vol: 0.12 }
+    awm: { thump: 48, crack: 1420, dur: 0.2, vol: 0.24 },
+    type95: { thump: 104, crack: 860, dur: 0.09, vol: 0.12 }
   }[gun.kind];
 
   const noise = audioContext.createBufferSource();
@@ -1917,7 +2071,7 @@ function shoot() {
   }
   self.lastShot = now;
   self.ammo -= 1;
-  weaponKick = Math.min(1, weaponKick + (gun.kind === "shotgun" ? 0.42 : gun.kind === "marksman" ? 0.32 : 0.22));
+  weaponKick = Math.min(1, weaponKick + (gun.kind === "shotgun" ? 0.42 : isScopedGun(gun) ? 0.32 : 0.22));
   flashMuzzle();
   for (let i = 0; i < gun.pelletCount; i += 1) {
     const direction = getLookDirection();
@@ -2089,7 +2243,7 @@ function updateCamera() {
     camera.rotation.y = self.yaw;
     camera.rotation.x = self.pitch;
   }
-  const targetFov = scoped && currentGun().kind === "marksman" ? 31 : 72;
+  const targetFov = scoped && isScopedGun() ? 31 : 72;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
     camera.fov += (targetFov - camera.fov) * 0.28;
     camera.updateProjectionMatrix();
@@ -2600,11 +2754,26 @@ function drawMinimap() {
       box.h * mapScale
     );
   }
-  for (const player of players.values()) {
-    minimap.fillStyle = player.id === self.id ? "#ffffff" : player.color === "blue" ? "#18aef5" : "#ff4a48";
+  const me = players.get(self.id);
+  if (me) {
+    const selfX = 110 + me.x * mapScale;
+    const selfZ = 110 + me.z * mapScale;
+    const yaw = me.yaw ?? self.yaw;
+    minimap.save();
+    minimap.translate(selfX, selfZ);
+    minimap.rotate(yaw);
+    minimap.fillStyle = "#ffffff";
+    minimap.strokeStyle = "rgba(147, 228, 60, .95)";
+    minimap.lineWidth = 3;
     minimap.beginPath();
-    minimap.arc(110 + player.x * mapScale, 110 + player.z * mapScale, player.id === self.id ? 8 : 6, 0, Math.PI * 2);
+    minimap.moveTo(0, -14);
+    minimap.lineTo(8, 8);
+    minimap.lineTo(0, 4);
+    minimap.lineTo(-8, 8);
+    minimap.closePath();
     minimap.fill();
+    minimap.stroke();
+    minimap.restore();
   }
   if (gameMode === "castle") {
     for (const core of castleCores.values()) {

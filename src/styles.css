@@ -1165,7 +1165,8 @@ body:not(.celebrating) .donpunch-button {
 }
 
 .mode-select,
-.team-select {
+.team-select,
+.arena-select {
   display: grid;
   gap: 8px;
 }
@@ -1178,8 +1179,13 @@ body:not(.celebrating) .donpunch-button {
   grid-template-columns: repeat(3, 1fr);
 }
 
+.arena-select {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .mode-select button,
-.team-select button {
+.team-select button,
+.arena-select button {
   min-width: 0;
   min-height: 64px;
   display: grid;
@@ -1193,7 +1199,8 @@ body:not(.celebrating) .donpunch-button {
 }
 
 .mode-select button.active,
-.team-select button.active {
+.team-select button.active,
+.arena-select button.active {
   border-color: rgba(147, 228, 60, 0.72);
   background: rgba(147, 228, 60, 0.2);
 }
@@ -1211,20 +1218,24 @@ body:not(.celebrating) .donpunch-button {
 .mode-select strong,
 .mode-select span,
 .team-select strong,
-.team-select span {
+.team-select span,
+.arena-select strong,
+.arena-select span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mode-select strong,
-.team-select strong {
+.team-select strong,
+.arena-select strong {
   font-size: 14px;
   font-weight: 950;
 }
 
 .mode-select span,
-.team-select span {
+.team-select span,
+.arena-select span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;
@@ -1560,6 +1571,10 @@ body.celebrating::after {
 
   .team-select {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .arena-select {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .top-left {
