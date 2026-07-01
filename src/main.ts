@@ -150,7 +150,6 @@ const minimapCanvas = $("#minimap") as HTMLCanvasElement;
 const minimap = minimapCanvas.getContext("2d")!;
 const joinPanel = $("#joinPanel");
 const nameInput = $("#nameInput") as HTMLInputElement;
-const roomInput = $("#roomInput") as HTMLInputElement;
 const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
 const teamSelect = $("#teamSelect");
@@ -158,7 +157,6 @@ const partySelect = $("#partySelect");
 const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
-const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
 const inviteButton = $("#inviteButton") as HTMLButtonElement;
@@ -205,6 +203,7 @@ const latencyEl = $("#latency");
 const blueScoreEl = $("#blueScore");
 const redScoreEl = $("#redScore");
 const playerCountEl = $("#playerCount");
+const memberToggle = $("#memberToggle") as HTMLButtonElement;
 const playerSlots = $("#playerSlots");
 const scoreRows = $("#scoreRows");
 const feedEl = $("#feed");
@@ -223,18 +222,17 @@ const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
 
-const params = new URLSearchParams(location.search);
-const requestedRoom = params.get("room");
-if (requestedRoom) roomInput.value = requestedRoom.toUpperCase();
 nameInput.value = localStorage.getItem("toybox-name") || `Player${Math.floor(Math.random() * 90 + 10)}`;
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: false,
+  antialias: true,
   powerPreference: "high-performance"
 });
 renderer.setClearColor(0x77c7ff);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.06;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x81ccff);
@@ -316,6 +314,7 @@ let arenaChoice: ArenaId = "toybox";
 let currentArena: ArenaId = "toybox";
 let teamChoice: TeamChoice = (localStorage.getItem("toybox-team") as TeamChoice) || "auto";
 let partySize: PartySize = ([1, 2, 4].includes(Number(localStorage.getItem("toybox-party-size"))) ? Number(localStorage.getItem("toybox-party-size")) : 1) as PartySize;
+let matchMaxPlayers = 20;
 let celebrationUntil = 0;
 let lastFireworkAt = 0;
 let winnerName = "";
@@ -392,7 +391,7 @@ let spectatorTargetId = "";
 let resultWinnerSeen = "";
 const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
-const maxPixelRatio = () => Math.min(window.devicePixelRatio, window.innerWidth < 860 ? 1.08 : 1.45);
+const maxPixelRatio = () => Math.min(window.devicePixelRatio, window.innerWidth < 860 ? 1.16 : 1.72);
 let activePixelRatio = maxPixelRatio();
 let frameAverageMs = 16.7;
 let measuredFps: number | null = null;
@@ -496,7 +495,7 @@ function switchArena(arena: ArenaId) {
 }
 
 function makeMaterial(color: number, roughness = 0.82) {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.04 });
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness: roughness < 0.55 ? 0.16 : 0.04 });
 }
 
 const materials = {
@@ -515,12 +514,24 @@ const materials = {
   light: new THREE.MeshBasicMaterial({ color: 0xfff0a8 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x8bd7ff, roughness: 0.2, metalness: 0.02, transparent: true, opacity: 0.34 })
 };
+const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x07121d, transparent: true, opacity: 0.17, depthWrite: false });
 
 function addLights() {
-  scene.add(new THREE.HemisphereLight(0xf6fbff, 0x8da66b, 2.05));
-  const sun = new THREE.DirectionalLight(0xfff1d0, 1.85);
-  sun.position.set(14, 24, 10);
+  scene.add(new THREE.HemisphereLight(0xf6fbff, 0x7b8f76, 2.18));
+  const sun = new THREE.DirectionalLight(0xfff0cb, 2.08);
+  sun.position.set(22, 34, 16);
   scene.add(sun);
+  const rim = new THREE.DirectionalLight(0x92d7ff, 0.42);
+  rim.position.set(-28, 18, -32);
+  scene.add(rim);
+}
+
+function addSoftShadow(name: string, position: [number, number, number], scale: [number, number, number]) {
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(Math.max(1.2, scale[0] * 1.12), Math.max(1.2, scale[2] * 1.12)), shadowMaterial);
+  shadow.name = `${name} shadow`;
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(position[0] + 0.38, 0.018, position[2] + 0.44);
+  trackArenaObject(shadow);
 }
 
 function addBox(
@@ -533,7 +544,10 @@ function addBox(
   const box = new THREE.Mesh(new THREE.BoxGeometry(scale[0], scale[1], scale[2]), material);
   box.name = name;
   box.position.set(position[0], position[1], position[2]);
+  box.castShadow = false;
+  box.receiveShadow = true;
   trackArenaObject(box);
+  if (collidable && scale[1] > 1.2 && scale[0] * scale[2] > 10) addSoftShadow(name, position, scale);
   if (collidable) {
     const collider = new THREE.Box3().setFromObject(box);
     colliders.push(collider);
@@ -696,7 +710,7 @@ function addRealismDetails() {
   trackArenaObject(roadLines);
 
   const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x243847 });
-  const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.52, 0.34), windowMaterial, 176);
+  const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.52, 0.34), windowMaterial, 320);
   let windowIndex = 0;
   const addWindowFace = (
     x: number,
@@ -740,14 +754,19 @@ function addRealismDetails() {
   addWindowFace(-16, 2.0, 56.55, 5, 4, 1.18, 1.04, "north");
   addWindowFace(47.52, 2.0, -44, 3, 5, 0.92, 1.02, "west");
   addWindowFace(-49.52, 2.0, 0, 3, 7, 0.92, 1.02, "east");
+  addWindowFace(0, 5.0, -82.45, 7, 12, 1.1, 1.45, "south");
+  addWindowFace(-79, 4.5, -68.75, 6, 10, 1.25, 1.45, "north");
+  addWindowFace(78, 5.0, 69.25, 5, 11, 1.25, 1.45, "south");
+  addWindowFace(72, 1.8, -49.75, 7, 2, 1.25, 0.92, "north");
+  addWindowFace(-72, 1.8, 49.75, 7, 2, 1.25, 0.92, "south");
   windows.instanceMatrix.needsUpdate = true;
   trackArenaObject(windows);
 
   const ventMaterial = new THREE.MeshBasicMaterial({ color: 0x6c757c });
-  const vents = new THREE.InstancedMesh(new THREE.BoxGeometry(0.75, 0.28, 0.5), ventMaterial, 18);
+  const vents = new THREE.InstancedMesh(new THREE.BoxGeometry(0.75, 0.28, 0.5), ventMaterial, 30);
   for (let i = 0; i < vents.count; i += 1) {
     const angle = i * 1.71;
-    detail.position.set(Math.sin(angle) * 48, 0.17, Math.cos(angle * 0.8) * 48);
+    detail.position.set(Math.sin(angle) * 74, 0.17, Math.cos(angle * 0.8) * 74);
     detail.rotation.set(0, angle, 0);
     detail.updateMatrix();
     vents.setMatrixAt(i, detail.matrix);
@@ -814,6 +833,40 @@ function addRealismDetails() {
   }
   laneLights.instanceMatrix.needsUpdate = true;
   trackArenaObject(laneLights);
+
+  const poleMaterial = new THREE.MeshBasicMaterial({ color: 0x2a343c });
+  const lampPoles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.055, 2.9, 6), poleMaterial, 44);
+  const lampHeads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.44, 0.16, 0.32), lightMaterial, 44);
+  for (let i = 0; i < 44; i += 1) {
+    const axis = i % 2 === 0;
+    const lane = -84 + Math.floor(i / 2) * 8;
+    const side = i % 4 < 2 ? -1 : 1;
+    detail.position.set(axis ? lane : side * 37, 1.45, axis ? side * 37 : lane);
+    detail.rotation.set(0, axis ? 0 : Math.PI / 2, 0);
+    detail.updateMatrix();
+    lampPoles.setMatrixAt(i, detail.matrix);
+    detail.position.y = 2.96;
+    detail.updateMatrix();
+    lampHeads.setMatrixAt(i, detail.matrix);
+  }
+  lampPoles.instanceMatrix.needsUpdate = true;
+  lampHeads.instanceMatrix.needsUpdate = true;
+  trackArenaObject(lampPoles);
+  trackArenaObject(lampHeads);
+
+  const carMaterial = new THREE.MeshStandardMaterial({ color: 0x273746, roughness: 0.64, metalness: 0.1 });
+  const parkedCars = new THREE.InstancedMesh(new THREE.BoxGeometry(2.2, 0.78, 4.1), carMaterial, 24);
+  for (let i = 0; i < parkedCars.count; i += 1) {
+    const row = i % 2 === 0 ? -1 : 1;
+    const x = -82 + (i % 12) * 14.4;
+    const z = row * (i % 3 === 0 ? 70 : 84);
+    detail.position.set(x, 0.43, z);
+    detail.rotation.set(0, row > 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+    detail.updateMatrix();
+    parkedCars.setMatrixAt(i, detail.matrix);
+  }
+  parkedCars.instanceMatrix.needsUpdate = true;
+  trackArenaObject(parkedCars);
 }
 
 function addOpenCityBuilding(prefix: string, x: number, z: number, w: number, d: number, h: number, material: THREE.Material, accent: THREE.Material) {
@@ -1329,7 +1382,11 @@ document.addEventListener("pointerdown", () => updateLobbyBgm(), { passive: true
 document.addEventListener("keydown", () => updateLobbyBgm());
 
 createRoomButton.addEventListener("click", () => join(""));
-joinRoomButton.addEventListener("click", () => join(roomInput.value));
+memberToggle.addEventListener("click", () => {
+  const open = !document.body.classList.contains("members-open");
+  document.body.classList.toggle("members-open", open);
+  memberToggle.textContent = open ? "メンバー収納" : "メンバー確認";
+});
 readyButton.addEventListener("click", () => {
   self.ready = !self.ready;
   readyButton.classList.toggle("active", self.ready);
@@ -1654,6 +1711,7 @@ function handleMessage(event: MessageEvent<string>) {
     gameMode = (message.gameMode as GameMode) || "score10";
     arenaChoice = "toybox";
     if (message.partySize) setPartySize(Number(message.partySize));
+    matchMaxPlayers = Number(message.maxPlayers) || 20;
     targetScore = Number(message.targetScore) || 10;
     setGameMode(gameMode);
     setArenaChoice(arenaChoice);
@@ -1670,6 +1728,7 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "snapshot") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
     if (message.partySize) setPartySize(Number(message.partySize));
+    if (message.maxPlayers) matchMaxPlayers = Number(message.maxPlayers) || matchMaxPlayers;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
     if (message.arena) {
       arenaChoice = "toybox";
@@ -2778,7 +2837,7 @@ function updateHud(feed: FeedItem[]) {
   latencyBox?.classList.toggle("bad", badConnection);
   latencyBox?.classList.toggle("ok", okConnection);
   latencyBox?.classList.toggle("good", goodConnection);
-  playerCountEl.textContent = `(${players.size}/8)`;
+  playerCountEl.textContent = `(${players.size}/${matchMaxPlayers})`;
   updateSlots();
   updateScoreboard();
   updateFeed(feed);
@@ -2833,11 +2892,11 @@ function updateFlowHud(now = performance.now()) {
 
 function updateSlots() {
   const list = [...players.values()].sort((a, b) => b.score - a.score);
-  const signature = `${gameMode}|${list.map((player) => `${player.id}:${player.color}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}`).join("|")}`;
+  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}`).join("|")}`;
   if (signature === slotsSignature) return;
   slotsSignature = signature;
   playerSlots.innerHTML = "";
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < matchMaxPlayers; i += 1) {
     const player = list[i];
     const slot = document.createElement("div");
     const canChangeTeam = Boolean(player) && (gameMode === "score10" || gameMode === "life3");

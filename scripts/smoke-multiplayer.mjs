@@ -50,9 +50,15 @@ send(alpha.ws, { type: "state", x: 24, y: 1.6, z: 24, yaw: 0, pitch: 0 });
 send(beta.ws, { type: "state", x: 24, y: 1.6, z: 18, yaw: Math.PI, pitch: 0 });
 
 await waitFor(
-  () => alpha.state.snapshots.some((snapshot) => snapshot.players?.length === 2) &&
-    beta.state.snapshots.some((snapshot) => snapshot.players?.length === 2),
-  "both clients see two players"
+  () => alpha.state.snapshots.some((snapshot) =>
+    snapshot.players?.some((player) => player.name === "Alpha") &&
+    snapshot.players?.some((player) => player.name === "Beta")
+  ) &&
+    beta.state.snapshots.some((snapshot) =>
+      snapshot.players?.some((player) => player.name === "Alpha") &&
+      snapshot.players?.some((player) => player.name === "Beta")
+    ),
+  "both clients see each other"
 );
 
 send(alpha.ws, {
@@ -83,4 +89,4 @@ await waitFor(
 
 alpha.ws.close();
 beta.ws.close();
-console.log(`smoke passed: room ${alpha.state.room}, 2 clients synced, hit resolved`);
+console.log(`smoke passed: room ${alpha.state.room}, clients synced, hit resolved`);

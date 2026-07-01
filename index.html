@@ -111,8 +111,9 @@
       <section class="lobby-strip">
         <div class="lobby-title">
           <strong>準備ルーム</strong>
-          <span id="playerCount">(0/8)</span>
+          <span id="playerCount">(0/20)</span>
         </div>
+        <button id="memberToggle" class="member-toggle" type="button">メンバー確認</button>
         <div class="player-slots" id="playerSlots"></div>
         <button id="readyButton" class="ready-button"><i data-lucide="check"></i><span>準備完了</span></button>
       </section>
@@ -220,10 +221,6 @@
             ニックネーム
             <input id="nameInput" maxlength="14" placeholder="プレイヤー" autocomplete="nickname" />
           </label>
-          <label>
-            ルームコード
-            <input id="roomInput" maxlength="6" placeholder="空なら自動マッチ" />
-          </label>
           <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
             <button type="button" class="active" data-mode="score10">
               <strong>10目標</strong>
@@ -272,7 +269,6 @@
           </div>
           <div class="join-actions">
             <button id="createRoom">自動マッチ開始</button>
-            <button id="joinRoom">参加</button>
           </div>
           <div class="online-panel">
             <strong>現在オンライン</strong>

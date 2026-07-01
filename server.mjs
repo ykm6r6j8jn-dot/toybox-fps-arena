@@ -8,8 +8,9 @@ import { WebSocketServer } from "ws";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 5188);
-const maxPlayers = 8;
-const maxCpuPlayers = 7;
+const maxPlayers = 20;
+const maxCpuPlayers = 19;
+const matchTeamSize = maxPlayers / 2;
 const defaultTargetScore = 10;
 const arenaHalfSize = 96;
 const donpachiSpeed = 14.8;
@@ -322,7 +323,7 @@ function findMatchRoom(mode = "score10", partySize = 1) {
   const size = normalizePartySize(partySize);
   for (const room of rooms.values()) {
     if (!room.matchmaking || room.winner || room.mode !== gameMode || room.partySize !== size) continue;
-    if (humanPlayers(room).length < size * 2) return room;
+    if (humanPlayers(room).length < maxPlayers) return room;
   }
   return null;
 }
@@ -345,7 +346,7 @@ function getRoom(code, mode = "score10", arena = "toybox", partySize = 1, matchm
     matchmaking,
     partySize: size,
     matchStarted: false,
-    maxHumanPlayers: size * 2,
+    maxHumanPlayers: maxPlayers,
     weaponStats: {},
     movementStats: { samples: 0, moving: 0, airborne: 0 },
     targetScore: gameMode === "score10" ? defaultTargetScore : 0,
@@ -917,6 +918,7 @@ setInterval(() => {
       gameMode: room.mode,
       arena: room.arena,
       partySize: room.partySize || 1,
+      maxPlayers: room.maxHumanPlayers || maxPlayers,
       targetScore: room.targetScore || defaultTargetScore,
       castleCores: room.castleCores,
       castleEndsAt: room.castleEndsAt || 0,
@@ -1257,7 +1259,7 @@ function syncMatchCpuFill(room) {
   for (const player of [...room.players.values()]) {
     if (player.isBot) room.players.delete(player.id);
   }
-  const teamTarget = normalizePartySize(room.partySize);
+  const teamTarget = matchTeamSize;
   const counts = { blue: 0, red: 0 };
   for (const player of humanPlayers(room)) {
     if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
@@ -1265,7 +1267,7 @@ function syncMatchCpuFill(room) {
   let botIndex = 0;
   for (const team of ["blue", "red"]) {
     const needed = Math.max(0, teamTarget - counts[team]);
-    for (let i = 0; i < needed && botIndex < maxCpuPlayers; i += 1) {
+    for (let i = 0; i < needed && botIndex < maxCpuPlayers && room.players.size < maxPlayers; i += 1) {
       const id = `cpu-${room.code}-match-${team}-${i}`;
       room.players.set(id, createCpuPlayer(room, id, botIndex, team));
       botIndex += 1;
