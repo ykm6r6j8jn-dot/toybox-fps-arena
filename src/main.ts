@@ -327,14 +327,14 @@ let weaponSwayClock = 0;
 const palette = {
   concrete: 0xe9edf0,
   white: 0xf7fafc,
-  blue: 0x1598f0,
-  green: 0x85cf39,
-  yellow: 0xf0c433,
-  red: 0xff4a48,
-  orange: 0xff8a2a,
-  purple: 0x9a62ff,
-  cyan: 0x35d6c8,
-  dark: 0x1f2d37
+  blue: 0x2186d9,
+  green: 0x78bf42,
+  yellow: 0xf2c94c,
+  red: 0xe95d4c,
+  orange: 0xe79a46,
+  purple: 0x7568d8,
+  cyan: 0x2fc4bf,
+  dark: 0x24313a
 };
 
 const colliders: THREE.Box3[] = [];
@@ -346,7 +346,19 @@ type StairZone = {
   run: number;
   width: number;
 };
+type SpiralStairZone = {
+  center: THREE.Vector3;
+  radius: number;
+  width: number;
+  startAngle: number;
+  totalAngle: number;
+  direction: number;
+  count: number;
+  rise: number;
+  baseY: number;
+};
 const stairZones: StairZone[] = [];
+const spiralStairZones: SpiralStairZone[] = [];
 const walkSurfaces: { minX: number; maxX: number; minZ: number; maxZ: number; y: number }[] = [];
 const trampolines: { x: number; z: number; radius: number; force: number }[] = [];
 const trampolineBoostSteps = [1, 1.5, 2.5, 3.5, 5, 6, 8, 10];
@@ -477,6 +489,7 @@ function clearArenaObjects() {
   colliders.length = 0;
   minimapBoxes.length = 0;
   stairZones.length = 0;
+  spiralStairZones.length = 0;
   walkSurfaces.length = 0;
   trampolines.length = 0;
   barrierMesh = null;
@@ -1190,6 +1203,12 @@ function addOpenCityBuilding(prefix: string, x: number, z: number, w: number, d:
   addBox(`${prefix} front wall right`, [x + w * 0.33, h / 2, z + d / 2], [w * 0.34, h, 0.5], material);
   addBox(`${prefix} west wall`, [x - w / 2, h / 2, z], [0.5, h, d], material);
   addBox(`${prefix} east wall`, [x + w / 2, h / 2, z], [0.5, h, d], material);
+  addBox(`${prefix} rear color rail`, [x, h * 0.58, z - d / 2 + 0.28], [w * 0.74, 0.3, 0.08], accent, false);
+  addBox(`${prefix} entry lintel`, [x, h - 0.72, z + d / 2 - 0.28], [w * 0.34, 0.38, 0.08], accent, false);
+  addBox(`${prefix} inner route stripe`, [x, 0.08, z + d * 0.08], [w * 0.55, 0.035, 0.58], accent, false);
+  addBox(`${prefix} left low room wall`, [x - w * 0.22, 0.88, z + d * 0.06], [0.34, 1.76, d * 0.42], materials.wall, false);
+  addBox(`${prefix} right low room wall`, [x + w * 0.22, 0.88, z + d * 0.06], [0.34, 1.76, d * 0.42], materials.wall, false);
+  addBox(`${prefix} ceiling light`, [x, h - 0.38, z + d * 0.04], [w * 0.54, 0.08, 0.14], materials.light, false);
   addBox(`${prefix} lobby desk`, [x, 0.48, z + d * 0.16], [w * 0.42, 0.76, 1.1], accent, false);
   addBox(`${prefix} inner column a`, [x - w * 0.25, 1.45, z - d * 0.12], [0.8, 2.9, 0.8], materials.dark);
   addBox(`${prefix} inner column b`, [x + w * 0.25, 1.45, z - d * 0.12], [0.8, 2.9, 0.8], materials.dark);
@@ -1247,6 +1266,89 @@ function addRailingRun(name: string, start: [number, number, number], count: num
   rail.rotation.y = -yaw;
 }
 
+function addSpiralStairs(
+  name: string,
+  center: [number, number, number],
+  count: number,
+  radius: number,
+  rise: number,
+  startAngle: number,
+  turnAngle: number,
+  width = 2.25
+) {
+  const direction = Math.sign(turnAngle) || 1;
+  const totalAngle = Math.abs(turnAngle);
+  const baseY = center[1];
+  spiralStairZones.push({
+    center: new THREE.Vector3(center[0], center[1], center[2]),
+    radius,
+    width,
+    startAngle,
+    totalAngle,
+    direction,
+    count,
+    rise,
+    baseY
+  });
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, baseY + count * rise + 0.62, 10), materials.metal);
+  pole.name = `${name} pole`;
+  pole.position.set(center[0], (baseY + count * rise + 0.62) / 2, center[2]);
+  trackArenaObject(pole);
+
+  for (let i = 0; i < count; i += 1) {
+    const progress = (i + 0.5) / count;
+    const angle = startAngle + direction * totalAngle * progress;
+    const x = center[0] + Math.cos(angle) * radius;
+    const z = center[2] + Math.sin(angle) * radius;
+    const y = baseY + rise * i + rise / 2;
+    const material = i % 3 === 0 ? materials.wall : i % 3 === 1 ? materials.blue : materials.green;
+    const step = addBox(`${name} step ${i}`, [x, y, z], [width, rise, 0.92], material, false);
+    step.rotation.y = -angle;
+
+    const outerX = center[0] + Math.cos(angle) * (radius + width * 0.56);
+    const outerZ = center[2] + Math.sin(angle) * (radius + width * 0.56);
+    addDetailBox(`${name} outer post ${i}`, [outerX, y + rise * 0.65, outerZ], [0.08, 0.88, 0.08], materials.metal, -angle);
+    if (i % 2 === 0) {
+      const innerX = center[0] + Math.cos(angle) * Math.max(0.38, radius - width * 0.52);
+      const innerZ = center[2] + Math.sin(angle) * Math.max(0.38, radius - width * 0.52);
+      addDetailBox(`${name} inner post ${i}`, [innerX, y + rise * 0.56, innerZ], [0.07, 0.72, 0.07], materials.metal, -angle);
+    }
+  }
+}
+
+function addMetroAtrium() {
+  const x = -48;
+  const z = -24;
+  const w = 14;
+  const d = 8;
+  const h = 5.2;
+  addBox("metro atrium floor", [x, 0.04, z], [w, 0.12, d], materials.floor, false);
+  addBox("metro atrium roof", [x, h + 0.12, z], [w + 0.8, 0.24, d + 0.8], materials.cyan, false);
+  addBox("metro atrium back wall", [x, h / 2, z - d / 2], [w, h, 0.5], materials.wall);
+  addBox("metro atrium front wall left", [x - 4.8, h / 2, z + d / 2], [4.4, h, 0.5], materials.wall);
+  addBox("metro atrium front wall right", [x + 4.8, h / 2, z + d / 2], [4.4, h, 0.5], materials.wall);
+  addBox("metro atrium west wall", [x - w / 2, h / 2, z], [0.5, h, d], materials.wall);
+  addBox("metro atrium east wall", [x + w / 2, h / 2, z], [0.5, h, d], materials.wall);
+  addBox("metro atrium rear blue rail", [x, 3.6, z - d / 2 + 0.28], [w - 1.2, 0.34, 0.08], materials.blue, false);
+  addBox("metro atrium rear green rail", [x, 1.18, z - d / 2 + 0.3], [w - 1.6, 0.26, 0.08], materials.green, false);
+  addBox("metro atrium entry yellow lintel", [x, 4.36, z + d / 2 - 0.28], [4.6, 0.42, 0.08], materials.yellow, false);
+  addBox("metro atrium upper deck", [x + 2.15, 3.08, z - 0.55], [5.5, 0.26, 4.7], materials.wall, false);
+  addBox("metro atrium upper deck stripe", [x + 2.15, 3.25, z + 1.88], [5.6, 0.16, 0.1], materials.blue, false);
+  addBox("metro atrium under glow", [x - 1.1, 2.78, z + 0.68], [7.5, 0.08, 0.12], materials.light, false);
+  addBox("metro atrium route stripe", [x - 0.8, 0.09, z + 0.35], [8.6, 0.04, 0.58], materials.green, false);
+  addBox("metro atrium side bench a", [x - 4.9, 0.38, z - 1.8], [2.7, 0.44, 0.68], materials.blue, false);
+  addBox("metro atrium side bench b", [x + 4.7, 0.38, z + 1.55], [2.9, 0.44, 0.68], materials.yellow, false);
+  addBox("metro atrium service core", [x - 1.7, 1.35, z + 2.65], [0.9, 2.7, 0.9], materials.dark);
+  addWalkSurface([x, h + 0.12, z], [w + 0.8, 0.24, d + 0.8]);
+  addWalkSurface([x + 2.15, 3.08, z - 0.55], [5.5, 0.26, 4.7]);
+  addSpiralStairs("metro indoor spiral", [x - 3.4, 0.08, z - 0.2], 12, 1.92, 0.43, -Math.PI * 0.88, Math.PI * 1.58, 2.3);
+  addRailingRun("metro roof north guard", [x - 5.8, h + 0.42, z - d / 2 - 0.2], 10, 1.25, 0);
+  addRailingRun("metro roof south guard", [x - 5.8, h + 0.42, z + d / 2 + 0.2], 10, 1.25, 0);
+  addRailingRun("metro deck guard", [x + 0.2, 3.34, z + 1.9], 5, 1.1, 0);
+  addWallDecal("metro interior smile mural", [x, 2.08, z - d / 2 + 0.035], Math.PI, decalTextures.greenSmile, 5.6, 3.6, 0.86);
+}
+
 function addStripedRampDetails() {
   for (let i = -2; i <= 2; i += 1) {
     const stripe = addDetailBox(`reference ramp stripe ${i}`, [17.2 + i * 0.62, 1.32, 9.22 + i * 0.18], [0.38, 0.035, 3.35], materials.wall);
@@ -1295,9 +1397,12 @@ function addReferenceArenaDressing() {
   addGroundDecal("left foreground paint puddle", -18.2, -3.2, decalTextures.greenSmile, 6.4, 5.5, 0.26, 0.5);
   addGroundDecal("yellow floor marking", 8.8, 8.5, decalTextures.yellowSplat, 5.2, 3.4, -0.12, 0.42);
   addWallDecal("near smile wall", [-18, 1.46, -6.31], 0, decalTextures.greenSmile, 7.4, 4.7, 0.94);
-  addWallDecal("metro front smile wall", [-48, 1.68, -21.52], 0, decalTextures.greenSmile, 5.4, 3.4, 0.82);
-  addDetailBox("metro front blue band", [-48, 2.68, -21.50], [8.8, 0.26, 0.08], materials.blue);
-  addDetailBox("metro front green base", [-48, 0.2, -21.49], [10.8, 0.32, 0.08], materials.green);
+  addWallDecal("metro front left smile panel", [-52.8, 1.68, -19.72], 0, decalTextures.greenSmile, 3.15, 2.65, 0.78);
+  addWallDecal("metro front right blue panel", [-43.2, 1.62, -19.72], 0, decalTextures.blueSplat, 3.05, 2.5, 0.72);
+  addDetailBox("metro front blue band left", [-52.8, 2.74, -19.70], [3.9, 0.26, 0.08], materials.blue);
+  addDetailBox("metro front blue band right", [-43.2, 2.74, -19.70], [3.9, 0.26, 0.08], materials.blue);
+  addDetailBox("metro front green base left", [-52.8, 0.2, -19.69], [4.2, 0.32, 0.08], materials.green);
+  addDetailBox("metro front green base right", [-43.2, 0.2, -19.69], [4.2, 0.32, 0.08], materials.green);
   addWallDecal("yellow block x mark", [6.5, 1.04, 7.04], 0, decalTextures.whiteX, 2.3, 2.1, 0.88);
   addWallDecal("blue block a mark", [20, 2.0, 0.05], 0, decalTextures.whiteA, 3.35, 3.15, 0.9);
   addWallDecal("green tower check mark", [5.57, 2.46, -7.5], -Math.PI / 2, decalTextures.whiteCheck, 2.15, 2.15, 0.82);
@@ -1366,31 +1471,30 @@ function addToyboxArena() {
   addBox("new west scaffold", [-15, 2.6, 2], [4.2, 5.2, 4.2], materials.yellow);
   addBox("new east bunker", [23.5, 1.35, -18], [5, 2.7, 3.8], materials.green);
   addBox("orange refinery", [-36, 2.8, -34], [9, 5.6, 5], materials.blue);
-  addBox("purple data tower", [37, 6.2, -33], [5.5, 12.4, 5.5], materials.purple);
+  addBox("purple data tower", [37, 6.2, -33], [5.5, 12.4, 5.5], materials.cyan);
   addBox("cyan hangar", [-34, 2.2, 33], [12, 4.4, 6], materials.cyan);
-  addBox("red gatehouse", [35, 2.6, 34], [8, 5.2, 5], materials.red);
+  addBox("red gatehouse", [35, 2.6, 34], [8, 5.2, 5], materials.wall);
   addBox("white clinic", [-2, 2.1, 39], [10, 4.2, 4.6], materials.wall);
   addBox("orange low maze a", [-38, 0.85, 6], [3.8, 1.7, 10], materials.wall);
   addBox("cyan low maze b", [38, 0.85, -6], [3.8, 1.7, 10], materials.cyan);
   addBox("outer cyan depot", [-56, 2.2, -54], [10, 4.4, 5], materials.cyan);
-  addBox("outer orange tower", [56, 5.2, 54], [5, 10.4, 5], materials.orange);
-  addBox("outer purple bunker", [-54, 1.4, 52], [8, 2.8, 4], materials.purple);
+  addBox("outer orange tower", [56, 5.2, 54], [5, 10.4, 5], materials.green);
+  addBox("outer purple bunker", [-54, 1.4, 52], [8, 2.8, 4], materials.cyan);
   addBox("outer white hangar", [54, 2.4, -52], [12, 4.8, 6], materials.wall);
   addBox("outer green cover", [0, 1.2, 58], [16, 2.4, 3], materials.green);
   addBox("outer blue cover", [0, 1.2, -58], [16, 2.4, 3], materials.blue);
-  addBox("west mega tower", [-47, 7.4, 0], [5, 14.8, 5], materials.red);
+  addBox("west mega tower", [-47, 7.4, 0], [5, 14.8, 5], materials.blue);
   addBox("east stair tower", [47, 4.5, -44], [7, 9, 5], materials.green);
   addBox("west hide wall", [-58, 1.1, 18], [9, 2.2, 4], materials.wall);
   addBox("east hide wall", [58, 1.1, -18], [9, 2.2, 4], materials.yellow);
   addBox("south mini tower", [-16, 3.1, 54], [8, 6.2, 5], materials.blue);
-  addBox("north mini tower", [18, 2.6, -55], [10, 5.2, 4], materials.orange);
+  addBox("north mini tower", [18, 2.6, -55], [10, 5.2, 4], materials.green);
   addBox("right long cover", [44, 1.2, 18], [4, 2.4, 12], materials.cyan);
-  addBox("purple roof deck", [36, 12.55, -33], [5.8, 0.35, 6.2], materials.purple, false);
-  addBox("metro station", [-48, 2.05, -24], [12, 4.1, 4.8], materials.wall);
-  addBox("metro roof deck", [-48, 4.28, -24], [12.4, 0.35, 5.2], materials.cyan, false);
+  addBox("purple roof deck", [36, 12.55, -33], [5.8, 0.35, 6.2], materials.blue, false);
+  addMetroAtrium();
   addBox("corner hotel", [51, 6.4, 24], [5.8, 12.8, 5.8], materials.wall);
-  addBox("corner hotel roof", [51, 12.98, 24], [6.4, 0.35, 6.4], materials.orange, false);
-  addBox("broadcast mast base", [0, 4.7, 48], [4.4, 9.4, 4.4], materials.purple);
+  addBox("corner hotel roof", [51, 12.98, 24], [6.4, 0.35, 6.4], materials.cyan, false);
+  addBox("broadcast mast base", [0, 4.7, 48], [4.4, 9.4, 4.4], materials.blue);
   addBox("broadcast mast roof", [0, 9.6, 48], [5.2, 0.35, 5.2], materials.yellow, false);
   addBox("underpass cover a", [-44, 0.75, -43], [10, 1.5, 2.4], materials.green);
   addBox("underpass cover b", [43, 0.75, 43], [10, 1.5, 2.4], materials.blue);
@@ -1408,10 +1512,10 @@ function addToyboxArena() {
   addBox("south parking deck", [0, 3.4, 82], [34, 6.8, 12], materials.wall);
   addBox("south parking roof", [0, 6.98, 82], [34.8, 0.35, 12.8], materials.yellow, false);
   addBox("south deck ramp wall", [-22, 1.3, 79], [8, 2.6, 3.2], materials.metal);
-  addBox("east plaza shop", [72, 1.9, -54], [17, 3.8, 8], materials.orange);
+  addBox("east plaza shop", [72, 1.9, -54], [17, 3.8, 8], materials.wall);
   addBox("west plaza shop", [-72, 1.9, 54], [17, 3.8, 8], materials.green);
   addBox("bus shelter", [63, 1.05, -78], [9, 2.1, 3.4], materials.glass);
-  addBox("monument cover", [-62, 1.8, 78], [5.2, 3.6, 5.2], materials.purple);
+  addBox("monument cover", [-62, 1.8, 78], [5.2, 3.6, 5.2], materials.yellow);
   addBox("north alley cover", [45, 0.95, -83], [13, 1.9, 3], materials.dark);
   addBox("west alley cover", [-85, 0.95, 18], [3, 1.9, 13], materials.dark);
   addRealismDetails();
@@ -1435,7 +1539,6 @@ function addToyboxArena() {
   addWalkSurface([47, 4.5, -44], [7, 9, 5]);
   addWalkSurface([-16, 3.1, 54], [8, 6.2, 5]);
   addWalkSurface([18, 2.6, -55], [10, 5.2, 4]);
-  addWalkSurface([-48, 4.28, -24], [12.4, 0.35, 5.2]);
   addWalkSurface([51, 12.98, 24], [6.4, 0.35, 6.4]);
   addWalkSurface([0, 9.6, 48], [5.2, 0.35, 5.2]);
 
@@ -1449,7 +1552,6 @@ function addToyboxArena() {
   addStairs("outer purple stairs", [36, 0.15, -41], 24, 0.48, 0.9, 0);
   addStairs("west mega stairs", [-51, 0.15, 0], 30, 0.48, 0.9, Math.PI / 2);
   addStairs("east outer stairs", [42.5, 0.15, -44], 18, 0.47, 0.92, -Math.PI / 2);
-  addStairs("metro stairs", [-52.5, 0.15, -24], 9, 0.47, 0.9, Math.PI / 2);
   addStairs("hotel stairs", [55, 0.15, 24], 27, 0.48, 0.9, Math.PI / 2);
   addStairs("broadcast stairs", [-4.2, 0.15, 48], 20, 0.47, 0.9, -Math.PI / 2);
   addStairs("north office stairs", [9, 0.15, -80], 17, 0.47, 0.9, Math.PI);
@@ -1478,8 +1580,8 @@ function addToyboxArena() {
   addReferenceArenaDressing();
   addToyboxVisualDecals();
   addSign("METRO", [-48, 3.35, -21.55], 0, "#1598f0");
-  addSign("HOTEL", [47.95, 8.3, 24], -Math.PI / 2, "#ff8a2a");
-  addSign("BROADCAST", [0, 7.0, 45.75], 0, "#9a62ff");
+  addSign("HOTEL", [47.95, 8.3, 24], -Math.PI / 2, "#2186d9");
+  addSign("BROADCAST", [0, 7.0, 45.75], 0, "#2fc4bf");
   addSign("ROOF ROUTE", [15, 4.8, -17.72], Math.PI, "#93e43c");
   addSign("CENTER", [0, 2.35, -57.45], Math.PI, "#111827");
 }
@@ -2645,6 +2747,21 @@ function groundHeightAt(x: number, z: number, currentY = 1.6) {
     const stepIndex = THREE.MathUtils.clamp(Math.floor((along + 0.2) / zone.run), 0, zone.count - 1);
     const stepY = 1.6 + (stepIndex + 1) * zone.rise;
     if (stepY <= currentY + 0.85) ground = Math.max(ground, stepY);
+  }
+  for (const zone of spiralStairZones) {
+    const dx = x - zone.center.x;
+    const dz = z - zone.center.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < zone.radius - zone.width / 2 - 0.28 || distance > zone.radius + zone.width / 2 + 0.28) continue;
+    let delta = (Math.atan2(dz, dx) - zone.startAngle) * zone.direction;
+    const fullTurn = Math.PI * 2;
+    while (delta < 0) delta += fullTurn;
+    while (delta >= fullTurn) delta -= fullTurn;
+    if (delta > zone.totalAngle + fullTurn / zone.count) continue;
+    const progress = THREE.MathUtils.clamp(delta / zone.totalAngle, 0, 1);
+    const stepIndex = THREE.MathUtils.clamp(Math.floor(progress * zone.count), 0, zone.count - 1);
+    const stepY = 1.6 + zone.baseY + (stepIndex + 1) * zone.rise;
+    if (stepY <= currentY + 0.9) ground = Math.max(ground, stepY);
   }
   for (const surface of walkSurfaces) {
     if (x < surface.minX || x > surface.maxX || z < surface.minZ || z > surface.maxZ) continue;
