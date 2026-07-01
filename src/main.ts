@@ -27,7 +27,8 @@ import {
 type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
 type GameMode = "score10" | "duel" | "life3" | "castle";
-type ArenaId = "toybox" | "okakoj";
+type ArenaId = "toybox";
+type PartySize = 1 | 2 | 4;
 
 type PlayerState = {
   id: string;
@@ -153,7 +154,7 @@ const roomInput = $("#roomInput") as HTMLInputElement;
 const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
 const teamSelect = $("#teamSelect");
-const arenaSelect = $("#arenaSelect");
+const partySelect = $("#partySelect");
 const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
@@ -252,7 +253,7 @@ const arenaObjects: THREE.Object3D[] = [];
 const minimapBoxes: { x: number; z: number; w: number; h: number }[] = [];
 const keys = new Set<string>();
 const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "Space"]);
-const arenaHalfSize = 66;
+const arenaHalfSize = 96;
 const playerRadius = 0.24;
 const jumpVelocity = 7.2;
 type GunKind = "rifle" | "ak47" | "aug" | "smg" | "shotgun" | "marksman" | "awm" | "type95";
@@ -311,9 +312,10 @@ let reloadTimer = 0;
 let roundSeconds = 525;
 let targetScore = 10;
 let gameMode: GameMode = "score10";
-let arenaChoice: ArenaId = (localStorage.getItem("toybox-arena") as ArenaId) === "okakoj" ? "okakoj" : "toybox";
+let arenaChoice: ArenaId = "toybox";
 let currentArena: ArenaId = "toybox";
 let teamChoice: TeamChoice = (localStorage.getItem("toybox-team") as TeamChoice) || "auto";
+let partySize: PartySize = ([1, 2, 4].includes(Number(localStorage.getItem("toybox-party-size"))) ? Number(localStorage.getItem("toybox-party-size")) : 1) as PartySize;
 let celebrationUntil = 0;
 let lastFireworkAt = 0;
 let winnerName = "";
@@ -423,6 +425,16 @@ function setTeamChoice(team: TeamChoice) {
   }
 }
 
+function setPartySize(size: number) {
+  const nextPartySize = (size === 2 || size === 4 ? size : 1) as PartySize;
+  const changed = partySize !== nextPartySize;
+  partySize = nextPartySize;
+  if (changed) localStorage.setItem("toybox-party-size", String(partySize));
+  for (const button of partySelect.querySelectorAll<HTMLButtonElement>("[data-party]")) {
+    button.classList.toggle("active", Number(button.dataset.party) === partySize);
+  }
+}
+
 function isHostPlayer() {
   return (nameInput.value.trim() || "プレイヤー") === "ひでお";
 }
@@ -440,11 +452,7 @@ function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice) {
 }
 
 function setArenaChoice(arena: ArenaId) {
-  arenaChoice = arena === "okakoj" ? "okakoj" : "toybox";
-  localStorage.setItem("toybox-arena", arenaChoice);
-  for (const button of arenaSelect.querySelectorAll<HTMLButtonElement>("[data-arena]")) {
-    button.classList.toggle("active", button.dataset.arena === arenaChoice);
-  }
+  arenaChoice = "toybox";
 }
 
 function trackArenaObject<T extends THREE.Object3D>(object: T) {
@@ -479,12 +487,11 @@ function clearArenaObjects() {
 }
 
 function switchArena(arena: ArenaId) {
-  const nextArena = arena === "okakoj" ? "okakoj" : "toybox";
+  const nextArena = "toybox";
   if (currentArena === nextArena && arenaObjects.length > 0) return;
   clearArenaObjects();
   currentArena = nextArena;
-  if (nextArena === "okakoj") addOkakoJArena();
-  else addToyboxArena();
+  addToyboxArena();
   lastSafePosition.copy(self.position);
 }
 
@@ -574,7 +581,7 @@ function addBarrierPowerup() {
   ringA.position.y = 0.35;
   ringB.position.y = 0.78;
   group.add(base, core, ringA, ringB);
-  group.position.set(-60, 0.16, 60);
+  group.position.set(-88, 0.16, 82);
   trackArenaObject(group);
   barrierMesh = group;
 }
@@ -669,16 +676,16 @@ function updateCastleCores(snapshot?: Record<PlayerColor, CastleCoreSnapshot>) {
 function addRealismDetails() {
   const detail = new THREE.Object3D();
   const roadLineMaterial = new THREE.MeshBasicMaterial({ color: 0xb9c1c6 });
-  const roadLines = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.08, 132), roadLineMaterial, 14);
+  const roadLines = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.08, 188), roadLineMaterial, 22);
   let lineIndex = 0;
-  for (let x = -54; x <= 54; x += 18) {
+  for (let x = -90; x <= 90; x += 18) {
     detail.position.set(x, 0.012, 0);
     detail.rotation.set(-Math.PI / 2, 0, 0);
     detail.updateMatrix();
     roadLines.setMatrixAt(lineIndex, detail.matrix);
     lineIndex += 1;
   }
-  for (let z = -54; z <= 54; z += 18) {
+  for (let z = -90; z <= 90; z += 18) {
     detail.position.set(0, 0.014, z);
     detail.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
     detail.updateMatrix();
@@ -809,13 +816,27 @@ function addRealismDetails() {
   trackArenaObject(laneLights);
 }
 
-function addToyboxArena() {
-  addBox("floor", [0, -0.05, 0], [136, 0.1, 136], materials.floor, false);
+function addOpenCityBuilding(prefix: string, x: number, z: number, w: number, d: number, h: number, material: THREE.Material, accent: THREE.Material) {
+  addBox(`${prefix} floor`, [x, 0.04, z], [w, 0.12, d], materials.floor, false);
+  addBox(`${prefix} roof`, [x, h + 0.12, z], [w, 0.24, d], materials.metal, false);
+  addBox(`${prefix} back wall`, [x, h / 2, z - d / 2], [w, h, 0.5], material);
+  addBox(`${prefix} front wall left`, [x - w * 0.33, h / 2, z + d / 2], [w * 0.34, h, 0.5], material);
+  addBox(`${prefix} front wall right`, [x + w * 0.33, h / 2, z + d / 2], [w * 0.34, h, 0.5], material);
+  addBox(`${prefix} west wall`, [x - w / 2, h / 2, z], [0.5, h, d], material);
+  addBox(`${prefix} east wall`, [x + w / 2, h / 2, z], [0.5, h, d], material);
+  addBox(`${prefix} lobby desk`, [x, 0.48, z + d * 0.16], [w * 0.42, 0.76, 1.1], accent, false);
+  addBox(`${prefix} inner column a`, [x - w * 0.25, 1.45, z - d * 0.12], [0.8, 2.9, 0.8], materials.dark);
+  addBox(`${prefix} inner column b`, [x + w * 0.25, 1.45, z - d * 0.12], [0.8, 2.9, 0.8], materials.dark);
+  addWalkSurface([x, h + 0.12, z], [w, 0.24, d]);
+}
 
-  addBox("north wall", [0, 1.2, -67.5], [136, 2.4, 1], materials.wall);
-  addBox("south wall", [0, 1.2, 67.5], [136, 2.4, 1], materials.wall);
-  addBox("west wall", [-67.5, 1.2, 0], [1, 2.4, 136], materials.wall);
-  addBox("east wall", [67.5, 1.2, 0], [1, 2.4, 136], materials.wall);
+function addToyboxArena() {
+  addBox("floor", [0, -0.05, 0], [194, 0.1, 194], materials.floor, false);
+
+  addBox("north wall", [0, 1.2, -96.5], [194, 2.4, 1], materials.wall);
+  addBox("south wall", [0, 1.2, 96.5], [194, 2.4, 1], materials.wall);
+  addBox("west wall", [-96.5, 1.2, 0], [1, 2.4, 194], materials.wall);
+  addBox("east wall", [96.5, 1.2, 0], [1, 2.4, 194], materials.wall);
 
   addBox("green tower", [8, 2.1, -7.5], [4.8, 4.2, 4.8], materials.green);
   addBox("blue block right", [20, 1.7, -4], [5.8, 3.4, 8], materials.blue);
@@ -884,7 +905,33 @@ function addToyboxArena() {
   addBox("broadcast mast roof", [0, 9.6, 48], [5.2, 0.35, 5.2], materials.yellow, false);
   addBox("underpass cover a", [-44, 0.75, -43], [10, 1.5, 2.4], materials.green);
   addBox("underpass cover b", [43, 0.75, 43], [10, 1.5, 2.4], materials.blue);
+  addOpenCityBuilding("north office lobby", 0, -82, 22, 13, 8.4, materials.wall, materials.blue);
+  addOpenCityBuilding("west shopping arcade", -80, -18, 18, 15, 6.2, materials.glass, materials.orange);
+  addOpenCityBuilding("east civic hall", 80, 18, 18, 15, 6.2, materials.wall, materials.green);
+  addBox("north office tower", [0, 15.4, -86], [12, 30.8, 7], materials.glass);
+  addBox("north office roof", [0, 30.95, -86], [12.8, 0.35, 7.8], materials.cyan, false);
+  addBox("west highrise", [-79, 13.5, -74], [13, 27, 10], materials.wall);
+  addBox("west highrise roof", [-79, 27.2, -74], [13.8, 0.35, 10.8], materials.orange, false);
+  addBox("east highrise", [78, 14.8, 75], [12, 29.6, 11], materials.glass);
+  addBox("east highrise roof", [78, 29.75, 75], [12.8, 0.35, 11.8], materials.purple, false);
+  addBox("central skywalk west", [-31, 8.6, -74], [44, 0.48, 3.2], materials.cyan, false);
+  addBox("central skywalk east", [31, 8.6, -74], [44, 0.48, 3.2], materials.cyan, false);
+  addBox("south parking deck", [0, 3.4, 82], [34, 6.8, 12], materials.wall);
+  addBox("south parking roof", [0, 6.98, 82], [34.8, 0.35, 12.8], materials.yellow, false);
+  addBox("south deck ramp wall", [-22, 1.3, 79], [8, 2.6, 3.2], materials.metal);
+  addBox("east plaza shop", [72, 1.9, -54], [17, 3.8, 8], materials.orange);
+  addBox("west plaza shop", [-72, 1.9, 54], [17, 3.8, 8], materials.green);
+  addBox("bus shelter", [63, 1.05, -78], [9, 2.1, 3.4], materials.glass);
+  addBox("monument cover", [-62, 1.8, 78], [5.2, 3.6, 5.2], materials.purple);
+  addBox("north alley cover", [45, 0.95, -83], [13, 1.9, 3], materials.dark);
+  addBox("west alley cover", [-85, 0.95, 18], [3, 1.9, 13], materials.dark);
   addRealismDetails();
+  addWalkSurface([0, 30.95, -86], [12.8, 0.35, 7.8]);
+  addWalkSurface([-79, 27.2, -74], [13.8, 0.35, 10.8]);
+  addWalkSurface([78, 29.75, 75], [12.8, 0.35, 11.8]);
+  addWalkSurface([-31, 8.6, -74], [44, 0.48, 3.2]);
+  addWalkSurface([31, 8.6, -74], [44, 0.48, 3.2]);
+  addWalkSurface([0, 6.98, 82], [34.8, 0.35, 12.8]);
   addWalkSurface([36, 12.55, -33], [5.8, 0.35, 6.2]);
   addWalkSurface([-12.8, 11.9, 23], [4.2, 0.35, 5.2]);
   addWalkSurface([8.2, 13.5, -24], [4.2, 0.35, 5.2]);
@@ -916,6 +963,11 @@ function addToyboxArena() {
   addStairs("metro stairs", [-52.5, 0.15, -24], 9, 0.47, 0.9, Math.PI / 2);
   addStairs("hotel stairs", [55, 0.15, 24], 27, 0.48, 0.9, Math.PI / 2);
   addStairs("broadcast stairs", [-4.2, 0.15, 48], 20, 0.47, 0.9, -Math.PI / 2);
+  addStairs("north office stairs", [9, 0.15, -80], 17, 0.47, 0.9, Math.PI);
+  addStairs("north tower stairs", [-7.5, 0.15, -89], 34, 0.82, 0.78, 0);
+  addStairs("west highrise stairs", [-88, 0.15, -74], 31, 0.82, 0.78, Math.PI / 2);
+  addStairs("east highrise stairs", [86, 0.15, 75], 34, 0.82, 0.78, -Math.PI / 2);
+  addStairs("parking deck stairs", [-17, 0.15, 82], 12, 0.5, 1.0, Math.PI / 2);
   addTrampoline("trampoline center", 0, 8, 2.4, 14.8);
   addTrampoline("trampoline west", -18, -14, 2.2, 13.6);
   addTrampoline("trampoline east", 20, 12, 2.2, 13.6);
@@ -1323,12 +1375,13 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-team]")
   });
 }
 
-for (const button of arenaSelect.querySelectorAll<HTMLButtonElement>("[data-arena]")) {
+for (const button of partySelect.querySelectorAll<HTMLButtonElement>("[data-party]")) {
   button.addEventListener("click", () => {
-    const arena = button.dataset.arena === "okakoj" ? "okakoj" : "toybox";
-    setArenaChoice(arena);
-    if (!self.joined) switchArena(arenaChoice);
-    else showToast("会場は新しいルーム作成時に反映されます。");
+    if (self.joined) {
+      showToast("人数形式は次の自動マッチで反映されます。");
+      return;
+    }
+    setPartySize(Number(button.dataset.party));
   });
 }
 chatForm.addEventListener("submit", (event) => {
@@ -1539,6 +1592,7 @@ setSoundEnabled(soundEnabled);
 setGameMode(gameMode);
 setTeamChoice(teamChoice);
 setArenaChoice(arenaChoice);
+setPartySize(partySize);
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -1569,8 +1623,8 @@ function join(room: string) {
 
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
-socket.addEventListener("open", () => {
-    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, cosmeticColor: customColor });
+  socket.addEventListener("open", () => {
+    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cosmeticColor: customColor });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -1598,7 +1652,8 @@ function handleMessage(event: MessageEvent<string>) {
     lastSelfHealth = 100;
     updateFlowHud(performance.now());
     gameMode = (message.gameMode as GameMode) || "score10";
-    arenaChoice = message.arena === "okakoj" ? "okakoj" : "toybox";
+    arenaChoice = "toybox";
+    if (message.partySize) setPartySize(Number(message.partySize));
     targetScore = Number(message.targetScore) || 10;
     setGameMode(gameMode);
     setArenaChoice(arenaChoice);
@@ -1614,9 +1669,10 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (message.type === "snapshot") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
+    if (message.partySize) setPartySize(Number(message.partySize));
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
     if (message.arena) {
-      arenaChoice = message.arena === "okakoj" ? "okakoj" : "toybox";
+      arenaChoice = "toybox";
       setArenaChoice(arenaChoice);
       switchArena(arenaChoice);
     }
@@ -2843,7 +2899,7 @@ function drawMinimap() {
   minimap.lineWidth = 3;
   minimap.stroke();
   minimap.fillStyle = "rgba(255,255,255,.18)";
-  const mapScale = 1.48;
+  const mapScale = 1.08;
   for (const box of minimapBoxes) {
     minimap.fillRect(
       110 + box.x * mapScale - box.w * mapScale / 2,

@@ -222,7 +222,7 @@
           </label>
           <label>
             ルームコード
-            <input id="roomInput" maxlength="6" placeholder="空なら新規作成" />
+            <input id="roomInput" maxlength="6" placeholder="空なら自動マッチ" />
           </label>
           <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
             <button type="button" class="active" data-mode="score10">
@@ -242,14 +242,18 @@
               <span>敵の白を破壊</span>
             </button>
           </div>
-          <div class="arena-select" id="arenaSelect" role="group" aria-label="ゲーム会場">
-            <button type="button" class="active" data-arena="toybox">
-              <strong>Toybox</strong>
-              <span>屋上と塔の市街地</span>
+          <div class="party-select" id="partySelect" role="group" aria-label="マッチ人数">
+            <button type="button" class="active" data-party="1">
+              <strong>シングル</strong>
+              <span>1人チーム</span>
             </button>
-            <button type="button" data-arena="okakoj">
-              <strong>OKAKO-J</strong>
-              <span>架空工業高校キャンパス</span>
+            <button type="button" data-party="2">
+              <strong>デュオ</strong>
+              <span>2人チーム</span>
+            </button>
+            <button type="button" data-party="4">
+              <strong>スクワッド</strong>
+              <span>4人チーム</span>
             </button>
           </div>
           <div class="team-select" id="teamSelect" role="group" aria-label="チーム選択">
@@ -267,7 +271,7 @@
             </button>
           </div>
           <div class="join-actions">
-            <button id="createRoom">ルーム作成</button>
+            <button id="createRoom">自動マッチ開始</button>
             <button id="joinRoom">参加</button>
           </div>
           <div class="online-panel">

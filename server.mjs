@@ -9,9 +9,9 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 5188);
 const maxPlayers = 8;
-const maxCpuPlayers = 4;
+const maxCpuPlayers = 7;
 const defaultTargetScore = 10;
-const arenaHalfSize = 66;
+const arenaHalfSize = 96;
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -19,19 +19,20 @@ const ashinagaRange = 14;
 const ashinagaDamage = 86;
 const barrierDurationMs = 7000;
 const barrierRespawnMs = 15000;
-const barrierSpawn = { x: -60, y: 1.6, z: 60 };
+const barrierSpawn = { x: -88, y: 1.6, z: 82 };
 const initialHealPacks = 5;
 const healPackAmount = 20;
 const gameModes = new Set(["score10", "duel", "life3", "castle"]);
-const arenas = new Set(["toybox", "okakoj"]);
+const partySizes = new Set([1, 2, 4]);
+const arenas = new Set(["toybox"]);
 const teams = new Set(["blue", "red"]);
 const playerCastleCoreMaxHealth = 7500;
 const cpuCastleCoreMaxHealth = 10000;
 const castleCoreRadius = 2.4;
 const castleRoundMs = 240_000;
 const castleCoreSpawns = {
-  blue: { x: -54, y: 2.1, z: -46 },
-  red: { x: 54, y: 2.1, z: 46 }
+  blue: { x: -82, y: 2.1, z: -72 },
+  red: { x: 82, y: 2.1, z: 72 }
 };
 const weaponDamage = new Map([
   ["rifle", 25],
@@ -87,8 +88,8 @@ function obstaclesForArena(arena = "toybox") {
 
 function initSolidObstacles() {
   const boxes = [
-    [[0, 1.2, -67.5], [136, 2.4, 1]], [[0, 1.2, 67.5], [136, 2.4, 1]],
-    [[-67.5, 1.2, 0], [1, 2.4, 136]], [[67.5, 1.2, 0], [1, 2.4, 136]],
+    [[0, 1.2, -96.5], [194, 2.4, 1]], [[0, 1.2, 96.5], [194, 2.4, 1]],
+    [[-96.5, 1.2, 0], [1, 2.4, 194]], [[96.5, 1.2, 0], [1, 2.4, 194]],
     [[8, 2.1, -7.5], [4.8, 4.2, 4.8]], [[20, 1.7, -4], [5.8, 3.4, 8]],
     [[-18, 1.4, -8], [9, 2.8, 3.2]], [[-4, 1.1, 1.5], [5, 2.2, 3.2]],
     [[6.5, 0.8, 5], [4, 1.6, 4]], [[-10, 0.9, 11], [2.4, 1.8, 2.4]],
@@ -115,7 +116,20 @@ function initSolidObstacles() {
     [[0, 1.2, -58], [16, 2.4, 3]], [[-47, 7.4, 0], [5, 14.8, 5]],
     [[47, 4.5, -44], [7, 9, 5]], [[-58, 1.1, 18], [9, 2.2, 4]],
     [[58, 1.1, -18], [9, 2.2, 4]], [[-16, 3.1, 54], [8, 6.2, 5]],
-    [[18, 2.6, -55], [10, 5.2, 4]], [[44, 1.2, 18], [4, 2.4, 12]]
+    [[18, 2.6, -55], [10, 5.2, 4]], [[44, 1.2, 18], [4, 2.4, 12]],
+    [[0, 4.2, -88.5], [22, 8.4, 0.5]], [[-7.3, 4.2, -75.5], [7.5, 8.4, 0.5]],
+    [[7.3, 4.2, -75.5], [7.5, 8.4, 0.5]], [[-11, 4.2, -82], [0.5, 8.4, 13]],
+    [[11, 4.2, -82], [0.5, 8.4, 13]], [[0, 15.4, -86], [12, 30.8, 7]],
+    [[-80, 3.1, -25.5], [18, 6.2, 0.5]], [[-86, 3.1, -10.5], [6.2, 6.2, 0.5]],
+    [[-74, 3.1, -10.5], [6.2, 6.2, 0.5]], [[-89, 3.1, -18], [0.5, 6.2, 15]],
+    [[-71, 3.1, -18], [0.5, 6.2, 15]], [[80, 3.1, 10.5], [18, 6.2, 0.5]],
+    [[74, 3.1, 25.5], [6.2, 6.2, 0.5]], [[86, 3.1, 25.5], [6.2, 6.2, 0.5]],
+    [[71, 3.1, 18], [0.5, 6.2, 15]], [[89, 3.1, 18], [0.5, 6.2, 15]],
+    [[-79, 13.5, -74], [13, 27, 10]], [[78, 14.8, 75], [12, 29.6, 11]],
+    [[0, 3.4, 82], [34, 6.8, 12]], [[-22, 1.3, 79], [8, 2.6, 3.2]],
+    [[72, 1.9, -54], [17, 3.8, 8]], [[-72, 1.9, 54], [17, 3.8, 8]],
+    [[63, 1.05, -78], [9, 2.1, 3.4]], [[-62, 1.8, 78], [5.2, 3.6, 5.2]],
+    [[45, 0.95, -83], [13, 1.9, 3]], [[-85, 0.95, 18], [3, 1.9, 13]]
   ];
   for (const [position, scale] of boxes) addSolidObstacle(position, scale);
 
@@ -230,8 +244,7 @@ function normalizeGameMode(value) {
 }
 
 function normalizeArena(value) {
-  const arena = String(value || "toybox").toLowerCase();
-  return arenas.has(arena) ? arena : "toybox";
+  return "toybox";
 }
 
 function modeLabel(mode) {
@@ -239,6 +252,11 @@ function modeLabel(mode) {
   if (mode === "life3") return "ライフ3";
   if (mode === "castle") return "城攻め";
   return "10目標";
+}
+
+function normalizePartySize(value) {
+  const size = Number(value);
+  return partySizes.has(size) ? size : 1;
 }
 
 function normalizeTeam(value, room) {
@@ -250,6 +268,18 @@ function normalizeTeam(value, room) {
   if (teams.has(requested)) return requested;
   const counts = { blue: 0, red: 0 };
   for (const player of room.players.values()) {
+    if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
+  }
+  return counts.blue <= counts.red ? "blue" : "red";
+}
+
+function humanPlayers(room) {
+  return [...room.players.values()].filter((player) => !player.isBot);
+}
+
+function assignMatchTeam(room) {
+  const counts = { blue: 0, red: 0 };
+  for (const player of humanPlayers(room)) {
     if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
   }
   return counts.blue <= counts.red ? "blue" : "red";
@@ -280,23 +310,42 @@ function nextHealthPickupAt(now = Date.now()) {
 
 function randomPickupSpawn(arena = "toybox") {
   for (let i = 0; i < 24; i += 1) {
-    const x = Math.round((Math.random() * 116 - 58) * 10) / 10;
-    const z = Math.round((Math.random() * 116 - 58) * 10) / 10;
+    const x = Math.round((Math.random() * 174 - 87) * 10) / 10;
+    const z = Math.round((Math.random() * 174 - 87) * 10) / 10;
     if (!cpuCollides(x, z, 1.25, arena)) return { x, y: 1.6, z };
   }
   return { x: 0, y: 1.6, z: 0 };
 }
 
-function getRoom(code, mode = "score10", arena = "toybox") {
+function findMatchRoom(mode = "score10", partySize = 1) {
+  const gameMode = normalizeGameMode(mode);
+  const size = normalizePartySize(partySize);
+  for (const room of rooms.values()) {
+    if (!room.matchmaking || room.winner || room.mode !== gameMode || room.partySize !== size) continue;
+    if (humanPlayers(room).length < size * 2) return room;
+  }
+  return null;
+}
+
+function getRoom(code, mode = "score10", arena = "toybox", partySize = 1, matchmaking = true) {
   const normalized = (code || "").trim().toUpperCase();
   if (normalized && rooms.has(normalized)) return rooms.get(normalized);
+  if (!normalized) {
+    const match = findMatchRoom(mode, partySize);
+    if (match) return match;
+  }
   const createdCode = normalized && normalized.length === 6 ? normalized : roomCode();
   const gameMode = normalizeGameMode(mode);
   const arenaId = normalizeArena(arena);
+  const size = normalizePartySize(partySize);
   const room = {
     code: createdCode,
     mode: gameMode,
     arena: arenaId,
+    matchmaking,
+    partySize: size,
+    matchStarted: false,
+    maxHumanPlayers: size * 2,
     weaponStats: {},
     movementStats: { samples: 0, moving: 0, airborne: 0 },
     targetScore: gameMode === "score10" ? defaultTargetScore : 0,
@@ -319,22 +368,26 @@ function getRoom(code, mode = "score10", arena = "toybox") {
 
 function spawnPoint(index = 0) {
   const points = [
+    [-74, 1.6, -70],
+    [74, 1.6, 70],
+    [-62, 1.6, -36],
+    [62, 1.6, 36],
+    [-38, 1.6, 54],
+    [38, 1.6, -54],
+    [-84, 1.6, 24],
+    [84, 1.6, -24],
     [0, 1.6, 24],
     [0, 1.6, -24],
     [-22, 1.6, 10],
     [22, 1.6, -10],
-    [-20, 1.6, -18],
-    [20, 1.6, 18],
-    [-26, 1.6, 0],
-    [26, 1.6, 0],
-    [-38, 1.6, -34],
-    [38, 1.6, 34],
-    [-36, 1.6, 34],
-    [36, 1.6, -34],
     [-56, 1.6, -48],
     [56, 1.6, 48],
     [-54, 1.6, 48],
-    [54, 1.6, -48]
+    [54, 1.6, -48],
+    [-82, 1.6, 78],
+    [82, 1.6, -78],
+    [-12, 1.6, 86],
+    [12, 1.6, -86]
   ];
   const point = points[index % points.length];
   const yaw = Math.atan2(point[0], point[2]);
@@ -554,15 +607,22 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "join") {
-      const room = getRoom(message.room, message.gameMode, message.arena);
-      if (room.players.size >= maxPlayers) {
+      const requestedPartySize = normalizePartySize(message.partySize);
+      const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true);
+      if (room.matchmaking) {
+        for (const player of [...room.players.values()]) {
+          if (player.isBot) room.players.delete(player.id);
+        }
+      }
+      const humanLimit = room.matchmaking ? room.maxHumanPlayers : maxPlayers;
+      if (humanPlayers(room).length >= humanLimit) {
         send(ws, { type: "error", message: "このルームは満員です。" });
         return;
       }
 
       const id = crypto.randomUUID();
       const spawn = spawnPoint(room.players.size);
-      const team = normalizeTeam(message.team, room);
+      const team = room.matchmaking ? assignMatchTeam(room) : normalizeTeam(message.team, room);
       if (room.mode === "castle" && !room.playerTeam) {
         room.playerTeam = team;
         room.castleCores = createCastleCores(room.playerTeam);
@@ -603,9 +663,10 @@ wss.on("connection", (ws) => {
         applyRoomConfig(room, player, message.gameMode, message.team);
         addFeed(room, `ひでお が ${modeLabel(room.mode)} に変更`, player.color);
       }
+      syncMatchCpuFill(room);
       addFeed(room, `${player.name} が参加`, player.color);
       const welcomeSpawn = { x: player.x, y: player.y, z: player.z, yaw: player.yaw };
-      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, targetScore: room.targetScore, maxPlayers, spawn: welcomeSpawn });
+      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn });
       broadcast(room, { type: "feed", feed: room.feed });
       return;
     }
@@ -676,6 +737,7 @@ wss.on("connection", (ws) => {
       if (!targetPlayer) return;
       targetPlayer.color = requestedTeam;
       targetPlayer.cosmeticColor = targetPlayer.cosmeticColor || (requestedTeam === "blue" ? "#1598f0" : "#ff4d4d");
+      syncMatchCpuFill(currentRoom);
       addFeed(currentRoom, `${targetPlayer.name} が${requestedTeam === "blue" ? "青" : "赤"}チームへ移動`, targetPlayer.color);
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
       return;
@@ -720,6 +782,11 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "set_cpu") {
+      if (currentRoom.matchmaking) {
+        syncMatchCpuFill(currentRoom);
+        send(currentPlayer.ws, { type: "error", message: "自動マッチではCPU人数を自動調整します。" });
+        return;
+      }
       setCpuCount(currentRoom, clamp(Number(message.count), 0, maxCpuPlayers));
       addFeed(currentRoom, `CPU ${currentRoom.cpuCount}体`, currentPlayer.color);
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
@@ -800,18 +867,26 @@ wss.on("connection", (ws) => {
     broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
     const humans = [...currentRoom.players.values()].filter((player) => !player.isBot);
     if (humans.length === 0) rooms.delete(currentRoom.code);
+    else syncMatchCpuFill(currentRoom);
   });
 });
 
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
+    let removedHuman = false;
     for (const player of room.players.values()) {
     if (!player.isBot && now - player.lastSeen > 45_000) {
         player.ws.close();
         room.players.delete(player.id);
+        removedHuman = true;
       }
     }
+    if (humanPlayers(room).length === 0) {
+      rooms.delete(room.code);
+      continue;
+    }
+    if (removedHuman) syncMatchCpuFill(room);
     updateBarrierRespawn(room, now);
     updateHealthPickup(room, now);
     updateDonPunchProjectiles(room, now);
@@ -841,6 +916,7 @@ setInterval(() => {
       winner: room.winner,
       gameMode: room.mode,
       arena: room.arena,
+      partySize: room.partySize || 1,
       targetScore: room.targetScore || defaultTargetScore,
       castleCores: room.castleCores,
       castleEndsAt: room.castleEndsAt || 0,
@@ -1138,6 +1214,70 @@ function setCpuCount(room, count) {
   room.cpuCount = target;
 }
 
+function createCpuPlayer(room, id, index, team) {
+  const spawn = spawnPoint(index + 3);
+  return {
+    id,
+    ws: null,
+    name: `CPU-${index + 1}`,
+    color: team,
+    cosmeticColor: team === "red" ? "#ff4d4d" : "#1598f0",
+    ready: true,
+    health: 100,
+    score: 0,
+    kills: 0,
+    deaths: 0,
+    damageDealt: 0,
+    damageTaken: 0,
+    hits: 0,
+    healsUsed: 0,
+    specialsUsed: 0,
+    barrierPickups: 0,
+    lives: initialLivesForMode(room.mode),
+    eliminated: false,
+    creative: false,
+    healPacks: initialHealPacks,
+    donPunchCharge: 0,
+    yaw: spawn.yaw,
+    pitch: 0,
+    lastSeen: Date.now(),
+    isBot: true,
+    matchBot: true,
+    botIndex: index,
+    botPhase: Math.random() * Math.PI * 2,
+    botWeapon: ["ak47", "aug", "type95", "smg", "marksman", "rifle", "awm"][index % 7],
+    nextWeaponSwitchAt: Date.now() + 1100 + index * 420,
+    nextShotAt: Date.now() + 1100 + index * 280,
+    ...spawn
+  };
+}
+
+function syncMatchCpuFill(room) {
+  if (!room.matchmaking) return;
+  for (const player of [...room.players.values()]) {
+    if (player.isBot) room.players.delete(player.id);
+  }
+  const teamTarget = normalizePartySize(room.partySize);
+  const counts = { blue: 0, red: 0 };
+  for (const player of humanPlayers(room)) {
+    if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
+  }
+  let botIndex = 0;
+  for (const team of ["blue", "red"]) {
+    const needed = Math.max(0, teamTarget - counts[team]);
+    for (let i = 0; i < needed && botIndex < maxCpuPlayers; i += 1) {
+      const id = `cpu-${room.code}-match-${team}-${i}`;
+      room.players.set(id, createCpuPlayer(room, id, botIndex, team));
+      botIndex += 1;
+    }
+  }
+  room.cpuCount = botIndex;
+  if (!room.matchStarted && humanPlayers(room).length > 0) {
+    room.matchStarted = true;
+    addFeed(room, `自動マッチ開始 ${teamTarget}対${teamTarget}`, "blue");
+  }
+}
+
 function applyRoomConfig(room, host, mode, teamChoice) {
   const nextMode = normalizeGameMode(mode);
   const requestedTeam = teams.has(String(teamChoice || "")) ? String(teamChoice) : "";
@@ -1156,6 +1296,10 @@ function applyRoomConfig(room, host, mode, teamChoice) {
   }
 
   resetRoomScores(room);
+  if (room.matchmaking) {
+    syncMatchCpuFill(room);
+    return;
+  }
   if (room.cpuCount > 0) {
     const cpuCount = room.cpuCount;
     setCpuCount(room, 0);
@@ -1319,7 +1463,7 @@ function updateCpuPlayers(room, now) {
     keepCpuOutOfWalls(bot, room.arena);
     bot.y = 1.6;
     bot.lastSeen = now;
-    const targets = [...room.players.values()].filter((player) => !player.isBot && !player.creative && !player.eliminated && player.health > 0 && player.color !== bot.color);
+    const targets = [...room.players.values()].filter((player) => player.id !== bot.id && !player.creative && !player.eliminated && player.health > 0 && player.color !== bot.color);
     if ((targets.length > 0 || attackCore?.health > 0) && now >= bot.nextShotAt) {
       if (attackCore?.health > 0) {
         const distance = Math.hypot(attackCore.x - bot.x, attackCore.y - bot.y, attackCore.z - bot.z);
