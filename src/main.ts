@@ -282,6 +282,10 @@ const isScopedGun = (gun = currentGun()) => gun.kind === "marksman" || gun.kind 
 let soundEnabled = localStorage.getItem("toybox-sound") !== "off";
 let customColor = localStorage.getItem("toybox-color") || "#1598f0";
 let audioContext: AudioContext | null = null;
+const lobbyBgm = new Audio("/audio/lobby-bgm.m4a");
+lobbyBgm.loop = true;
+lobbyBgm.preload = "auto";
+lobbyBgm.volume = 0.38;
 const self = {
   id: "",
   room: "",
@@ -1266,8 +1270,11 @@ canvas.addEventListener("pointerleave", stopDesktopFire);
 document.addEventListener("pointerup", stopDesktopFire);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopDesktopFire();
+  updateLobbyBgm();
 });
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+document.addEventListener("pointerdown", () => updateLobbyBgm(), { passive: true });
+document.addEventListener("keydown", () => updateLobbyBgm());
 
 createRoomButton.addEventListener("click", () => join(""));
 joinRoomButton.addEventListener("click", () => join(roomInput.value));
@@ -1599,6 +1606,7 @@ function handleMessage(event: MessageEvent<string>) {
     setTeamChoice((message.team as TeamChoice) || teamChoice);
     roomCodeEl.textContent = self.room;
     joinPanel.classList.add("hidden");
+    updateLobbyBgm();
     history.replaceState(null, "", `?room=${self.room}`);
     showToast("ルームに参加しました。画面をクリックして開始。");
     ping();
@@ -1733,6 +1741,22 @@ function setSoundEnabled(enabled: boolean) {
   localStorage.setItem("toybox-sound", enabled ? "on" : "off");
   soundToggle.textContent = enabled ? "ON" : "OFF";
   muteButton.classList.toggle("active", !enabled);
+  updateLobbyBgm();
+}
+
+function isLobbyBgmAllowed() {
+  return soundEnabled && !document.hidden && !self.joined && !joinPanel.classList.contains("hidden");
+}
+
+function updateLobbyBgm() {
+  if (!isLobbyBgmAllowed()) {
+    lobbyBgm.pause();
+    return;
+  }
+  if (!lobbyBgm.paused) return;
+  void lobbyBgm.play().catch(() => {
+    // Browser autoplay rules require a user gesture before BGM can begin.
+  });
 }
 
 function playTone(frequency: number, duration = 0.07, volume = 0.04) {
