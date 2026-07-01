@@ -232,11 +232,11 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setClearColor(0x77c7ff);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.06;
+renderer.toneMappingExposure = 1.12;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x81ccff);
-scene.fog = new THREE.Fog(0xa9d5ee, 78, 190);
+scene.background = new THREE.Color(0x8bd6ff);
+scene.fog = new THREE.Fog(0xb9e3fb, 82, 205);
 
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 220);
 camera.position.set(0, 1.6, 8);
@@ -498,16 +498,111 @@ function makeMaterial(color: number, roughness = 0.82) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: roughness < 0.55 ? 0.16 : 0.04 });
 }
 
+function seededRandom(seed: number) {
+  let value = seed >>> 0;
+  return () => {
+    value = (value * 1664525 + 1013904223) >>> 0;
+    return value / 4294967296;
+  };
+}
+
+function createConcreteTexture(seed: number, base: string, repeatX: number, repeatY: number) {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 512;
+  textureCanvas.height = 512;
+  const context = textureCanvas.getContext("2d")!;
+  const random = seededRandom(seed);
+  context.fillStyle = base;
+  context.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
+
+  for (let i = 0; i < 1800; i += 1) {
+    const light = random() > 0.56;
+    const alpha = 0.026 + random() * 0.088;
+    const shade = light ? 255 : 54 + Math.floor(random() * 30);
+    context.fillStyle = `rgba(${shade},${shade},${shade},${alpha})`;
+    const size = 0.8 + random() * 2.1;
+    context.fillRect(random() * 512, random() * 512, size, size);
+  }
+
+  context.lineWidth = 1;
+  context.strokeStyle = "rgba(47,62,72,0.12)";
+  for (let i = 0; i <= 512; i += 128) {
+    context.beginPath();
+    context.moveTo(i + random() * 5 - 2.5, 0);
+    context.lineTo(i + random() * 5 - 2.5, 512);
+    context.moveTo(0, i + random() * 5 - 2.5);
+    context.lineTo(512, i + random() * 5 - 2.5);
+    context.stroke();
+  }
+
+  context.strokeStyle = "rgba(38,52,63,0.1)";
+  for (let i = 0; i < 22; i += 1) {
+    const startX = random() * 512;
+    const startY = random() * 512;
+    context.beginPath();
+    context.moveTo(startX, startY);
+    for (let j = 0; j < 3; j += 1) {
+      context.lineTo(startX + (random() - 0.5) * 80, startY + (random() - 0.5) * 80);
+    }
+    context.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function createGrainTexture(seed: number) {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 256;
+  textureCanvas.height = 256;
+  const context = textureCanvas.getContext("2d")!;
+  const random = seededRandom(seed);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
+  for (let i = 0; i < 640; i += 1) {
+    const alpha = 0.025 + random() * 0.052;
+    const value = random() > 0.48 ? 255 : 52;
+    context.fillStyle = `rgba(${value},${value},${value},${alpha})`;
+    context.fillRect(random() * 256, random() * 256, 1 + random() * 1.6, 1 + random() * 1.6);
+  }
+  context.strokeStyle = "rgba(255,255,255,0.18)";
+  context.lineWidth = 4;
+  context.strokeRect(8, 8, 240, 240);
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1.8, 1.8);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function makeTexturedMaterial(color: number, texture: THREE.Texture, roughness = 0.82) {
+  const material = makeMaterial(color, roughness);
+  material.map = texture;
+  material.needsUpdate = true;
+  return material;
+}
+
+const blockGrainTexture = createGrainTexture(7403);
+const floorTexture = createConcreteTexture(3111, "#d8dfe2", 24, 24);
+const wallTexture = createConcreteTexture(5119, "#eef2f3", 3.4, 3.4);
+
 const materials = {
-  floor: makeMaterial(0xd9dde0, 0.92),
-  wall: makeMaterial(0xe8edf1, 0.78),
-  blue: makeMaterial(palette.blue),
-  green: makeMaterial(palette.green),
-  yellow: makeMaterial(palette.yellow),
-  red: makeMaterial(palette.red),
-  orange: makeMaterial(palette.orange),
-  purple: makeMaterial(palette.purple),
-  cyan: makeMaterial(palette.cyan),
+  floor: makeTexturedMaterial(0xf2f5f5, floorTexture, 0.95),
+  wall: makeTexturedMaterial(0xf9fbfb, wallTexture, 0.9),
+  blue: makeTexturedMaterial(palette.blue, blockGrainTexture),
+  green: makeTexturedMaterial(palette.green, blockGrainTexture),
+  yellow: makeTexturedMaterial(palette.yellow, blockGrainTexture),
+  red: makeTexturedMaterial(palette.red, blockGrainTexture),
+  orange: makeTexturedMaterial(palette.orange, blockGrainTexture),
+  purple: makeTexturedMaterial(palette.purple, blockGrainTexture),
+  cyan: makeTexturedMaterial(palette.cyan, blockGrainTexture),
   dark: makeMaterial(palette.dark, 0.65),
   metal: makeMaterial(0x5e6971, 0.42),
   rubber: makeMaterial(0x12181d, 0.78),
@@ -559,6 +654,138 @@ function addBox(
     });
   }
   return box;
+}
+
+function hexToRgba(hex: string, alpha: number) {
+  const value = Number.parseInt(hex.replace("#", ""), 16);
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+  return `rgba(${red},${green},${blue},${alpha})`;
+}
+
+function createSplatTexture(seed: number, color: string, smile = false) {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 256;
+  textureCanvas.height = 256;
+  const context = textureCanvas.getContext("2d")!;
+  const random = seededRandom(seed);
+  context.clearRect(0, 0, 256, 256);
+  context.fillStyle = hexToRgba(color, 0.92);
+  context.beginPath();
+  context.arc(128, 132, 58, 0, Math.PI * 2);
+  context.fill();
+
+  for (let i = 0; i < 28; i += 1) {
+    const angle = random() * Math.PI * 2;
+    const distance = 28 + random() * 76;
+    const radius = 5 + random() * 21;
+    const x = 128 + Math.cos(angle) * distance;
+    const y = 128 + Math.sin(angle) * distance;
+    context.fillStyle = hexToRgba(color, 0.58 + random() * 0.34);
+    context.beginPath();
+    context.ellipse(x, y, radius * (0.65 + random() * 0.75), radius, angle, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.globalCompositeOperation = "source-over";
+  context.strokeStyle = "rgba(255,255,255,0.34)";
+  context.lineWidth = 7;
+  context.beginPath();
+  context.arc(128, 132, 69, 0.18, Math.PI * 1.82);
+  context.stroke();
+
+  if (smile) {
+    context.strokeStyle = "rgba(17,24,39,0.72)";
+    context.lineWidth = 10;
+    context.lineCap = "round";
+    context.beginPath();
+    context.moveTo(94, 110);
+    context.lineTo(96, 110);
+    context.moveTo(158, 110);
+    context.lineTo(160, 110);
+    context.stroke();
+    context.beginPath();
+    context.arc(128, 132, 32, 0.18, Math.PI - 0.18);
+    context.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function createArrowTexture(seed: number, color: string) {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 256;
+  textureCanvas.height = 256;
+  const context = textureCanvas.getContext("2d")!;
+  const random = seededRandom(seed);
+  context.clearRect(0, 0, 256, 256);
+  context.shadowColor = "rgba(0,0,0,0.2)";
+  context.shadowBlur = 7;
+  context.shadowOffsetY = 6;
+  context.fillStyle = hexToRgba(color, 0.94);
+  context.beginPath();
+  context.moveTo(128, 22);
+  context.lineTo(224, 116);
+  context.lineTo(174, 116);
+  context.lineTo(174, 224);
+  context.lineTo(82, 224);
+  context.lineTo(82, 116);
+  context.lineTo(32, 116);
+  context.closePath();
+  context.fill();
+  context.shadowBlur = 0;
+  context.fillStyle = "rgba(255,255,255,0.22)";
+  for (let i = 0; i < 24; i += 1) {
+    context.fillRect(54 + random() * 148, 58 + random() * 136, 1 + random() * 4, 1 + random() * 4);
+  }
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function makeDecalMaterial(texture: THREE.Texture, opacity = 1) {
+  return new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2
+  });
+}
+
+const decalTextures = {
+  greenSmile: createSplatTexture(1021, "#93e43c", true),
+  yellowSplat: createSplatTexture(2047, "#ffc928"),
+  blueSplat: createSplatTexture(3037, "#1598f0"),
+  redSplat: createSplatTexture(4073, "#ff5757"),
+  whiteArrow: createArrowTexture(5077, "#f8fbff"),
+  yellowArrow: createArrowTexture(6089, "#ffd43d")
+};
+
+function addWallDecal(name: string, position: [number, number, number], yaw: number, texture: THREE.Texture, width: number, height: number, opacity = 1) {
+  const decal = new THREE.Mesh(new THREE.PlaneGeometry(width, height), makeDecalMaterial(texture, opacity));
+  decal.name = name;
+  decal.position.set(position[0], position[1], position[2]);
+  decal.rotation.y = yaw;
+  trackArenaObject(decal);
+  return decal;
+}
+
+function addGroundDecal(name: string, x: number, z: number, texture: THREE.Texture, width: number, height: number, rotation = 0, opacity = 0.92) {
+  const decal = new THREE.Mesh(new THREE.PlaneGeometry(width, height), makeDecalMaterial(texture, opacity));
+  decal.name = name;
+  decal.position.set(x, 0.038, z);
+  decal.rotation.set(-Math.PI / 2, 0, rotation);
+  trackArenaObject(decal);
+  return decal;
 }
 
 function addWalkSurface(position: [number, number, number], scale: [number, number, number]) {
@@ -883,6 +1110,21 @@ function addOpenCityBuilding(prefix: string, x: number, z: number, w: number, d:
   addWalkSurface([x, h + 0.12, z], [w, 0.24, d]);
 }
 
+function addToyboxVisualDecals() {
+  addWallDecal("north smile mural", [-18, 2.25, -95.94], 0, decalTextures.greenSmile, 8.2, 6.2, 0.92);
+  addWallDecal("north yellow mural", [16, 2.0, -95.93], 0, decalTextures.yellowSplat, 5.8, 4.8, 0.82);
+  addWallDecal("south blue mural", [38, 2.05, 95.94], Math.PI, decalTextures.blueSplat, 6.4, 5.1, 0.82);
+  addWallDecal("west red mural", [-95.94, 2.0, -34], Math.PI / 2, decalTextures.redSplat, 5.6, 4.7, 0.76);
+  addWallDecal("east green mural", [95.94, 2.1, 28], -Math.PI / 2, decalTextures.greenSmile, 5.9, 4.9, 0.76);
+  addWallDecal("blue block arrow", [20, 2.05, 0.06], 0, decalTextures.whiteArrow, 3.7, 3.7, 0.86);
+  addWallDecal("green tower arrow", [10.46, 2.6, -7.5], Math.PI / 2, decalTextures.yellowArrow, 2.8, 2.8, 0.88);
+  addWallDecal("south deck arrow", [-7.8, 4.6, 88.48], Math.PI, decalTextures.whiteArrow, 3.4, 3.4, 0.78);
+  addGroundDecal("center green splat", -7, -4, decalTextures.greenSmile, 7.2, 7.2, -0.45, 0.66);
+  addGroundDecal("center yellow splat", 12, 7, decalTextures.yellowSplat, 5.2, 5.2, 0.72, 0.68);
+  addGroundDecal("lane blue splat", -28, 8, decalTextures.blueSplat, 4.4, 4.4, 0.34, 0.62);
+  addGroundDecal("outer red splat", 44, -28, decalTextures.redSplat, 5.8, 5.8, -0.2, 0.58);
+}
+
 function addToyboxArena() {
   addBox("floor", [0, -0.05, 0], [194, 0.1, 194], materials.floor, false);
 
@@ -1039,6 +1281,7 @@ function addToyboxArena() {
       .rotation.y = i * 0.72;
   }
 
+  addToyboxVisualDecals();
   addSign("METRO", [-48, 3.35, -21.55], 0, "#1598f0");
   addSign("HOTEL", [47.95, 8.3, 24], -Math.PI / 2, "#ff8a2a");
   addSign("BROADCAST", [0, 7.0, 45.75], 0, "#9a62ff");
@@ -1165,21 +1408,56 @@ function addSign(label: string, position: [number, number, number], yaw: number,
   trackArenaObject(sign);
 }
 
-function addSky() {
-  const cloudMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  for (let i = 0; i < 4; i += 1) {
-    const cloud = new THREE.Group();
-    const baseX = -22 + i * 6;
-    const baseY = 12 + (i % 3) * 1.1;
-    const baseZ = -28 - (i % 2) * 5;
-    for (let j = 0; j < 2; j += 1) {
-      const puff = new THREE.Mesh(new THREE.SphereGeometry(1.2 + j * 0.24, 6, 4), cloudMaterial);
-      puff.position.set(baseX + j * 1.4, baseY + Math.sin(j) * 0.3, baseZ);
-      puff.scale.y = 0.45;
-      cloud.add(puff);
-    }
-    scene.add(cloud);
+function createCloudTexture(seed: number) {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 512;
+  textureCanvas.height = 256;
+  const context = textureCanvas.getContext("2d")!;
+  const random = seededRandom(seed);
+  context.clearRect(0, 0, textureCanvas.width, textureCanvas.height);
+  for (let i = 0; i < 12; i += 1) {
+    const x = 74 + random() * 360;
+    const y = 80 + random() * 68;
+    const radius = 42 + random() * 70;
+    const gradient = context.createRadialGradient(x, y, radius * 0.08, x, y, radius);
+    gradient.addColorStop(0, "rgba(255,255,255,0.94)");
+    gradient.addColorStop(0.58, "rgba(255,255,255,0.76)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.ellipse(x, y, radius * (1.12 + random() * 0.46), radius * (0.58 + random() * 0.26), 0, 0, Math.PI * 2);
+    context.fill();
   }
+  context.fillStyle = "rgba(255,255,255,0.52)";
+  context.fillRect(74, 128, 360, 26);
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function addSky() {
+  const clouds: Array<[number, number, number, number, number, number]> = [
+    [-68, 31, -118, 44, 18, 0.9],
+    [-12, 25, -132, 36, 14, 0.82],
+    [54, 32, -116, 48, 20, 0.88],
+    [-98, 27, 18, 38, 15, 0.68],
+    [102, 29, 32, 42, 17, 0.7],
+    [12, 36, 118, 52, 21, 0.64]
+  ];
+  clouds.forEach(([x, y, z, width, height, opacity], index) => {
+    const material = new THREE.SpriteMaterial({
+      map: createCloudTexture(8000 + index * 53),
+      transparent: true,
+      depthWrite: false,
+      opacity,
+      fog: false
+    });
+    const cloud = new THREE.Sprite(material);
+    cloud.position.set(x, y, z);
+    cloud.scale.set(width, height, 1);
+    scene.add(cloud);
+  });
 }
 
 function addWeapon() {
@@ -1189,6 +1467,8 @@ function addWeapon() {
   weapon.name = "weaponView";
   const receiverLength = gun.kind === "shotgun" ? 1.34 : gun.kind === "smg" ? 0.82 : isScopedGun(gun) ? 1.42 : 1.12;
   const barrelLength = isScopedGun(gun) ? 1.46 : gun.kind === "shotgun" ? 1.08 : gun.kind === "smg" ? 0.66 : 0.96;
+  const accentMaterial = gun.kind === "aug" || gun.kind === "awm" ? materials.cyan : gun.kind === "type95" ? materials.purple : materials.yellow;
+  const tracerMaterial = makeMaterial(gun.tracerColor, 0.38);
   const addPart = (mesh: THREE.Mesh, position: [number, number, number], rotation: [number, number, number] = [0, 0, 0]) => {
     mesh.position.set(position[0], position[1], position[2]);
     mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
@@ -1208,6 +1488,11 @@ function addWeapon() {
     [0.42, -0.29, -1.08 - barrelLength],
     [Math.PI / 2, 0, 0]
   );
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.052, receiverLength * 0.72), materials.dark), [0.42, -0.055, -0.82]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.18), materials.dark), [0.27, -0.29, -1.1 - barrelLength], [0, 0, 0.12]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.18), materials.dark), [0.57, -0.29, -1.1 - barrelLength], [0, 0, -0.12]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.56), accentMaterial), [0.22, -0.3, -0.72]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.56), accentMaterial), [0.62, -0.3, -0.72]);
   const stockLength = gun.kind === "smg" ? 0.28 : gun.kind === "shotgun" ? 0.62 : 0.54;
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, stockLength), materials.rubber), [0.45, -0.34, -0.14], [-0.16, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.12), materials.rubber), [0.45, -0.42, 0.18], [-0.18, 0, 0]);
@@ -1229,8 +1514,11 @@ function addWeapon() {
   } else if (gun.kind !== "smg") {
     addPart(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.34, 0.16), materials.rubber), [0.42, -0.55, -1.08], [-0.28, 0, 0]);
   }
-  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.16), makeMaterial(gun.tracerColor, 0.45)), [0.24, -0.19, -0.55]);
-  weapon.scale.setScalar(0.54);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.42), accentMaterial), [0.42, -0.2, -0.48]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.16), tracerMaterial), [0.24, -0.19, -0.55]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), materials.rubber), [0.25, -0.68, -0.6], [0.08, 0.05, 0.18]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.24, 0.34), accentMaterial), [0.17, -0.84, -0.34], [0.12, -0.16, 0.1]);
+  weapon.scale.setScalar(0.62);
   camera.add(weapon);
   weaponView = weapon;
   scene.add(camera);
@@ -2299,9 +2587,9 @@ function updateWeaponMotion(delta: number) {
   weaponKick = Math.max(0, weaponKick - delta * 5.8);
   const walkSway = keys.size > 0 ? 1 : 0.32;
   weaponView.position.set(
-    0.22 + Math.sin(weaponSwayClock) * 0.012 * walkSway,
-    -0.18 + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.01 * walkSway - weaponKick * 0.035,
-    -0.3 + weaponKick * 0.16
+    0.28 + Math.sin(weaponSwayClock) * 0.012 * walkSway,
+    -0.25 + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.01 * walkSway - weaponKick * 0.035,
+    -0.22 + weaponKick * 0.16
   );
   weaponView.rotation.set(
     -weaponKick * 0.22 + Math.sin(weaponSwayClock * 0.8) * 0.006 * walkSway,
