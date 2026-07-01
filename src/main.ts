@@ -582,9 +582,13 @@ function createGrainTexture(seed: number) {
   return texture;
 }
 
-function makeTexturedMaterial(color: number, texture: THREE.Texture, roughness = 0.82) {
+function makeTexturedMaterial(color: number, texture: THREE.Texture, roughness = 0.82, bumpScale = 0) {
   const material = makeMaterial(color, roughness);
   material.map = texture;
+  if (bumpScale > 0) {
+    material.bumpMap = texture;
+    material.bumpScale = bumpScale;
+  }
   material.needsUpdate = true;
   return material;
 }
@@ -594,15 +598,15 @@ const floorTexture = createConcreteTexture(3111, "#d8dfe2", 24, 24);
 const wallTexture = createConcreteTexture(5119, "#eef2f3", 3.4, 3.4);
 
 const materials = {
-  floor: makeTexturedMaterial(0xf2f5f5, floorTexture, 0.95),
-  wall: makeTexturedMaterial(0xf9fbfb, wallTexture, 0.9),
-  blue: makeTexturedMaterial(palette.blue, blockGrainTexture),
-  green: makeTexturedMaterial(palette.green, blockGrainTexture),
-  yellow: makeTexturedMaterial(palette.yellow, blockGrainTexture),
-  red: makeTexturedMaterial(palette.red, blockGrainTexture),
-  orange: makeTexturedMaterial(palette.orange, blockGrainTexture),
-  purple: makeTexturedMaterial(palette.purple, blockGrainTexture),
-  cyan: makeTexturedMaterial(palette.cyan, blockGrainTexture),
+  floor: makeTexturedMaterial(0xf2f5f5, floorTexture, 0.95, 0.028),
+  wall: makeTexturedMaterial(0xf9fbfb, wallTexture, 0.9, 0.04),
+  blue: makeTexturedMaterial(palette.blue, blockGrainTexture, 0.78, 0.018),
+  green: makeTexturedMaterial(palette.green, blockGrainTexture, 0.78, 0.018),
+  yellow: makeTexturedMaterial(palette.yellow, blockGrainTexture, 0.78, 0.018),
+  red: makeTexturedMaterial(palette.red, blockGrainTexture, 0.78, 0.018),
+  orange: makeTexturedMaterial(palette.orange, blockGrainTexture, 0.78, 0.018),
+  purple: makeTexturedMaterial(palette.purple, blockGrainTexture, 0.78, 0.018),
+  cyan: makeTexturedMaterial(palette.cyan, blockGrainTexture, 0.78, 0.018),
   dark: makeMaterial(palette.dark, 0.65),
   metal: makeMaterial(0x5e6971, 0.42),
   rubber: makeMaterial(0x12181d, 0.78),
@@ -748,6 +752,83 @@ function createArrowTexture(seed: number, color: string) {
   return texture;
 }
 
+function createGlyphTexture(glyph: string, seed: number, color = "#ffffff", shadow = true) {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 256;
+  textureCanvas.height = 256;
+  const context = textureCanvas.getContext("2d")!;
+  const random = seededRandom(seed);
+  context.clearRect(0, 0, 256, 256);
+  if (shadow) {
+    context.shadowColor = "rgba(0,0,0,0.2)";
+    context.shadowBlur = 8;
+    context.shadowOffsetY = 7;
+  }
+  context.fillStyle = hexToRgba(color, 0.95);
+  context.font = "900 164px Inter, system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(glyph, 128, 134);
+  context.shadowBlur = 0;
+  context.strokeStyle = "rgba(255,255,255,0.24)";
+  context.lineWidth = 8;
+  context.strokeRect(24, 24, 208, 208);
+  context.fillStyle = "rgba(255,255,255,0.18)";
+  for (let i = 0; i < 22; i += 1) {
+    context.fillRect(48 + random() * 160, 42 + random() * 168, 2 + random() * 4, 2 + random() * 4);
+  }
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function createDropTexture() {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 128;
+  textureCanvas.height = 128;
+  const context = textureCanvas.getContext("2d")!;
+  context.clearRect(0, 0, 128, 128);
+  context.fillStyle = "rgba(255,255,255,0.72)";
+  context.beginPath();
+  context.moveTo(64, 18);
+  context.bezierCurveTo(88, 50, 98, 70, 98, 88);
+  context.bezierCurveTo(98, 112, 78, 122, 64, 122);
+  context.bezierCurveTo(50, 122, 30, 112, 30, 88);
+  context.bezierCurveTo(30, 70, 40, 50, 64, 18);
+  context.fill();
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createFlagTexture() {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 256;
+  textureCanvas.height = 160;
+  const context = textureCanvas.getContext("2d")!;
+  context.clearRect(0, 0, 256, 160);
+  context.fillStyle = "#78c946";
+  context.fillRect(0, 0, 256, 160);
+  context.fillStyle = "rgba(255,255,255,0.88)";
+  context.beginPath();
+  context.arc(92, 60, 11, 0, Math.PI * 2);
+  context.arc(162, 60, 11, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = "rgba(255,255,255,0.9)";
+  context.lineWidth = 13;
+  context.lineCap = "round";
+  context.beginPath();
+  context.arc(128, 74, 42, 0.18, Math.PI - 0.18);
+  context.stroke();
+  context.fillStyle = "rgba(255,255,255,0.22)";
+  context.fillRect(0, 0, 256, 12);
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 function makeDecalMaterial(texture: THREE.Texture, opacity = 1) {
   return new THREE.MeshBasicMaterial({
     map: texture,
@@ -767,7 +848,12 @@ const decalTextures = {
   blueSplat: createSplatTexture(3037, "#1598f0"),
   redSplat: createSplatTexture(4073, "#ff5757"),
   whiteArrow: createArrowTexture(5077, "#f8fbff"),
-  yellowArrow: createArrowTexture(6089, "#ffd43d")
+  yellowArrow: createArrowTexture(6089, "#ffd43d"),
+  whiteA: createGlyphTexture("A", 7013),
+  whiteX: createGlyphTexture("X", 8011),
+  whiteCheck: createGlyphTexture("✓", 9011),
+  drop: createDropTexture(),
+  flagSmile: createFlagTexture()
 };
 
 function addWallDecal(name: string, position: [number, number, number], yaw: number, texture: THREE.Texture, width: number, height: number, opacity = 1) {
@@ -1110,6 +1196,115 @@ function addOpenCityBuilding(prefix: string, x: number, z: number, w: number, d:
   addWalkSurface([x, h + 0.12, z], [w, 0.24, d]);
 }
 
+function addDetailBox(name: string, position: [number, number, number], scale: [number, number, number], material: THREE.Material, yaw = 0) {
+  const mesh = addBox(name, position, scale, material, false);
+  mesh.rotation.y = yaw;
+  return mesh;
+}
+
+function addReferenceBarrel(name: string, x: number, z: number, yaw = 0, collidable = false) {
+  const group = new THREE.Group();
+  group.name = name;
+  group.position.set(x, 0, z);
+  group.rotation.y = yaw;
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.78, 1.55, 22), materials.blue);
+  shell.position.y = 0.78;
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.08, 22), materials.dark);
+  top.position.y = 1.6;
+  const bottom = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.08, 22), materials.dark);
+  bottom.position.y = 0.04;
+  group.add(shell, top, bottom);
+  for (const y of [0.46, 1.02, 1.45]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.035, 6, 20), materials.metal);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = y;
+    group.add(ring);
+  }
+  const mark = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.52), makeDecalMaterial(decalTextures.drop, 0.86));
+  mark.position.set(0, 0.82, 0.805);
+  group.add(mark);
+  trackArenaObject(group);
+  addSoftShadow(name, [x, 0.78, z], [1.6, 1.55, 1.6]);
+  if (collidable) {
+    colliders.push(new THREE.Box3(new THREE.Vector3(x - 0.92, 0, z - 0.92), new THREE.Vector3(x + 0.92, 1.6, z + 0.92)));
+    minimapBoxes.push({ x, z, w: 1.84, h: 1.84 });
+  }
+}
+
+function addRailingRun(name: string, start: [number, number, number], count: number, spacing: number, yaw: number) {
+  const forward = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+  for (let i = 0; i < count; i += 1) {
+    const x = start[0] + forward.x * spacing * i;
+    const z = start[2] + forward.z * spacing * i;
+    addDetailBox(`${name} post ${i}`, [x, start[1] + 0.42, z], [0.08, 0.84, 0.08], materials.metal);
+  }
+  const length = Math.max(0.4, (count - 1) * spacing + 0.58);
+  const rail = addDetailBox(`${name} rail`, [
+    start[0] + forward.x * spacing * (count - 1) / 2,
+    start[1] + 0.83,
+    start[2] + forward.z * spacing * (count - 1) / 2
+  ], [length, 0.08, 0.08], materials.metal, -yaw);
+  rail.rotation.y = -yaw;
+}
+
+function addStripedRampDetails() {
+  for (let i = -2; i <= 2; i += 1) {
+    const stripe = addDetailBox(`reference ramp stripe ${i}`, [17.2 + i * 0.62, 1.32, 9.22 + i * 0.18], [0.38, 0.035, 3.35], materials.wall);
+    stripe.rotation.x = -0.45;
+    stripe.rotation.y = -0.03;
+  }
+  addDetailBox("reference ramp side shadow", [18, 0.72, 12.0], [6.1, 0.08, 0.2], materials.dark);
+}
+
+function addFacadeDetails() {
+  addDetailBox("smile wall blue cap", [-18, 2.78, -6.34], [8.2, 0.26, 0.08], materials.blue);
+  addDetailBox("smile wall green base", [-18, 0.18, -6.33], [8.8, 0.34, 0.09], materials.green);
+  addDetailBox("mid wall blue stripe", [-3.9, 1.8, 3.13], [4.4, 0.34, 0.08], materials.blue);
+  addDetailBox("market yellow inset", [9, 2.05, 29.15], [4.2, 0.72, 0.08], materials.yellow);
+  addDetailBox("control door dark", [8, 0.92, -5.08], [1.12, 1.84, 0.09], materials.dark);
+  addDetailBox("control door trim", [8, 1.88, -5.04], [1.22, 0.16, 0.08], materials.wall);
+  addDetailBox("blue block louver backing", [22.96, 1.92, -4], [0.08, 2.25, 1.22], materials.dark);
+  for (let i = -2; i <= 2; i += 1) {
+    addDetailBox(`blue block louver ${i}`, [23.01, 1.92 + i * 0.33, -4], [0.09, 0.08, 1.16], materials.metal);
+  }
+  addDetailBox("yellow cube bevel top", [6.5, 1.63, 5], [4.16, 0.1, 4.16], materials.wall);
+  addDetailBox("yellow cube lower shadow", [6.5, 0.08, 7.03], [4.05, 0.16, 0.08], materials.dark);
+}
+
+function addFlagTowerDetails() {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 3.2, 8), materials.metal);
+  pole.position.set(7.2, 5.86, -7.4);
+  trackArenaObject(pole);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.18), makeDecalMaterial(decalTextures.flagSmile, 0.98));
+  flag.position.set(8.18, 6.76, -7.4);
+  flag.rotation.y = Math.PI / 2;
+  trackArenaObject(flag);
+  addRailingRun("green roof north", [5.85, 4.47, -9.9], 5, 0.6, 0);
+  addRailingRun("green roof east", [10.4, 4.47, -9.2], 5, 0.6, Math.PI / 2);
+  addDetailBox("green roof antenna base", [8.8, 4.56, -6.1], [0.5, 0.28, 0.5], materials.metal);
+  addDetailBox("green roof vent", [6.2, 4.58, -6.0], [0.72, 0.32, 0.46], materials.dark);
+}
+
+function addReferenceArenaDressing() {
+  addReferenceBarrel("blue barrel proxy", -10, 11, Math.PI * 0.12, true);
+  addReferenceBarrel("front blue barrel", -13.2, -3.4, Math.PI * 0.2, false);
+  addReferenceBarrel("back blue barrel", 14.8, -4.2, -Math.PI * 0.16, false);
+  addFacadeDetails();
+  addFlagTowerDetails();
+  addStripedRampDetails();
+  addGroundDecal("left foreground paint puddle", -18.2, -3.2, decalTextures.greenSmile, 6.4, 5.5, 0.26, 0.5);
+  addGroundDecal("yellow floor marking", 8.8, 8.5, decalTextures.yellowSplat, 5.2, 3.4, -0.12, 0.42);
+  addWallDecal("near smile wall", [-18, 1.46, -6.31], 0, decalTextures.greenSmile, 7.4, 4.7, 0.94);
+  addWallDecal("metro front smile wall", [-48, 1.68, -21.52], 0, decalTextures.greenSmile, 5.4, 3.4, 0.82);
+  addDetailBox("metro front blue band", [-48, 2.68, -21.50], [8.8, 0.26, 0.08], materials.blue);
+  addDetailBox("metro front green base", [-48, 0.2, -21.49], [10.8, 0.32, 0.08], materials.green);
+  addWallDecal("yellow block x mark", [6.5, 1.04, 7.04], 0, decalTextures.whiteX, 2.3, 2.1, 0.88);
+  addWallDecal("blue block a mark", [20, 2.0, 0.05], 0, decalTextures.whiteA, 3.35, 3.15, 0.9);
+  addWallDecal("green tower check mark", [5.57, 2.46, -7.5], -Math.PI / 2, decalTextures.whiteCheck, 2.15, 2.15, 0.82);
+  addDetailBox("spawn smile wall green base", [-36.06, 0.2, 6], [0.08, 0.34, 9.5], materials.green);
+  addWallDecal("spawn side smile wall", [-36.03, 1.02, 6], Math.PI / 2, decalTextures.greenSmile, 4.2, 3.1, 0.86);
+}
+
 function addToyboxVisualDecals() {
   addWallDecal("north smile mural", [-18, 2.25, -95.94], 0, decalTextures.greenSmile, 8.2, 6.2, 0.92);
   addWallDecal("north yellow mural", [16, 2.0, -95.93], 0, decalTextures.yellowSplat, 5.8, 4.8, 0.82);
@@ -1138,7 +1333,6 @@ function addToyboxArena() {
   addBox("white left cover", [-18, 1.4, -8], [9, 2.8, 3.2], materials.wall);
   addBox("white mid cover", [-4, 1.1, 1.5], [5, 2.2, 3.2], materials.wall);
   addBox("yellow low cover", [6.5, 0.8, 5], [4, 1.6, 4], materials.yellow);
-  addBox("blue barrel proxy", [-10, 0.9, 11], [2.4, 1.8, 2.4], materials.blue);
   addBox("green ramp landing", [18, 0.9, 15], [8, 1.8, 5], materials.green);
   addBox("white back cover", [-7, 1.5, -22], [8, 3, 3], materials.wall);
   addBox("yellow side cube", [-22, 0.8, 18], [3.8, 1.6, 3.8], materials.yellow);
@@ -1152,13 +1346,13 @@ function addToyboxArena() {
   addBox("control building", [2, 3.2, -27], [12, 6.4, 3.5], materials.green);
   addBox("warehouse", [-18, 2.7, 25], [11, 5.4, 5], materials.yellow);
   addBox("market hall", [9, 2.4, 27], [9, 4.8, 4.2], materials.wall);
-  addBox("red kiosk", [-28, 1.6, -9], [3.4, 3.2, 6.5], materials.red);
+  addBox("red kiosk", [-28, 1.6, -9], [3.4, 3.2, 6.5], materials.wall);
   addBox("blue watch post", [27, 2.8, 8], [3.8, 5.6, 5.2], materials.blue);
   addBox("green office", [-11, 2.3, -27], [7.5, 4.6, 3.6], materials.green);
   addBox("yellow garage", [28, 1.45, -23], [5.2, 2.9, 8.4], materials.yellow);
   addBox("white courtyard block", [-28, 1.2, 27], [5.8, 2.4, 5.8], materials.wall);
   addBox("high tower north", [-6, 6, 27], [4.8, 12, 4.8], materials.blue);
-  addBox("high tower south", [15, 6.8, -28], [5.2, 13.6, 4.4], materials.red);
+  addBox("high tower south", [15, 6.8, -28], [5.2, 13.6, 4.4], materials.green);
   addBox("sky stair landing north", [-6, 3.45, 20], [5.4, 0.5, 4.2], materials.wall);
   addBox("sky stair landing south", [15, 3.7, -20], [5.6, 0.5, 4.2], materials.wall);
   addBox("roof bridge block", [3, 4.2, 21.5], [6, 0.7, 2.4], materials.green);
@@ -1171,12 +1365,12 @@ function addToyboxArena() {
   addBox("new south depot", [2, 2.3, -7], [5.2, 4.6, 4.2], materials.wall);
   addBox("new west scaffold", [-15, 2.6, 2], [4.2, 5.2, 4.2], materials.yellow);
   addBox("new east bunker", [23.5, 1.35, -18], [5, 2.7, 3.8], materials.green);
-  addBox("orange refinery", [-36, 2.8, -34], [9, 5.6, 5], materials.orange);
+  addBox("orange refinery", [-36, 2.8, -34], [9, 5.6, 5], materials.blue);
   addBox("purple data tower", [37, 6.2, -33], [5.5, 12.4, 5.5], materials.purple);
   addBox("cyan hangar", [-34, 2.2, 33], [12, 4.4, 6], materials.cyan);
   addBox("red gatehouse", [35, 2.6, 34], [8, 5.2, 5], materials.red);
   addBox("white clinic", [-2, 2.1, 39], [10, 4.2, 4.6], materials.wall);
-  addBox("orange low maze a", [-38, 0.85, 6], [3.8, 1.7, 10], materials.orange);
+  addBox("orange low maze a", [-38, 0.85, 6], [3.8, 1.7, 10], materials.wall);
   addBox("cyan low maze b", [38, 0.85, -6], [3.8, 1.7, 10], materials.cyan);
   addBox("outer cyan depot", [-56, 2.2, -54], [10, 4.4, 5], materials.cyan);
   addBox("outer orange tower", [56, 5.2, 54], [5, 10.4, 5], materials.orange);
@@ -1281,6 +1475,7 @@ function addToyboxArena() {
       .rotation.y = i * 0.72;
   }
 
+  addReferenceArenaDressing();
   addToyboxVisualDecals();
   addSign("METRO", [-48, 3.35, -21.55], 0, "#1598f0");
   addSign("HOTEL", [47.95, 8.3, 24], -Math.PI / 2, "#ff8a2a");
@@ -1469,6 +1664,7 @@ function addWeapon() {
   const barrelLength = isScopedGun(gun) ? 1.46 : gun.kind === "shotgun" ? 1.08 : gun.kind === "smg" ? 0.66 : 0.96;
   const accentMaterial = gun.kind === "aug" || gun.kind === "awm" ? materials.cyan : gun.kind === "type95" ? materials.purple : materials.yellow;
   const tracerMaterial = makeMaterial(gun.tracerColor, 0.38);
+  const skinMaterial = makeMaterial(0xffc0a0, 0.76);
   const addPart = (mesh: THREE.Mesh, position: [number, number, number], rotation: [number, number, number] = [0, 0, 0]) => {
     mesh.position.set(position[0], position[1], position[2]);
     mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
@@ -1507,7 +1703,9 @@ function addWeapon() {
     addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), materials.metal), [0.06, -0.08, -0.92], [0, 0, Math.PI / 2]);
   } else {
     addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.06), materials.metal), [0.42, -0.08, -1.28]);
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.06), materials.metal), [0.42, -0.08, -0.58]);
     addPart(new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.012, 8, 16), materials.yellow), [0.42, -0.08, -1.1], [0, Math.PI / 2, 0]);
+    addPart(new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.014, 8, 18), materials.dark), [0.42, -0.075, -0.46], [0, Math.PI / 2, 0]);
   }
   if (gun.kind === "shotgun") {
     addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.96, 12), materials.rubber), [0.42, -0.43, -1.18], [Math.PI / 2, 0, 0]);
@@ -1518,7 +1716,11 @@ function addWeapon() {
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.16), tracerMaterial), [0.24, -0.19, -0.55]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), materials.rubber), [0.25, -0.68, -0.6], [0.08, 0.05, 0.18]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.24, 0.34), accentMaterial), [0.17, -0.84, -0.34], [0.12, -0.16, 0.1]);
-  weapon.scale.setScalar(0.62);
+  addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.15, 0.78, 10), accentMaterial), [0.12, -0.95, -0.28], [Math.PI / 2, 0.08, -0.16]);
+  addPart(new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8), materials.rubber), [0.26, -0.68, -0.64], [0, 0, 0]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 0.28), skinMaterial), [0.36, -0.62, -0.84], [0.12, 0.05, -0.08]);
+  addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 0.92, 10), accentMaterial), [-0.08, -1.08, 0.02], [Math.PI / 2, -0.18, -0.1]);
+  weapon.scale.setScalar(0.66);
   camera.add(weapon);
   weaponView = weapon;
   scene.add(camera);
@@ -1527,28 +1729,58 @@ function addWeapon() {
 function createPlayerMesh(player: PlayerState) {
   const group = new THREE.Group();
   const teamMaterial = makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red), 0.7);
+  const skinMaterial = makeMaterial(0xffc0a0, 0.76);
+  const bootMaterial = makeMaterial(0x151b20, 0.78);
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.82, 3, 6), teamMaterial);
   body.position.y = 0.85;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), makeMaterial(0x222f39, 0.5));
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 10, 8), skinMaterial);
   head.position.y = 1.58;
   const marker = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.32, 3), makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757)));
   marker.position.y = 2.25;
   marker.rotation.x = Math.PI;
   const weapon = new THREE.Group();
-  const weaponBody = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.11, 0.58), materials.dark);
-  const weaponBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.5, 8), materials.metal);
+  const weaponBody = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.62), materials.dark);
+  const weaponStock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.22), materials.rubber);
+  const weaponBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.034, 0.58, 8), materials.metal);
+  const weaponSight = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), materials.yellow);
   weaponBody.position.set(0, 0, -0.1);
+  weaponStock.position.set(0, -0.02, 0.24);
   weaponBarrel.rotation.x = Math.PI / 2;
-  weaponBarrel.position.set(0, 0.01, -0.55);
-  weapon.add(weaponBody, weaponBarrel);
+  weaponBarrel.position.set(0, 0.01, -0.6);
+  weaponSight.position.set(0, 0.1, -0.18);
+  weapon.add(weaponBody, weaponStock, weaponBarrel, weaponSight);
   weapon.position.set(0.36, 1.08, -0.42);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.265, 10, 6), bootMaterial);
+  helmet.position.y = 1.68;
+  helmet.scale.set(1.08, 0.56, 1.02);
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.07, 0.08), materials.dark);
+  visor.position.set(0, 1.61, -0.22);
+  const vest = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.54, 0.42), teamMaterial);
+  vest.position.y = 0.92;
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.1, 0.44), bootMaterial);
+  belt.position.y = 0.56;
+  const leftArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.52, 2, 6), teamMaterial);
+  leftArm.position.set(-0.38, 1.03, -0.05);
+  leftArm.rotation.z = -0.24;
+  const rightArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.52, 2, 6), teamMaterial);
+  rightArm.position.set(0.38, 1.02, -0.16);
+  rightArm.rotation.z = 0.42;
+  rightArm.rotation.x = -0.34;
+  const leftLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.48, 2, 6), bootMaterial);
+  leftLeg.position.set(-0.16, 0.25, 0);
+  const rightLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.48, 2, 6), bootMaterial);
+  rightLeg.position.set(0.16, 0.25, 0);
+  const leftGlove = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 6), bootMaterial);
+  leftGlove.position.set(-0.43, 0.78, -0.1);
+  const rightGlove = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 6), bootMaterial);
+  rightGlove.position.set(0.48, 0.9, -0.42);
   const shield = new THREE.Mesh(
     new THREE.BoxGeometry(1.35, 1.85, 1.35),
     new THREE.MeshBasicMaterial({ color: 0x7df7ff, transparent: true, opacity: 0.14, wireframe: true })
   );
   shield.position.y = 0.98;
   shield.visible = false;
-  group.add(body, head, marker, weapon, shield);
+  group.add(body, head, marker, weapon, shield, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove);
   scene.add(group);
   return group;
 }
@@ -3188,15 +3420,16 @@ function updateSlots() {
     const player = list[i];
     const slot = document.createElement("div");
     const canChangeTeam = Boolean(player) && (gameMode === "score10" || gameMode === "life3");
-    slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${canChangeTeam ? "team-editable" : ""}`;
+    const shape = ["circle", "triangle", "hex", "dot", "square"][i % 5];
+    slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${canChangeTeam ? "team-editable" : ""} shape-${shape}`;
     const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : player?.score;
     slot.innerHTML = player
-      ? `<span>${i + 1}</span><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
+      ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
           canChangeTeam
             ? `<div class="slot-team-actions" aria-label="チーム変更"><button data-player-id="${player.id}" data-team-change="blue" class="${player.color === "blue" ? "active" : ""}">青</button><button data-player-id="${player.id}" data-team-change="red" class="${player.color === "red" ? "active" : ""}">赤</button></div>`
             : ""
         }`
-      : `<span>${i + 1}</span><strong>空き</strong><small>-</small>`;
+      : `<span class="slot-key">${i + 1}</span><b class="slot-avatar"></b><strong>空き</strong><small>-</small>`;
     playerSlots.append(slot);
   }
 }
@@ -3220,7 +3453,13 @@ function updateFeed(feed: FeedItem[]) {
   const signature = feed.slice(0, 4).map((item) => item.id).join("|");
   if (signature === feedSignature) return;
   feedSignature = signature;
-  feedEl.innerHTML = feed.slice(0, 4).map((item) => `<div class="${item.color}">${escapeHtml(item.text)}</div>`).join("");
+  feedEl.innerHTML = feed.slice(0, 4).map((item) => {
+    const [left, right] = item.text.split(" -> ");
+    if (left && right) {
+      return `<div class="${item.color}"><span>${escapeHtml(left)}</span><i>▰</i><strong>${escapeHtml(right)}</strong></div>`;
+    }
+    return `<div class="${item.color}"><span>${escapeHtml(item.text)}</span></div>`;
+  }).join("");
 }
 
 function updateChat(chat: ChatItem[]) {
