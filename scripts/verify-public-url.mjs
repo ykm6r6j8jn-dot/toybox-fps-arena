@@ -92,7 +92,7 @@ send(alpha.ws, {
 
 await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
-    snapshot.players?.some((player) => player.name === "PublicBeta" && player.health === 75)
+    snapshot.players?.some((player) => player.name === "PublicBeta" && player.health === 175)
   ),
   "public server resolves hit"
 );

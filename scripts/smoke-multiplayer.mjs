@@ -69,12 +69,12 @@ send(alpha.ws, {
 
 await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
-    snapshot.players?.some((player) => player.name === "Beta" && player.health === 75)
+    snapshot.players?.some((player) => player.name === "Beta" && player.health === 175)
   ),
   "server resolves a hit"
 );
 
-for (let i = 0; i < 3; i += 1) {
+for (let i = 0; i < 7; i += 1) {
   send(alpha.ws, {
     type: "shoot",
     origin: { x: 24, y: 1.6, z: 24 },
@@ -83,8 +83,10 @@ for (let i = 0; i < 3; i += 1) {
 }
 
 await waitFor(
-  () => beta.state.respawns.some((message) => message.target === beta.state.id),
-  "target receives respawn without relying on snapshot warps"
+  () => beta.state.snapshots.some((snapshot) =>
+    snapshot.players?.some((player) => player.name === "Beta" && player.health === 0 && player.eliminated)
+  ),
+  "target is eliminated in one-life mode"
 );
 
 alpha.ws.close();

@@ -64,7 +64,7 @@
         <div class="health-card">
           <div class="face">:)</div>
           <div>
-            <strong><span id="health">100</span><small>/100</small></strong>
+            <strong><span id="health">200</span><small>/200</small></strong>
             <div class="health-bar"><span id="healthBar"></span></div>
           </div>
         </div>
@@ -180,13 +180,9 @@
             <small>ひでおが選ぶと全員に反映</small>
           </div>
           <div class="mode-select settings-mode-select" id="settingsModeSelect" role="group" aria-label="プレイ中ゲームモード">
-            <button type="button" class="active" data-mode="score10">
-              <strong>10目標</strong>
-              <span>10点勝利</span>
-            </button>
-            <button type="button" data-mode="duel">
-              <strong>1:1</strong>
-              <span>即終了</span>
+            <button type="button" class="active" data-mode="oneLife">
+              <strong>ワンライフ</strong>
+              <span>一回死亡で終了</span>
             </button>
             <button type="button" data-mode="life3">
               <strong>ライフ3</strong>
@@ -223,12 +219,8 @@
             <input id="nameInput" maxlength="14" placeholder="プレイヤー" autocomplete="nickname" />
           </label>
           <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
-            <button type="button" class="active" data-mode="score10">
-              <strong>10目標</strong>
-              <span>10点で勝利</span>
-            </button>
-            <button type="button" data-mode="duel">
-              <strong>1:1</strong>
+            <button type="button" class="active" data-mode="oneLife">
+              <strong>ワンライフ</strong>
               <span>一回死亡で終了</span>
             </button>
             <button type="button" data-mode="life3">

@@ -26,7 +26,7 @@ import {
 
 type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
-type GameMode = "score10" | "duel" | "life3" | "castle";
+type GameMode = "oneLife" | "life3" | "castle";
 type ArenaId = "toybox";
 type PartySize = 1 | 2 | 4;
 
@@ -119,6 +119,8 @@ const $ = <T extends HTMLElement>(selector: string) => {
   if (!element) throw new Error(`Missing element: ${selector}`);
   return element;
 };
+
+const maxHealth = 200;
 
 createIcons({
   icons: {
@@ -290,7 +292,7 @@ const self = {
   room: "",
   joined: false,
   ready: false,
-  health: 100,
+  health: maxHealth,
   ammo: guns[0].magSize,
   reserve: 999,
   yaw: 0,
@@ -308,8 +310,8 @@ let socket: WebSocket | null = null;
 let lastStateSent = 0;
 let reloadTimer = 0;
 let roundSeconds = 525;
-let targetScore = 10;
-let gameMode: GameMode = "score10";
+let targetScore = 0;
+let gameMode: GameMode = "oneLife";
 let arenaChoice: ArenaId = "toybox";
 let currentArena: ArenaId = "toybox";
 let teamChoice: TeamChoice = (localStorage.getItem("toybox-team") as TeamChoice) || "auto";
@@ -382,7 +384,7 @@ let flowUntil = 0;
 let lastFlowAt = 0;
 let lastSelfKills = 0;
 let lastSelfScore = 0;
-let lastSelfHealth = 100;
+let lastSelfHealth = maxHealth;
 let shotNoiseBuffer: AudioBuffer | null = null;
 let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
@@ -415,7 +417,7 @@ let lastClockText = "";
 renderer.setPixelRatio(activePixelRatio);
 
 function gameModeLabel(mode: GameMode) {
-  return mode === "duel" ? "1:1モード" : mode === "life3" ? "ライフ3" : mode === "castle" ? "城攻め" : "10目標";
+  return mode === "oneLife" ? "ワンライフ" : mode === "life3" ? "ライフ3" : "城攻め";
 }
 
 function setGameMode(mode: GameMode) {
@@ -424,8 +426,8 @@ function setGameMode(mode: GameMode) {
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
-  modeLabel.textContent = mode === "score10" ? "目標スコア" : "ゲームモード";
-  if (targetScoreText) targetScoreText.textContent = mode === "score10" ? String(targetScore) : mode === "duel" ? "1:1" : mode === "life3" ? "LIFE" : "CASTLE";
+  modeLabel.textContent = "ゲームモード";
+  if (targetScoreText) targetScoreText.textContent = mode === "oneLife" ? "1 LIFE" : mode === "life3" ? "LIFE" : "CASTLE";
 }
 
 function setTeamChoice(team: TeamChoice) {
@@ -2034,7 +2036,7 @@ playerSlots.addEventListener("click", (event) => {
 });
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
   button.addEventListener("click", () => {
-    const mode = (button.dataset.mode as GameMode) || "score10";
+    const mode = (button.dataset.mode as GameMode) || "oneLife";
     if (self.joined) {
       requestRoomConfig(mode, teamChoice);
       return;
@@ -2288,7 +2290,7 @@ function useHealPack() {
     showToast("回復アイテムがありません");
     return;
   }
-  if (me.health >= 100) {
+  if (me.health >= maxHealth) {
     showToast("HPは満タンです");
     return;
   }
@@ -2328,13 +2330,13 @@ function handleMessage(event: MessageEvent<string>) {
     lastFlowAt = 0;
     lastSelfKills = 0;
     lastSelfScore = 0;
-    lastSelfHealth = 100;
+    lastSelfHealth = maxHealth;
     updateFlowHud(performance.now());
-    gameMode = (message.gameMode as GameMode) || "score10";
+    gameMode = (message.gameMode as GameMode) || "oneLife";
     arenaChoice = "toybox";
     if (message.partySize) setPartySize(Number(message.partySize));
     matchMaxPlayers = Number(message.maxPlayers) || 20;
-    targetScore = Number(message.targetScore) || 10;
+    targetScore = Number(message.targetScore) || 0;
     setGameMode(gameMode);
     setArenaChoice(arenaChoice);
     switchArena(arenaChoice);
@@ -2348,7 +2350,7 @@ function handleMessage(event: MessageEvent<string>) {
     return;
   }
   if (message.type === "snapshot") {
-    if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
+    if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.partySize) setPartySize(Number(message.partySize));
     if (message.maxPlayers) matchMaxPlayers = Number(message.maxPlayers) || matchMaxPlayers;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
@@ -2390,7 +2392,7 @@ function handleMessage(event: MessageEvent<string>) {
     return;
   }
   if (message.type === "room_config") {
-    if (typeof message.targetScore === "number") targetScore = message.targetScore || 10;
+    if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
     castleEndsAt = Number(message.castleEndsAt) || 0;
     updateCastleCores(message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined);
@@ -2423,7 +2425,7 @@ function handleMessage(event: MessageEvent<string>) {
     self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : self.yaw;
     self.pitch = 0;
     self.velocity.set(0, 0, 0);
-    self.health = 100;
+    self.health = maxHealth;
     spectatorCard.classList.remove("show");
     showToast("リスポーン");
   }
@@ -2793,7 +2795,7 @@ function resetSelf() {
   self.velocity.set(0, 0, 0);
   self.pitch = 0;
   self.yaw = 0;
-  self.health = 100;
+  self.health = maxHealth;
   reloadTimer = 0;
   trampolineBoostStep = 0;
   trampolineChainActive = false;
@@ -2807,7 +2809,7 @@ function resetSelf() {
   lastFlowAt = 0;
   lastSelfKills = 0;
   lastSelfScore = 0;
-  lastSelfHealth = 100;
+  lastSelfHealth = maxHealth;
   updateFlowHud(performance.now());
   endCelebration();
   document.body.classList.remove("scoped");
@@ -3293,7 +3295,7 @@ function updateBarrierPowerup(barrier?: BarrierSnapshot) {
 
 function updateHealthPickup(pickup?: HealthPickupSnapshot) {
   if (!healthPickupMesh) return;
-  if (!pickup || gameMode !== "duel") {
+  if (!pickup || gameMode !== "oneLife") {
     healthPickupMesh.visible = false;
     return;
   }
@@ -3437,11 +3439,11 @@ function updateHud(feed: FeedItem[]) {
     lastSelfHealth = me.health;
   }
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
-  healthBar.style.width = `${Math.max(0, me?.health ?? self.health)}%`;
+  healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
   ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
-  const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "duel" ? "  1:1" : gameMode === "castle" ? "  CASTLE" : "";
+  const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "oneLife" ? "  1 LIFE" : gameMode === "castle" ? "  CASTLE" : "";
   movementStatusEl.textContent = shieldLeft > 0
     ? `BARRIER ${shieldLeft.toFixed(1)}s`
     : me?.eliminated
@@ -3536,10 +3538,10 @@ function updateSlots() {
   for (let i = 0; i < matchMaxPlayers; i += 1) {
     const player = list[i];
     const slot = document.createElement("div");
-    const canChangeTeam = Boolean(player) && (gameMode === "score10" || gameMode === "life3");
+    const canChangeTeam = Boolean(player) && (gameMode === "oneLife" || gameMode === "life3");
     const shape = ["circle", "triangle", "hex", "dot", "square"][i % 5];
     slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${canChangeTeam ? "team-editable" : ""} shape-${shape}`;
-    const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : player?.score;
+    const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : gameMode === "oneLife" ? "IN" : player?.score;
     slot.innerHTML = player
       ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
           canChangeTeam
@@ -3561,7 +3563,7 @@ function updateScoreboard() {
       <span>#${index + 1} ${escapeHtml(player.name)}</span>
       <strong>${player.score}</strong>
       <small>${player.kills}K/${player.deaths}D  与${Math.round(player.damageDealt || 0)}  命中${player.hits || 0}</small>
-      <em>${player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : player.ready ? "ready" : "wait"}</em>
+      <em>${player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : gameMode === "oneLife" ? "alive" : player.ready ? "ready" : "wait"}</em>
     </div>
   `).join("");
 }

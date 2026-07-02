@@ -11,7 +11,7 @@ const port = Number(process.env.PORT || 5188);
 const maxPlayers = 20;
 const maxCpuPlayers = 19;
 const matchTeamSize = maxPlayers / 2;
-const defaultTargetScore = 10;
+const maxHealth = 200;
 const arenaHalfSize = 96;
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
@@ -23,7 +23,7 @@ const barrierRespawnMs = 15000;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
 const initialHealPacks = 5;
 const healPackAmount = 20;
-const gameModes = new Set(["score10", "duel", "life3", "castle"]);
+const gameModes = new Set(["oneLife", "life3", "castle"]);
 const partySizes = new Set([1, 2, 4]);
 const arenas = new Set(["toybox"]);
 const teams = new Set(["blue", "red"]);
@@ -243,8 +243,8 @@ function roomCode() {
 }
 
 function normalizeGameMode(value) {
-  const mode = String(value || "score10");
-  return gameModes.has(mode) ? mode : "score10";
+  const mode = String(value || "oneLife");
+  return gameModes.has(mode) ? mode : "oneLife";
 }
 
 function normalizeArena(value) {
@@ -252,10 +252,10 @@ function normalizeArena(value) {
 }
 
 function modeLabel(mode) {
-  if (mode === "duel") return "1:1";
+  if (mode === "oneLife") return "ワンライフ";
   if (mode === "life3") return "ライフ3";
   if (mode === "castle") return "城攻め";
-  return "10目標";
+  return "ワンライフ";
 }
 
 function normalizePartySize(value) {
@@ -295,7 +295,7 @@ function oppositeTeam(team) {
 
 function initialLivesForMode(mode) {
   if (mode === "life3") return 3;
-  if (mode === "duel") return 1;
+  if (mode === "oneLife") return 1;
   return 0;
 }
 
@@ -321,7 +321,7 @@ function randomPickupSpawn(arena = "toybox") {
   return { x: 0, y: 1.6, z: 0 };
 }
 
-function findMatchRoom(mode = "score10", partySize = 1) {
+function findMatchRoom(mode = "oneLife", partySize = 1) {
   const gameMode = normalizeGameMode(mode);
   const size = normalizePartySize(partySize);
   for (const room of rooms.values()) {
@@ -331,7 +331,7 @@ function findMatchRoom(mode = "score10", partySize = 1) {
   return null;
 }
 
-function getRoom(code, mode = "score10", arena = "toybox", partySize = 1, matchmaking = true) {
+function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchmaking = true) {
   const normalized = (code || "").trim().toUpperCase();
   if (normalized && rooms.has(normalized)) return rooms.get(normalized);
   if (!normalized) {
@@ -352,7 +352,7 @@ function getRoom(code, mode = "score10", arena = "toybox", partySize = 1, matchm
     maxHumanPlayers: maxPlayers,
     weaponStats: {},
     movementStats: { samples: 0, moving: 0, airborne: 0 },
-    targetScore: gameMode === "score10" ? defaultTargetScore : 0,
+    targetScore: 0,
     createdAt: Date.now(),
     players: new Map(),
     feed: [],
@@ -364,7 +364,7 @@ function getRoom(code, mode = "score10", arena = "toybox", partySize = 1, matchm
     donPunches: new Map(),
     castleCores: createCastleCores(),
     barrier: { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 },
-    healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "duel" ? nextHealthPickupAt() : 0 }
+    healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "oneLife" ? nextHealthPickupAt() : 0 }
   };
   rooms.set(createdCode, room);
   return room;
@@ -638,7 +638,7 @@ wss.on("connection", (ws) => {
         color: team,
         cosmeticColor: safeColor(message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
         ready: false,
-        health: 100,
+        health: maxHealth,
         score: 0,
         kills: 0,
         deaths: 0,
@@ -731,8 +731,8 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "change_team") {
-      if (currentRoom.mode !== "score10" && currentRoom.mode !== "life3") {
-        send(currentPlayer.ws, { type: "error", message: "チーム変更は10目標/ライフ3で使用できます。" });
+      if (currentRoom.mode !== "oneLife" && currentRoom.mode !== "life3") {
+        send(currentPlayer.ws, { type: "error", message: "チーム変更はワンライフ/ライフ3で使用できます。" });
         return;
       }
       const requestedTeam = String(message.team || "");
@@ -757,7 +757,7 @@ wss.on("connection", (ws) => {
       broadcast(currentRoom, {
         type: "room_config",
         gameMode: currentRoom.mode,
-        targetScore: currentRoom.targetScore || defaultTargetScore,
+        targetScore: currentRoom.targetScore || 0,
         feed: currentRoom.feed,
         castleCores: currentRoom.castleCores,
         castleEndsAt: currentRoom.castleEndsAt || 0
@@ -768,17 +768,17 @@ wss.on("connection", (ws) => {
     if (message.type === "creative_toggle") {
       if (currentPlayer.name !== "こーた") return;
       currentPlayer.creative = Boolean(message.enabled);
-      currentPlayer.health = 100;
+      currentPlayer.health = maxHealth;
       currentPlayer.eliminated = false;
       return;
     }
 
     if (message.type === "use_heal") {
       if (currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.creative) return;
-      if ((currentPlayer.healPacks || 0) <= 0 || currentPlayer.health >= 100) return;
+      if ((currentPlayer.healPacks || 0) <= 0 || currentPlayer.health >= maxHealth) return;
       currentPlayer.healPacks -= 1;
       currentPlayer.healsUsed = (currentPlayer.healsUsed || 0) + 1;
-      currentPlayer.health = Math.min(100, currentPlayer.health + healPackAmount);
+      currentPlayer.health = Math.min(maxHealth, currentPlayer.health + healPackAmount);
       addFeed(currentRoom, `${currentPlayer.name} が回復アイテムを使用`, currentPlayer.color);
       send(currentPlayer.ws, { type: "sound", sound: "heal" });
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
@@ -922,7 +922,7 @@ setInterval(() => {
       arena: room.arena,
       partySize: room.partySize || 1,
       maxPlayers: room.maxHumanPlayers || maxPlayers,
-      targetScore: room.targetScore || defaultTargetScore,
+      targetScore: room.targetScore || 0,
       castleCores: room.castleCores,
       castleEndsAt: room.castleEndsAt || 0,
       donPunches,
@@ -1080,15 +1080,6 @@ function handleDeath(room, shooter, target) {
     return;
   }
 
-  if (room.mode === "duel") {
-    target.eliminated = true;
-    target.health = 0;
-    target.lives = 0;
-    addFeed(room, `${target.name} 脱落`, target.color);
-    checkSurvivalWinner(room, shooter);
-    return;
-  }
-
   if (room.mode === "life3") {
     target.lives = Math.max(0, (target.lives || 3) - 1);
     if (target.lives <= 0) {
@@ -1103,24 +1094,16 @@ function handleDeath(room, shooter, target) {
     return;
   }
 
-  respawnPlayer(target);
-  const teamScore = [...room.players.values()]
-    .filter((player) => player.color === shooter.color)
-    .reduce((sum, player) => sum + player.score, 0);
-  if (!room.winner && teamScore >= (room.targetScore || defaultTargetScore)) {
-    room.winner = {
-      color: shooter.color,
-      name: shooter.color === "blue" ? "ブルーチーム" : "レッドチーム",
-      at: Date.now()
-    };
-    addFeed(room, `${room.winner.name} 勝利！`, shooter.color);
-    broadcast(room, { type: "celebration", winner: room.winner });
-  }
+  target.eliminated = true;
+  target.health = 0;
+  target.lives = 0;
+  addFeed(room, `${target.name} 脱落`, target.color);
+  checkSurvivalWinner(room, shooter);
 }
 
 function respawnPlayer(player) {
   const spawn = spawnPoint(Math.floor(Math.random() * 16));
-  Object.assign(player, spawn, { health: 100, eliminated: false });
+  Object.assign(player, spawn, { health: maxHealth, eliminated: false });
   if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
 }
 
@@ -1189,7 +1172,7 @@ function setCpuCount(room, count) {
       color: cpuTeam || (i % 2 === 0 ? "red" : "blue"),
       cosmeticColor: (cpuTeam || (i % 2 === 0 ? "red" : "blue")) === "red" ? "#ff4d4d" : "#1598f0",
       ready: true,
-      health: 100,
+      health: maxHealth,
       score: 0,
       kills: 0,
       deaths: 0,
@@ -1228,7 +1211,7 @@ function createCpuPlayer(room, id, index, team) {
     color: team,
     cosmeticColor: team === "red" ? "#ff4d4d" : "#1598f0",
     ready: true,
-    health: 100,
+    health: maxHealth,
     score: 0,
     kills: 0,
     deaths: 0,
@@ -1287,7 +1270,7 @@ function applyRoomConfig(room, host, mode, teamChoice) {
   const nextMode = normalizeGameMode(mode);
   const requestedTeam = teams.has(String(teamChoice || "")) ? String(teamChoice) : "";
   room.mode = nextMode;
-  room.targetScore = nextMode === "score10" ? defaultTargetScore : 0;
+  room.targetScore = 0;
   room.playerTeam = nextMode === "castle" ? requestedTeam || host.color || "blue" : null;
 
   if (nextMode === "castle") {
@@ -1336,7 +1319,7 @@ function resetRoomScores(room) {
     player.creative = false;
     player.healPacks = initialHealPacks;
     player.donPunchCharge = 0;
-    player.health = 100;
+    player.health = maxHealth;
     player.shieldUntil = 0;
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
@@ -1348,7 +1331,7 @@ function resetRoomScores(room) {
   room.castleCores = createCastleCores(room.playerTeam || "blue");
   room.castleEndsAt = room.mode === "castle" ? Date.now() + castleRoundMs : 0;
   room.barrier = { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 };
-  room.healthPickup = { ...randomPickupSpawn(room.arena), available: false, respawnAt: room.mode === "duel" ? nextHealthPickupAt() : 0 };
+  room.healthPickup = { ...randomPickupSpawn(room.arena), available: false, respawnAt: room.mode === "oneLife" ? nextHealthPickupAt() : 0 };
 }
 
 function tryPickupBarrier(room, player) {
@@ -1374,10 +1357,10 @@ function updateBarrierRespawn(room, now) {
 }
 
 function tryPickupHealth(room, player) {
-  if (room.mode !== "duel" || !room.healthPickup?.available || player.eliminated || player.health <= 0) return;
+  if (room.mode !== "oneLife" || !room.healthPickup?.available || player.eliminated || player.health <= 0) return;
   const distance = Math.hypot(player.x - room.healthPickup.x, player.y - room.healthPickup.y, player.z - room.healthPickup.z);
   if (distance > 1.9) return;
-  player.health = 100;
+  player.health = maxHealth;
   player.healsUsed = (player.healsUsed || 0) + 1;
   room.healthPickup.available = false;
   room.healthPickup.respawnAt = nextHealthPickupAt();
@@ -1387,7 +1370,7 @@ function tryPickupHealth(room, player) {
 }
 
 function updateHealthPickup(room, now) {
-  if (room.mode !== "duel") {
+  if (room.mode !== "oneLife") {
     if (room.healthPickup) room.healthPickup.available = false;
     return;
   }
