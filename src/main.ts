@@ -18,11 +18,17 @@ import {
   Send,
   Settings,
   Signal,
+  Smartphone,
   Users,
   X,
   Zap,
   createIcons
 } from "lucide";
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
@@ -122,30 +128,37 @@ const $ = <T extends HTMLElement>(selector: string) => {
 
 const maxHealth = 200;
 
-createIcons({
-  icons: {
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    ArrowUp,
-    ChevronsUp,
-    Check,
-    Copy,
-    Crosshair,
-    Maximize2,
-    MicOff,
-    Minimize2,
-    Repeat2,
-    RotateCcw,
-    Scan,
-    Send,
-    Settings,
-    Signal,
-    Users,
-    X,
-    Zap
-  }
-});
+const lucideIcons = {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ChevronsUp,
+  Check,
+  Copy,
+  Crosshair,
+  Maximize2,
+  MicOff,
+  Minimize2,
+  Repeat2,
+  RotateCcw,
+  Scan,
+  Send,
+  Settings,
+  Signal,
+  Smartphone,
+  Users,
+  X,
+  Zap
+};
+
+createIcons({ icons: lucideIcons });
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
 
 const canvas = $("#game") as HTMLCanvasElement;
 const minimapCanvas = $("#minimap") as HTMLCanvasElement;
@@ -181,6 +194,10 @@ const endCelebrationButton = $("#endCelebration") as HTMLButtonElement;
 const donPunchButton = $("#donPunchButton") as HTMLButtonElement;
 const mobileAimZone = $("#mobileAimZone");
 const mobileFullscreen = $("#mobileFullscreen") as HTMLButtonElement;
+const mobileInstall = $("#mobileInstall") as HTMLButtonElement;
+const mobileFullscreenGuide = $("#mobileFullscreenGuide");
+const mobileFullscreenGuideText = $("#mobileFullscreenGuideText");
+const mobileGuideClose = $("#mobileGuideClose") as HTMLButtonElement;
 const mobileStick = $("#mobileStick");
 const mobileStickKnob = $("#mobileStickKnob");
 const mobileJump = $("#mobileJump") as HTMLButtonElement;
@@ -403,12 +420,21 @@ let mobileStickPointer: number | null = null;
 let mobileAimSensitivityValue = Number(localStorage.getItem("toybox-mobile-sensitivity") || "1");
 let mobileFireSizeValue = Number(localStorage.getItem("toybox-mobile-fire-size") || "88");
 let mobileJumpOffsetValue = Number(localStorage.getItem("toybox-mobile-jump-offset") || "128");
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
+let mobileGuideDismissed = localStorage.getItem("toybox-mobile-fullscreen-guide") === "off";
 let killcamUntil = 0;
 let spectatorTargetId = "";
 let resultWinnerSeen = "";
 const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
-const maxPixelRatio = () => Math.min(window.devicePixelRatio, window.innerWidth < 860 ? 1.16 : 1.72);
+function viewportSize() {
+  const visualViewport = window.visualViewport;
+  const width = Math.round(visualViewport?.width || window.innerWidth);
+  const height = Math.round(visualViewport?.height || window.innerHeight);
+  return { width, height };
+}
+
+const maxPixelRatio = () => Math.min(window.devicePixelRatio, viewportSize().width < 860 ? 1.16 : 1.72);
 let activePixelRatio = maxPixelRatio();
 let frameAverageMs = 16.7;
 let measuredFps: number | null = null;
@@ -1913,9 +1939,15 @@ function colorToNumber(color?: string) {
   return Number.parseInt(color.slice(1), 16);
 }
 
+function applyViewportSizeVars() {
+  const { width, height } = viewportSize();
+  document.documentElement.style.setProperty("--app-width", `${width}px`);
+  document.documentElement.style.setProperty("--app-height", `${height}px`);
+}
+
 function resize() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
+  applyViewportSizeVars();
+  const { width, height } = viewportSize();
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   activePixelRatio = Math.min(activePixelRatio, maxPixelRatio());
@@ -1924,6 +1956,9 @@ function resize() {
 }
 
 window.addEventListener("resize", resize);
+window.visualViewport?.addEventListener("resize", resize);
+window.visualViewport?.addEventListener("scroll", resize);
+window.addEventListener("orientationchange", () => setTimeout(resize, 250));
 resize();
 addLights();
 switchArena(arenaChoice);
@@ -2114,10 +2149,38 @@ function isFullscreenActive() {
   return Boolean(document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement);
 }
 
+function isStandaloneDisplay() {
+  return window.matchMedia("(display-mode: fullscreen)").matches
+    || window.matchMedia("(display-mode: standalone)").matches
+    || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+}
+
+function isCoarseLandscape() {
+  return window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(orientation: landscape)").matches;
+}
+
+function showMobileFullscreenGuide(force = false) {
+  if (!force && mobileGuideDismissed) return;
+  if (!isCoarseLandscape() || isStandaloneDisplay() || isFullscreenActive()) {
+    mobileFullscreenGuide.classList.remove("show");
+    return;
+  }
+  const isAppleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  mobileFullscreenGuideText.textContent = isAppleMobile
+    ? "Safariの共有から「ホーム画面に追加」して起動すると、上下のブラウザバーをほぼ消せます。"
+    : "全画面ボタン、またはホーム画面に追加して起動すると、上下のブラウザバーを減らせます。";
+  mobileFullscreenGuide.classList.add("show");
+  setTimeout(() => {
+    if (!mobileGuideDismissed) mobileFullscreenGuide.classList.remove("show");
+  }, force ? 5200 : 4200);
+}
+
 function updateFullscreenButton() {
-  mobileFullscreen.innerHTML = isFullscreenActive() ? '<i data-lucide="minimize-2"></i>' : '<i data-lucide="maximize-2"></i>';
-  mobileFullscreen.setAttribute("aria-label", isFullscreenActive() ? "全画面解除" : "全画面");
-  createIcons({ icons: { Maximize2, Minimize2 } });
+  const active = isFullscreenActive() || isStandaloneDisplay();
+  mobileFullscreen.innerHTML = active ? '<i data-lucide="minimize-2"></i>' : '<i data-lucide="maximize-2"></i>';
+  mobileFullscreen.setAttribute("aria-label", active ? "全画面中" : "全画面");
+  mobileInstall.classList.toggle("hidden", isStandaloneDisplay() || (!deferredInstallPrompt && !/iPad|iPhone|iPod/.test(navigator.userAgent)));
+  createIcons({ icons: lucideIcons });
 }
 
 async function toggleMobileFullscreen() {
@@ -2128,11 +2191,19 @@ async function toggleMobileFullscreen() {
       await (exitFullscreen?.() || webkitExitFullscreen?.());
     } else {
       const target = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
-      await (target.requestFullscreen?.({ navigationUI: "hide" }) || target.webkitRequestFullscreen?.());
+      const requestFullscreen = target.requestFullscreen?.bind(target);
+      const webkitRequestFullscreen = target.webkitRequestFullscreen?.bind(target);
+      if (!requestFullscreen && !webkitRequestFullscreen) {
+        showMobileFullscreenGuide(true);
+        showToast("このブラウザではホーム画面から起動すると上下バーを減らせます。");
+        return;
+      }
+      await (requestFullscreen?.({ navigationUI: "hide" }) || webkitRequestFullscreen?.());
     }
     updateFullscreenButton();
   } catch {
-    showToast("全画面にできませんでした。ブラウザ側の許可を確認してください。");
+    showMobileFullscreenGuide(true);
+    showToast("全画面にできませんでした。ホーム画面から起動すると上下バーを減らせます。");
   }
 }
 
@@ -2143,6 +2214,37 @@ mobileFullscreen.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("fullscreenchange", updateFullscreenButton);
 document.addEventListener("webkitfullscreenchange", updateFullscreenButton);
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event as BeforeInstallPromptEvent;
+  updateFullscreenButton();
+});
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  mobileGuideDismissed = true;
+  localStorage.setItem("toybox-mobile-fullscreen-guide", "off");
+  updateFullscreenButton();
+});
+mobileInstall.addEventListener("pointerdown", async (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (deferredInstallPrompt) {
+    await deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice.catch(() => null);
+    deferredInstallPrompt = null;
+    updateFullscreenButton();
+    return;
+  }
+  showMobileFullscreenGuide(true);
+});
+mobileGuideClose.addEventListener("click", () => {
+  mobileGuideDismissed = true;
+  localStorage.setItem("toybox-mobile-fullscreen-guide", "off");
+  mobileFullscreenGuide.classList.remove("show");
+});
+window.addEventListener("orientationchange", () => setTimeout(() => showMobileFullscreenGuide(), 700));
+setTimeout(() => showMobileFullscreenGuide(), 1000);
+updateFullscreenButton();
 
 function applyMobileTuning() {
   mobileAimSensitivityValue = THREE.MathUtils.clamp(Number(mobileSensitivity.value) || 1, 0.65, 1.65);

@@ -1,0 +1,19 @@
+{
+  "name": "Toybox FPS Arena",
+  "short_name": "Toybox FPS",
+  "description": "Lightweight online FPS arena for quick real-time battles.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#74c9ff",
+  "theme_color": "#74c9ff",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
