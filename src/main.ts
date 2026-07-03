@@ -2242,6 +2242,12 @@ mobileGuideClose.addEventListener("click", () => {
   localStorage.setItem("toybox-mobile-fullscreen-guide", "off");
   mobileFullscreenGuide.classList.remove("show");
 });
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target as Node | null;
+  if (target && (canvas.contains(target) || mobileAimZone.contains(target) || mobileStick.contains(target))) {
+    event.preventDefault();
+  }
+});
 window.addEventListener("orientationchange", () => setTimeout(() => showMobileFullscreenGuide(), 700));
 setTimeout(() => showMobileFullscreenGuide(), 1000);
 updateFullscreenButton();
