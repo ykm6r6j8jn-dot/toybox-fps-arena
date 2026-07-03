@@ -20,6 +20,7 @@ import {
   Signal,
   Smartphone,
   Users,
+  Volume2,
   X,
   Zap,
   createIcons
@@ -148,6 +149,7 @@ const lucideIcons = {
   Signal,
   Smartphone,
   Users,
+  Volume2,
   X,
   Zap
 };
@@ -183,6 +185,7 @@ const scoreboardToggle = $("#scoreboardToggle") as HTMLButtonElement;
 const closeScoreboard = $("#closeScoreboard") as HTMLButtonElement;
 const settingsButton = $("#settingsButton") as HTMLButtonElement;
 const muteButton = $("#muteButton") as HTMLButtonElement;
+const audioUnlockButton = $("#audioUnlockButton") as HTMLButtonElement;
 const settingsPanel = $("#settingsPanel");
 const closeSettings = $("#closeSettings") as HTMLButtonElement;
 const colorSwatches = $("#colorSwatches");
@@ -2081,6 +2084,15 @@ scoreboardToggle.addEventListener("click", () => scoreboard.classList.toggle("op
 closeScoreboard.addEventListener("click", () => scoreboard.classList.remove("open"));
 settingsButton.addEventListener("click", () => settingsPanel.classList.toggle("open"));
 closeSettings.addEventListener("click", () => settingsPanel.classList.remove("open"));
+audioUnlockButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  setSoundEnabled(true);
+  void unlockAudio(true);
+});
+audioUnlockButton.addEventListener("click", () => {
+  setSoundEnabled(true);
+  void unlockAudio(true);
+});
 muteButton.addEventListener("click", () => setSoundEnabled(!soundEnabled));
 soundToggle.addEventListener("click", () => setSoundEnabled(!soundEnabled));
 resetButton.addEventListener("click", () => resetSelf());
@@ -2647,9 +2659,10 @@ function getAudioContext() {
   return audioContext;
 }
 
-function unlockAudio() {
+function unlockAudio(force = false) {
   if (!soundEnabled) return Promise.resolve();
-  if (audioUnlocking) return audioUnlocking;
+  if (audioUnlocking && !force) return audioUnlocking;
+  audioUnlocking = null;
   const context = getAudioContext();
   const resumePromise = context && context.state !== "running"
     ? context.resume().catch(() => undefined)
@@ -2669,12 +2682,18 @@ function unlockAudio() {
     }
   }
 
-  const bgmPromise = isLobbyBgmAllowed() && lobbyBgm.paused
+  const wantsLobbyBgm = isLobbyBgmAllowed() && lobbyBgm.paused;
+  if (wantsLobbyBgm) lobbyBgm.load();
+  const bgmPromise = wantsLobbyBgm
     ? lobbyBgm.play().catch(() => undefined)
     : Promise.resolve();
 
-  audioUnlocking = Promise.all([resumePromise, bgmPromise]).then(() => {
+  audioUnlocking = Promise.race([
+    Promise.all([resumePromise, bgmPromise]).then(() => undefined),
+    new Promise<void>((resolve) => window.setTimeout(resolve, 650))
+  ]).then(() => {
     audioUnlocked = context?.state === "running";
+    if (force && context?.state === "running") playUnlockChirp(context);
     syncAudioDataset();
   }).finally(() => {
     audioUnlocking = null;
@@ -2683,10 +2702,28 @@ function unlockAudio() {
 }
 
 function syncAudioDataset() {
+  const contextState = audioContext?.state || "none";
+  const needsUnlock = !soundEnabled || contextState !== "running";
   document.documentElement.dataset.soundEnabled = soundEnabled ? "true" : "false";
-  document.documentElement.dataset.audioContext = audioContext?.state || "none";
+  document.documentElement.dataset.audioContext = contextState;
   document.documentElement.dataset.audioUnlocked = audioUnlocked ? "true" : "false";
   document.documentElement.dataset.lobbyAudio = lobbyBgm.paused ? "paused" : "playing";
+  document.body.classList.toggle("audio-needs-unlock", needsUnlock);
+}
+
+function playUnlockChirp(context: AudioContext) {
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(660, now);
+  oscillator.frequency.exponentialRampToValueAtTime(1180, now + 0.11);
+  gain.gain.setValueAtTime(0.001, now);
+  gain.gain.exponentialRampToValueAtTime(0.045, now + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.15);
 }
 
 function updateLobbyBgm() {
