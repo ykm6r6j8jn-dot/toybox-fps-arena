@@ -156,6 +156,13 @@
             <button data-cpu="4">4</button>
           </div>
         </div>
+        <div class="setting-row">
+          <span>CPU補充</span>
+          <div class="cpu-buttons cpu-fill-buttons" id="cpuFillButtons">
+            <button data-cpu-fill="on" class="active">ON</button>
+            <button data-cpu-fill="off">OFF</button>
+          </div>
+        </div>
         <div class="setting-block">
           <div class="setting-block-title">
             <span>スマホ操作</span>
@@ -244,6 +251,16 @@
             <button type="button" data-party="4">
               <strong>スクワッド</strong>
               <span>4人チーム</span>
+            </button>
+          </div>
+          <div class="party-select cpu-fill-select" id="lobbyCpuFillSelect" role="group" aria-label="CPU補充">
+            <button type="button" class="active" data-cpu-fill="on">
+              <strong>CPUあり</strong>
+              <span>不足分を補充</span>
+            </button>
+            <button type="button" data-cpu-fill="off">
+              <strong>CPUなし</strong>
+              <span>人間だけで対戦</span>
             </button>
           </div>
           <div class="team-select" id="teamSelect" role="group" aria-label="チーム選択">

@@ -156,6 +156,7 @@ const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
 const teamSelect = $("#teamSelect");
 const partySelect = $("#partySelect");
+const lobbyCpuFillSelect = $("#lobbyCpuFillSelect");
 const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
@@ -174,6 +175,7 @@ const closeSettings = $("#closeSettings") as HTMLButtonElement;
 const colorSwatches = $("#colorSwatches");
 const soundToggle = $("#soundToggle") as HTMLButtonElement;
 const cpuButtons = $("#cpuButtons");
+const cpuFillButtons = $("#cpuFillButtons");
 const resetButton = $("#resetButton") as HTMLButtonElement;
 const endCelebrationButton = $("#endCelebration") as HTMLButtonElement;
 const donPunchButton = $("#donPunchButton") as HTMLButtonElement;
@@ -316,6 +318,7 @@ let arenaChoice: ArenaId = "toybox";
 let currentArena: ArenaId = "toybox";
 let teamChoice: TeamChoice = (localStorage.getItem("toybox-team") as TeamChoice) || "auto";
 let partySize: PartySize = ([1, 2, 4].includes(Number(localStorage.getItem("toybox-party-size"))) ? Number(localStorage.getItem("toybox-party-size")) : 1) as PartySize;
+let cpuFillEnabled = localStorage.getItem("toybox-cpu-fill") !== "off";
 let matchMaxPlayers = 20;
 let celebrationUntil = 0;
 let lastFireworkAt = 0;
@@ -448,19 +451,28 @@ function setPartySize(size: number) {
   }
 }
 
+function setCpuFill(enabled: boolean) {
+  cpuFillEnabled = enabled;
+  localStorage.setItem("toybox-cpu-fill", enabled ? "on" : "off");
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-cpu-fill]")) {
+    button.classList.toggle("active", button.dataset.cpuFill === (enabled ? "on" : "off"));
+  }
+}
+
 function isHostPlayer() {
   return (nameInput.value.trim() || "プレイヤー") === "ひでお";
 }
 
-function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice) {
+function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice, nextCpuFill = cpuFillEnabled) {
   if (!self.joined) return false;
   if (!isHostPlayer()) {
     showToast("試合設定はホスト「ひでお」が変更できます。");
     setGameMode(gameMode);
     setTeamChoice(teamChoice);
+    setCpuFill(cpuFillEnabled);
     return true;
   }
-  send({ type: "set_room_config", gameMode: nextMode, team: nextTeam });
+  send({ type: "set_room_config", gameMode: nextMode, team: nextTeam, cpuFill: nextCpuFill });
   return true;
 }
 
@@ -2056,6 +2068,17 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-team]")
   });
 }
 
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-cpu-fill]")) {
+  button.addEventListener("click", () => {
+    const enabled = button.dataset.cpuFill !== "off";
+    if (self.joined) {
+      requestRoomConfig(gameMode, teamChoice, enabled);
+      return;
+    }
+    setCpuFill(enabled);
+  });
+}
+
 for (const button of partySelect.querySelectorAll<HTMLButtonElement>("[data-party]")) {
   button.addEventListener("click", () => {
     if (self.joined) {
@@ -2081,6 +2104,7 @@ for (const button of cpuButtons.querySelectorAll<HTMLButtonElement>("button")) {
   button.addEventListener("click", () => {
     const count = Number(button.dataset.cpu) || 0;
     for (const item of cpuButtons.querySelectorAll<HTMLButtonElement>("button")) item.classList.toggle("active", item === button);
+    setCpuFill(count !== 0);
     send({ type: "set_cpu", count });
   });
 }
@@ -2274,6 +2298,7 @@ setGameMode(gameMode);
 setTeamChoice(teamChoice);
 setArenaChoice(arenaChoice);
 setPartySize(partySize);
+setCpuFill(cpuFillEnabled);
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -2305,7 +2330,7 @@ function join(room: string) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("open", () => {
-    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cosmeticColor: customColor });
+    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, cosmeticColor: customColor });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -2335,6 +2360,7 @@ function handleMessage(event: MessageEvent<string>) {
     gameMode = (message.gameMode as GameMode) || "oneLife";
     arenaChoice = "toybox";
     if (message.partySize) setPartySize(Number(message.partySize));
+    if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
     matchMaxPlayers = Number(message.maxPlayers) || 20;
     targetScore = Number(message.targetScore) || 0;
     setGameMode(gameMode);
@@ -2352,6 +2378,7 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "snapshot") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.partySize) setPartySize(Number(message.partySize));
+    if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
     if (message.maxPlayers) matchMaxPlayers = Number(message.maxPlayers) || matchMaxPlayers;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
     if (message.arena) {
@@ -2394,6 +2421,7 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "room_config") {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
+    if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
     castleEndsAt = Number(message.castleEndsAt) || 0;
     updateCastleCores(message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined);
     updateFeed(message.feed || []);

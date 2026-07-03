@@ -2,13 +2,13 @@ import WebSocket from "ws";
 
 const endpoint = process.env.SMOKE_WS || "ws://localhost:5188/ws";
 
-function openClient(name, room = "") {
+function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
     const state = { name, id: "", room: "", snapshots: [], respawns: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 5000);
 
-    ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room })));
+    ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
     ws.on("message", (raw) => {
       const message = JSON.parse(String(raw));
       if (message.type === "welcome") {
@@ -43,8 +43,8 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
-const alpha = await openClient("Alpha");
-const beta = await openClient("Beta", alpha.state.room);
+const alpha = await openClient("Alpha", "", { cpuFill: false });
+const beta = await openClient("Beta", alpha.state.room, { cpuFill: false });
 
 send(alpha.ws, { type: "state", x: 24, y: 1.6, z: 24, yaw: 0, pitch: 0 });
 send(beta.ws, { type: "state", x: 24, y: 1.6, z: 18, yaw: Math.PI, pitch: 0 });
@@ -52,13 +52,15 @@ send(beta.ws, { type: "state", x: 24, y: 1.6, z: 18, yaw: Math.PI, pitch: 0 });
 await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
     snapshot.players?.some((player) => player.name === "Alpha") &&
-    snapshot.players?.some((player) => player.name === "Beta")
+    snapshot.players?.some((player) => player.name === "Beta") &&
+    !snapshot.players?.some((player) => String(player.name || "").startsWith("CPU-"))
   ) &&
     beta.state.snapshots.some((snapshot) =>
       snapshot.players?.some((player) => player.name === "Alpha") &&
-      snapshot.players?.some((player) => player.name === "Beta")
+      snapshot.players?.some((player) => player.name === "Beta") &&
+      !snapshot.players?.some((player) => String(player.name || "").startsWith("CPU-"))
     ),
-  "both clients see each other"
+  "both clients see each other without CPU fill"
 );
 
 send(alpha.ws, {

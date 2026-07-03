@@ -321,21 +321,26 @@ function randomPickupSpawn(arena = "toybox") {
   return { x: 0, y: 1.6, z: 0 };
 }
 
-function findMatchRoom(mode = "oneLife", partySize = 1) {
+function normalizeCpuFill(value) {
+  return value !== false;
+}
+
+function findMatchRoom(mode = "oneLife", partySize = 1, cpuFill = true) {
   const gameMode = normalizeGameMode(mode);
   const size = normalizePartySize(partySize);
+  const fill = normalizeCpuFill(cpuFill);
   for (const room of rooms.values()) {
-    if (!room.matchmaking || room.winner || room.mode !== gameMode || room.partySize !== size) continue;
+    if (!room.matchmaking || room.winner || room.mode !== gameMode || room.partySize !== size || room.cpuFill !== fill) continue;
     if (humanPlayers(room).length < maxPlayers) return room;
   }
   return null;
 }
 
-function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchmaking = true) {
+function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchmaking = true, cpuFill = true) {
   const normalized = (code || "").trim().toUpperCase();
   if (normalized && rooms.has(normalized)) return rooms.get(normalized);
   if (!normalized) {
-    const match = findMatchRoom(mode, partySize);
+    const match = findMatchRoom(mode, partySize, cpuFill);
     if (match) return match;
   }
   const createdCode = normalized && normalized.length === 6 ? normalized : roomCode();
@@ -347,6 +352,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     mode: gameMode,
     arena: arenaId,
     matchmaking,
+    cpuFill: normalizeCpuFill(cpuFill),
     partySize: size,
     matchStarted: false,
     maxHumanPlayers: maxPlayers,
@@ -612,7 +618,9 @@ wss.on("connection", (ws) => {
 
     if (message.type === "join") {
       const requestedPartySize = normalizePartySize(message.partySize);
-      const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true);
+      const requestedCpuFill = normalizeCpuFill(message.cpuFill);
+      const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill);
+      if (humanPlayers(room).length === 0) room.cpuFill = requestedCpuFill;
       if (room.matchmaking) {
         for (const player of [...room.players.values()]) {
           if (player.isBot) room.players.delete(player.id);
@@ -664,13 +672,13 @@ wss.on("connection", (ws) => {
       currentRoom = room;
       currentPlayer = player;
       if (player.name === "ひでお") {
-        applyRoomConfig(room, player, message.gameMode, message.team);
+        applyRoomConfig(room, player, message.gameMode, message.team, message.cpuFill);
         addFeed(room, `ひでお が ${modeLabel(room.mode)} に変更`, player.color);
       }
       syncMatchCpuFill(room);
       addFeed(room, `${player.name} が参加`, player.color);
       const welcomeSpawn = { x: player.x, y: player.y, z: player.z, yaw: player.yaw };
-      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn });
+      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, cpuFill: room.cpuFill, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn });
       broadcast(room, { type: "feed", feed: room.feed });
       return;
     }
@@ -752,11 +760,12 @@ wss.on("connection", (ws) => {
         send(currentPlayer.ws, { type: "error", message: "試合設定はホスト「ひでお」が変更できます。" });
         return;
       }
-      applyRoomConfig(currentRoom, currentPlayer, message.gameMode, message.team);
+      applyRoomConfig(currentRoom, currentPlayer, message.gameMode, message.team, message.cpuFill);
       addFeed(currentRoom, `ひでお が ${modeLabel(currentRoom.mode)} に変更`, currentPlayer.color);
       broadcast(currentRoom, {
         type: "room_config",
         gameMode: currentRoom.mode,
+        cpuFill: currentRoom.cpuFill,
         targetScore: currentRoom.targetScore || 0,
         feed: currentRoom.feed,
         castleCores: currentRoom.castleCores,
@@ -787,8 +796,10 @@ wss.on("connection", (ws) => {
 
     if (message.type === "set_cpu") {
       if (currentRoom.matchmaking) {
+        currentRoom.cpuFill = Number(message.count) !== 0;
         syncMatchCpuFill(currentRoom);
-        send(currentPlayer.ws, { type: "error", message: "自動マッチではCPU人数を自動調整します。" });
+        addFeed(currentRoom, currentRoom.cpuFill ? "CPU補充 ON" : "CPU補充 OFF", currentPlayer.color);
+        broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
         return;
       }
       setCpuCount(currentRoom, clamp(Number(message.count), 0, maxCpuPlayers));
@@ -921,6 +932,7 @@ setInterval(() => {
       gameMode: room.mode,
       arena: room.arena,
       partySize: room.partySize || 1,
+      cpuFill: room.cpuFill,
       maxPlayers: room.maxHumanPlayers || maxPlayers,
       targetScore: room.targetScore || 0,
       castleCores: room.castleCores,
@@ -1245,6 +1257,14 @@ function syncMatchCpuFill(room) {
   for (const player of [...room.players.values()]) {
     if (player.isBot) room.players.delete(player.id);
   }
+  if (!room.cpuFill) {
+    room.cpuCount = 0;
+    if (!room.matchStarted && humanPlayers(room).length > 0) {
+      room.matchStarted = true;
+      addFeed(room, "CPUなしバトル開始", "blue");
+    }
+    return;
+  }
   const teamTarget = matchTeamSize;
   const counts = { blue: 0, red: 0 };
   for (const player of humanPlayers(room)) {
@@ -1266,10 +1286,11 @@ function syncMatchCpuFill(room) {
   }
 }
 
-function applyRoomConfig(room, host, mode, teamChoice) {
+function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill) {
   const nextMode = normalizeGameMode(mode);
   const requestedTeam = teams.has(String(teamChoice || "")) ? String(teamChoice) : "";
   room.mode = nextMode;
+  room.cpuFill = normalizeCpuFill(cpuFill);
   room.targetScore = 0;
   room.playerTeam = nextMode === "castle" ? requestedTeam || host.color || "blue" : null;
 
