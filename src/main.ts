@@ -249,6 +249,7 @@ const pokerStackLineEl = $("#pokerStackLine");
 const pokerFoldButton = $("#pokerFold") as HTMLButtonElement;
 const pokerCallButton = $("#pokerCall") as HTMLButtonElement;
 const pokerRaiseButton = $("#pokerRaise") as HTMLButtonElement;
+const copyPokerInviteButton = $("#copyPokerInvite") as HTMLButtonElement;
 const leavePokerButton = $("#leavePoker") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
@@ -2359,6 +2360,7 @@ createPokerRoomButton.addEventListener("click", () => joinPoker(roomInput.value)
 pokerFoldButton.addEventListener("click", () => sendPokerAction("fold"));
 pokerCallButton.addEventListener("click", () => sendPokerAction("call"));
 pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", 50));
+copyPokerInviteButton.addEventListener("click", copyInvite);
 leavePokerButton.addEventListener("click", leavePokerRoom);
 memberToggle.addEventListener("click", () => {
   const open = !document.body.classList.contains("members-open");
@@ -4600,13 +4602,14 @@ function drawMinimap() {
 }
 
 function copyInvite() {
-  if (!self.room) {
+  const room = pokerJoined && pokerRoomCode ? pokerRoomCode : self.room;
+  if (!room) {
     showToast("先にルームを作成してください。");
     return;
   }
-  const url = `${location.origin}${location.pathname}?room=${self.room}`;
+  const url = `${location.origin}${location.pathname}?room=${room}`;
   navigator.clipboard?.writeText(url).then(
-    () => showToast("招待リンクをコピーしました"),
+    () => showToast(pokerJoined ? "ポーカー招待リンクをコピーしました" : "招待リンクをコピーしました"),
     () => showToast(url)
   );
 }

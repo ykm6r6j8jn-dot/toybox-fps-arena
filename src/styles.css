@@ -2077,7 +2077,7 @@ body.celebrating::after {
 .poker-header,
 .poker-actions {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 10px;
   padding: 10px;
@@ -2358,6 +2358,11 @@ body.celebrating::after {
   .poker-header,
   .poker-actions {
     grid-template-columns: 1fr auto;
+  }
+
+  .poker-header button {
+    min-height: 38px;
+    padding: 0 10px;
   }
 
   .poker-pot {
