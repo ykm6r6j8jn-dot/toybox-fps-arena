@@ -1587,5 +1587,5 @@ function cpuFireDelay(weapon) {
 }
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`Toybox FPS Arena running at http://localhost:${port}`);
+  console.log(`DonPaChi FPS running at http://localhost:${port}`);
 });
