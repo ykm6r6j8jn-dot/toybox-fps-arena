@@ -742,6 +742,7 @@ wss.on("connection", (ws) => {
         speedBoostUntil: 0,
         damageBoostUntil: 0,
         comebackUntil: 0,
+        nextImpactAt: 0,
         yaw: 0,
         pitch: 0,
         lastSeen: Date.now(),
@@ -944,7 +945,10 @@ wss.on("connection", (ws) => {
       currentRoom.weaponStats[weapon] = (currentRoom.weaponStats[weapon] || 0) + 1;
       currentPlayer.lastWeapon = weapon;
       const shotResult = applyShot(currentRoom, currentPlayer, origin, direction, weapon);
-      const impact = firstObstacleImpact(origin, direction, range, currentRoom.arena);
+      const now = Date.now();
+      const canEmitImpact = now >= (currentPlayer.nextImpactAt || 0);
+      if (canEmitImpact) currentPlayer.nextImpactAt = now + (weapon === "shotgun" ? 140 : 70);
+      const impact = canEmitImpact ? firstObstacleImpact(origin, direction, Math.min(range, 110), currentRoom.arena) : null;
       if (impact && (!shotResult?.targetDistance || impact.distance < shotResult.targetDistance - 0.18)) {
         broadcast(currentRoom, {
           type: "impact",
@@ -1303,6 +1307,7 @@ function setCpuCount(room, count) {
       speedBoostUntil: 0,
       damageBoostUntil: 0,
       comebackUntil: 0,
+      nextImpactAt: 0,
       yaw: spawn.yaw,
       pitch: 0,
       lastSeen: Date.now(),
@@ -1346,6 +1351,7 @@ function createCpuPlayer(room, id, index, team) {
     speedBoostUntil: 0,
     damageBoostUntil: 0,
     comebackUntil: 0,
+    nextImpactAt: 0,
     yaw: spawn.yaw,
     pitch: 0,
     lastSeen: Date.now(),
@@ -1488,6 +1494,7 @@ function resetRoomScores(room) {
     player.speedBoostUntil = 0;
     player.damageBoostUntil = 0;
     player.comebackUntil = 0;
+    player.nextImpactAt = 0;
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });

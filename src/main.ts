@@ -447,6 +447,9 @@ let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
 let bulletHoleTexture: THREE.CanvasTexture | null = null;
+let bulletHoleOwnMaterial: THREE.MeshBasicMaterial | null = null;
+let bulletHoleOtherMaterial: THREE.MeshBasicMaterial | null = null;
+let lastBulletDecalAt = 0;
 const castleCoreMeshes = new Map<PlayerColor, THREE.Group>();
 const castleCores = new Map<PlayerColor, CastleCoreSnapshot>();
 let castleEndsAt = 0;
@@ -474,7 +477,8 @@ function viewportSize() {
   return { width, height };
 }
 
-const maxPixelRatio = () => Math.min(window.devicePixelRatio, viewportSize().width < 860 ? 1.16 : 1.72);
+const maxPixelRatio = () => Math.min(window.devicePixelRatio, viewportSize().width < 860 ? 1.26 : 1.72);
+const minPixelRatio = () => Math.min(maxPixelRatio(), viewportSize().width < 860 ? 1.0 : 1.15);
 let activePixelRatio = maxPixelRatio();
 let frameAverageMs = 16.7;
 let measuredFps: number | null = null;
@@ -3823,35 +3827,53 @@ function bulletHoleMap() {
   return bulletHoleTexture;
 }
 
+function bulletHoleMaterial(own: boolean) {
+  if (own) {
+    bulletHoleOwnMaterial ??= new THREE.MeshBasicMaterial({
+      map: bulletHoleMap(),
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.86,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3
+    });
+    return bulletHoleOwnMaterial;
+  }
+  bulletHoleOtherMaterial ??= new THREE.MeshBasicMaterial({
+    map: bulletHoleMap(),
+    transparent: true,
+    depthWrite: false,
+    opacity: 0.58,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3
+  });
+  return bulletHoleOtherMaterial;
+}
+
 function addBulletDecal(
   point: { x: number; y: number; z: number },
   normal: { x: number; y: number; z: number },
   own: boolean
 ) {
+  const now = performance.now();
+  if (now - lastBulletDecalAt < 42 && bulletDecals.length > 12) return;
+  lastBulletDecalAt = now;
   const normalVector = new THREE.Vector3(normal.x, normal.y, normal.z).normalize();
   if (normalVector.lengthSq() < 0.5) return;
-  const material = new THREE.MeshBasicMaterial({
-    map: bulletHoleMap(),
-    transparent: true,
-    depthWrite: false,
-    opacity: own ? 0.92 : 0.72,
-    polygonOffset: true,
-    polygonOffsetFactor: -3,
-    polygonOffsetUnits: -3
-  });
   const size = own ? 0.34 : 0.28;
-  const decal = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material);
+  const decal = new THREE.Mesh(new THREE.PlaneGeometry(size, size), bulletHoleMaterial(own));
   decal.position.set(point.x, point.y, point.z).add(normalVector.clone().multiplyScalar(0.018));
   decal.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normalVector);
   decal.rotateZ(Math.random() * Math.PI * 2);
   scene.add(decal);
-  bulletDecals.push({ mesh: decal, expiresAt: performance.now() + 45_000 });
-  while (bulletDecals.length > 60) {
+  bulletDecals.push({ mesh: decal, expiresAt: now + 22_000 });
+  while (bulletDecals.length > 28) {
     const old = bulletDecals.shift();
     if (!old) break;
     scene.remove(old.mesh);
     old.mesh.geometry.dispose();
-    (old.mesh.material as THREE.Material).dispose();
   }
 }
 
@@ -3889,13 +3911,9 @@ function updateBulletDecals() {
   const now = performance.now();
   for (let i = bulletDecals.length - 1; i >= 0; i -= 1) {
     const decal = bulletDecals[i];
-    const material = decal.mesh.material as THREE.MeshBasicMaterial;
-    const remaining = decal.expiresAt - now;
-    material.opacity = Math.max(0, Math.min(material.opacity, remaining / 3000));
-    if (remaining > 0) continue;
+    if (decal.expiresAt > now) continue;
     scene.remove(decal.mesh);
     decal.mesh.geometry.dispose();
-    material.dispose();
     bulletDecals.splice(i, 1);
   }
 }
@@ -3904,7 +3922,6 @@ function clearBulletDecals() {
   for (const decal of bulletDecals.splice(0)) {
     scene.remove(decal.mesh);
     decal.mesh.geometry.dispose();
-    (decal.mesh.material as THREE.Material).dispose();
   }
 }
 
@@ -4280,10 +4297,11 @@ function updateAdaptiveQuality(delta: number, now: number) {
   lastQualityCheckAt = now;
 
   const cap = maxPixelRatio();
-  const nextPixelRatio = frameAverageMs > 24
-    ? Math.max(0.72, activePixelRatio - 0.16)
-    : frameAverageMs < 16.8
-      ? Math.min(cap, activePixelRatio + 0.06)
+  const floor = minPixelRatio();
+  const nextPixelRatio = frameAverageMs > 31
+    ? Math.max(floor, activePixelRatio - 0.08)
+    : frameAverageMs < 18.2
+      ? Math.min(cap, activePixelRatio + 0.04)
       : activePixelRatio;
 
   if (Math.abs(nextPixelRatio - activePixelRatio) > 0.02) {
