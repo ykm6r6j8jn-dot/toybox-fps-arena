@@ -2645,27 +2645,36 @@ function getAudioContext() {
   return audioContext;
 }
 
-async function unlockAudio() {
-  if (!soundEnabled) return;
+function unlockAudio() {
+  if (!soundEnabled) return Promise.resolve();
   if (audioUnlocking) return audioUnlocking;
-  audioUnlocking = (async () => {
-    const context = getAudioContext();
-    if (context) {
-      if (context.state !== "running") await context.resume().catch(() => undefined);
-      if (!audioUnlocked) {
-        const buffer = context.createBuffer(1, 1, context.sampleRate);
-        const source = context.createBufferSource();
-        const gain = context.createGain();
-        gain.gain.value = 0.0001;
-        source.buffer = buffer;
-        source.connect(gain).connect(context.destination);
-        source.start(0);
-      }
-      audioUnlocked = context.state === "running";
+  const context = getAudioContext();
+  const resumePromise = context && context.state !== "running"
+    ? context.resume().catch(() => undefined)
+    : Promise.resolve();
+
+  if (context && !audioUnlocked) {
+    try {
+      const buffer = context.createBuffer(1, 1, context.sampleRate);
+      const source = context.createBufferSource();
+      const gain = context.createGain();
+      gain.gain.value = 0.0001;
+      source.buffer = buffer;
+      source.connect(gain).connect(context.destination);
+      source.start(0);
+    } catch {
+      // Some browsers reject silent unlock nodes while the context is still suspended.
     }
-    if (isLobbyBgmAllowed() && lobbyBgm.paused) await lobbyBgm.play().catch(() => undefined);
+  }
+
+  const bgmPromise = isLobbyBgmAllowed() && lobbyBgm.paused
+    ? lobbyBgm.play().catch(() => undefined)
+    : Promise.resolve();
+
+  audioUnlocking = Promise.all([resumePromise, bgmPromise]).then(() => {
+    audioUnlocked = context?.state === "running";
     syncAudioDataset();
-  })().finally(() => {
+  }).finally(() => {
     audioUnlocking = null;
   });
   return audioUnlocking;
