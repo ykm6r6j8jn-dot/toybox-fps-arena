@@ -234,6 +234,7 @@ const settingsRelationSelect = $("#settingsRelationSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
 const roomInput = $("#roomInput") as HTMLInputElement;
 const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
+const joinPokerRoomButton = $("#joinPokerRoom") as HTMLButtonElement;
 const createPokerRoomButton = $("#createPokerRoom") as HTMLButtonElement;
 const pokerCpuSelect = $("#pokerCpuSelect");
 const pokerPanel = $("#pokerPanel");
@@ -2343,10 +2344,11 @@ document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
 createRoomButton.addEventListener("click", () => join(""));
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
+joinPokerRoomButton.addEventListener("click", () => joinTypedPokerRoom());
 roomInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
-  joinTypedRoom();
+  joinTypedPokerRoom();
 });
 for (const button of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button")) {
   button.classList.toggle("active", Number(button.dataset.pokerCpu) === pokerCpuCount);
@@ -2800,6 +2802,17 @@ function joinTypedRoom() {
     return;
   }
   join(code);
+}
+
+function joinTypedPokerRoom() {
+  const code = sanitizeRoomCode(roomInput.value);
+  roomInput.value = code;
+  if (code.length !== 6) {
+    showToast("6文字のポーカールームコードを入力してください");
+    roomInput.focus();
+    return;
+  }
+  joinPoker(code);
 }
 
 function joinPoker(room: string) {
@@ -4601,17 +4614,57 @@ function drawMinimap() {
   }
 }
 
-function copyInvite() {
+function flashPokerInviteButton(label: string) {
+  if (!pokerJoined) return;
+  copyPokerInviteButton.textContent = label;
+  window.setTimeout(() => {
+    copyPokerInviteButton.textContent = "友達招待";
+  }, 1400);
+}
+
+async function writeClipboardText(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea copy path.
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+async function copyInvite() {
   const room = pokerJoined && pokerRoomCode ? pokerRoomCode : self.room;
   if (!room) {
     showToast("先にルームを作成してください。");
     return;
   }
   const url = `${location.origin}${location.pathname}?room=${room}`;
-  navigator.clipboard?.writeText(url).then(
-    () => showToast(pokerJoined ? "ポーカー招待リンクをコピーしました" : "招待リンクをコピーしました"),
-    () => showToast(url)
-  );
+  const copied = await writeClipboardText(url);
+  if (copied) {
+    flashPokerInviteButton("コピー済み");
+    showToast(pokerJoined ? "ポーカー招待リンクをコピーしました" : "招待リンクをコピーしました");
+    return;
+  }
+  roomInput.value = room;
+  flashPokerInviteButton("コード表示");
+  showToast(`コピー不可: コード ${room} を入力欄に表示`);
 }
 
 function showToast(message: string) {
