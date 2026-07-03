@@ -21,6 +21,17 @@ const ashinagaDamage = 86;
 const barrierDurationMs = 7000;
 const barrierRespawnMs = 15000;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
+const powerupRespawnMs = 18_000;
+const powerupDurationMs = 10_000;
+const powerupKinds = ["speed", "ammo", "damage", "comeback"];
+const powerupSpawns = [
+  { x: -58, y: 1.6, z: -24 },
+  { x: 42, y: 1.6, z: -58 },
+  { x: 64, y: 1.6, z: 34 },
+  { x: -28, y: 1.6, z: 72 },
+  { x: 4, y: 9.6, z: -82 },
+  { x: 82, y: 5.0, z: -8 }
+];
 const initialHealPacks = 5;
 const healPackAmount = 20;
 const gameModes = new Set(["oneLife", "life3", "castle"]);
@@ -334,6 +345,16 @@ function randomPickupSpawn(arena = "toybox") {
   return { x: 0, y: 1.6, z: 0 };
 }
 
+function createPowerups(now = Date.now()) {
+  return powerupSpawns.map((spawn, index) => ({
+    id: `powerup-${index}`,
+    kind: powerupKinds[index % powerupKinds.length],
+    ...spawn,
+    available: index < 3,
+    respawnAt: index < 3 ? 0 : now + powerupRespawnMs + index * 2400
+  }));
+}
+
 function normalizeCpuFill(value) {
   return value !== false;
 }
@@ -385,7 +406,8 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     donPunches: new Map(),
     castleCores: createCastleCores(),
     barrier: { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 },
-    healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "oneLife" ? nextHealthPickupAt() : 0 }
+    healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "oneLife" ? nextHealthPickupAt() : 0 },
+    powerups: createPowerups()
   };
   rooms.set(createdCode, room);
   return room;
@@ -450,7 +472,10 @@ function publicPlayer(player) {
     lastSeen: player.lastSeen,
     isBot: Boolean(player.isBot),
     weapon: player.botWeapon || "rifle",
-    shieldUntil: player.shieldUntil || 0
+    shieldUntil: player.shieldUntil || 0,
+    speedBoostUntil: player.speedBoostUntil || 0,
+    damageBoostUntil: player.damageBoostUntil || 0,
+    comebackUntil: player.comebackUntil || 0
   };
 }
 
@@ -485,7 +510,7 @@ function projectionToRay(point, origin, direction) {
   return (point.x - origin.x) * direction.x + (point.y - origin.y) * direction.y + (point.z - origin.z) * direction.z;
 }
 
-function rayHitsBox(origin, direction, box, maxDistance) {
+function rayBoxDistance(origin, direction, box, maxDistance) {
   let tMin = 0;
   let tMax = maxDistance;
   for (const axis of ["x", "y", "z"]) {
@@ -494,7 +519,7 @@ function rayHitsBox(origin, direction, box, maxDistance) {
     const o = origin[axis];
     const d = direction[axis];
     if (Math.abs(d) < 1e-6) {
-      if (o < min || o > max) return false;
+      if (o < min || o > max) return null;
       continue;
     }
     const inv = 1 / d;
@@ -503,9 +528,40 @@ function rayHitsBox(origin, direction, box, maxDistance) {
     if (t1 > t2) [t1, t2] = [t2, t1];
     tMin = Math.max(tMin, t1);
     tMax = Math.min(tMax, t2);
-    if (tMin > tMax) return false;
+    if (tMin > tMax) return null;
   }
-  return tMin > 0.05 && tMin < maxDistance;
+  return tMin > 0.05 && tMin < maxDistance ? tMin : null;
+}
+
+function rayHitsBox(origin, direction, box, maxDistance) {
+  return rayBoxDistance(origin, direction, box, maxDistance) !== null;
+}
+
+function firstObstacleImpact(origin, direction, maxDistance, arena = "toybox") {
+  let bestDistance = maxDistance;
+  let bestBox = null;
+  for (const box of obstaclesForArena(arena)) {
+    const distance = rayBoxDistance(origin, direction, box, maxDistance);
+    if (distance !== null && distance < bestDistance) {
+      bestDistance = distance;
+      bestBox = box;
+    }
+  }
+  if (!bestBox || bestDistance >= maxDistance) return null;
+  const point = {
+    x: origin.x + direction.x * bestDistance,
+    y: origin.y + direction.y * bestDistance,
+    z: origin.z + direction.z * bestDistance
+  };
+  const normal = [
+    { value: Math.abs(point.x - bestBox.minX), normal: { x: -1, y: 0, z: 0 } },
+    { value: Math.abs(point.x - bestBox.maxX), normal: { x: 1, y: 0, z: 0 } },
+    { value: Math.abs(point.y - bestBox.minY), normal: { x: 0, y: -1, z: 0 } },
+    { value: Math.abs(point.y - bestBox.maxY), normal: { x: 0, y: 1, z: 0 } },
+    { value: Math.abs(point.z - bestBox.minZ), normal: { x: 0, y: 0, z: -1 } },
+    { value: Math.abs(point.z - bestBox.maxZ), normal: { x: 0, y: 0, z: 1 } }
+  ].sort((a, b) => a.value - b.value)[0].normal;
+  return { point, normal, distance: bestDistance };
 }
 
 function lineBlocked(origin, direction, targetDistance, arena = "toybox") {
@@ -683,6 +739,9 @@ wss.on("connection", (ws) => {
         creative: false,
         healPacks: initialHealPacks,
         donPunchCharge: 0,
+        speedBoostUntil: 0,
+        damageBoostUntil: 0,
+        comebackUntil: 0,
         yaw: 0,
         pitch: 0,
         lastSeen: Date.now(),
@@ -729,6 +788,7 @@ wss.on("connection", (ws) => {
       }
       tryPickupBarrier(currentRoom, currentPlayer);
       tryPickupHealth(currentRoom, currentPlayer);
+      tryPickupPowerups(currentRoom, currentPlayer);
       return;
     }
 
@@ -883,7 +943,17 @@ wss.on("connection", (ws) => {
       const range = weaponRange.get(weapon) || 70;
       currentRoom.weaponStats[weapon] = (currentRoom.weaponStats[weapon] || 0) + 1;
       currentPlayer.lastWeapon = weapon;
-      applyShot(currentRoom, currentPlayer, origin, direction, weapon);
+      const shotResult = applyShot(currentRoom, currentPlayer, origin, direction, weapon);
+      const impact = firstObstacleImpact(origin, direction, range, currentRoom.arena);
+      if (impact && (!shotResult?.targetDistance || impact.distance < shotResult.targetDistance - 0.18)) {
+        broadcast(currentRoom, {
+          type: "impact",
+          shooter: currentPlayer.id,
+          point: impact.point,
+          normal: impact.normal,
+          weapon
+        });
+      }
       broadcast(currentRoom, { type: "shot", shooter: currentPlayer.id, origin, direction, range, weapon });
       return;
     }
@@ -928,6 +998,7 @@ setInterval(() => {
     if (removedHuman) syncMatchCpuFill(room);
     updateBarrierRespawn(room, now);
     updateHealthPickup(room, now);
+    updatePowerups(room, now);
     updateDonPunchProjectiles(room, now);
     updateCpuPlayers(room, now);
     resolveCastleRoundByTimer(room, now);
@@ -964,7 +1035,8 @@ setInterval(() => {
       castleEndsAt: room.castleEndsAt || 0,
       donPunches,
       barrier: room.barrier,
-      healthPickup: room.healthPickup
+      healthPickup: room.healthPickup,
+      powerups: room.powerups
     });
   }
 }, 110);
@@ -994,7 +1066,9 @@ function safeColor(value) {
 
 function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   const baseDamage = weaponDamage.get(weapon) || 25;
-  const damage = shooter.isBot ? Math.max(8, Math.ceil(baseDamage * 0.68)) : baseDamage;
+  const boosted = !shooter.isBot && Date.now() < (shooter.damageBoostUntil || 0);
+  const damageMultiplier = boosted ? 1.18 : 1;
+  const damage = shooter.isBot ? Math.max(8, Math.ceil(baseDamage * 0.68)) : Math.ceil(baseDamage * damageMultiplier);
   const range = weaponRange.get(weapon) || 70;
   let best;
   let bestDistance = Infinity;
@@ -1014,11 +1088,12 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   const coreHit = room.mode === "castle" ? nearestCastleCoreHit(room, shooter, origin, direction, range) : null;
   if (coreHit && (!best || coreHit.targetDistance < bestTargetDistance)) {
     applyCastleCoreDamage(room, shooter, coreHit.core, damage);
-    return;
+    return { hit: "castle", targetDistance: coreHit.targetDistance };
   }
 
-  if (!best || bestDistance >= 0.8) return;
+  if (!best || bestDistance >= 0.8) return null;
   applyDirectDamage(room, shooter, best, damage, weapon);
+  return { hit: "player", targetDistance: bestTargetDistance };
 }
 
 function nearestCastleCoreHit(room, shooter, origin, direction, range) {
@@ -1225,6 +1300,9 @@ function setCpuCount(room, count) {
       creative: false,
       healPacks: initialHealPacks,
       donPunchCharge: 0,
+      speedBoostUntil: 0,
+      damageBoostUntil: 0,
+      comebackUntil: 0,
       yaw: spawn.yaw,
       pitch: 0,
       lastSeen: Date.now(),
@@ -1265,6 +1343,9 @@ function createCpuPlayer(room, id, index, team) {
     creative: false,
     healPacks: initialHealPacks,
     donPunchCharge: 0,
+    speedBoostUntil: 0,
+    damageBoostUntil: 0,
+    comebackUntil: 0,
     yaw: spawn.yaw,
     pitch: 0,
     lastSeen: Date.now(),
@@ -1404,6 +1485,9 @@ function resetRoomScores(room) {
     player.donPunchCharge = 0;
     player.health = maxHealth;
     player.shieldUntil = 0;
+    player.speedBoostUntil = 0;
+    player.damageBoostUntil = 0;
+    player.comebackUntil = 0;
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
@@ -1415,6 +1499,7 @@ function resetRoomScores(room) {
   room.castleEndsAt = room.mode === "castle" ? Date.now() + castleRoundMs : 0;
   room.barrier = { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 };
   room.healthPickup = { ...randomPickupSpawn(room.arena), available: false, respawnAt: room.mode === "oneLife" ? nextHealthPickupAt() : 0 };
+  room.powerups = createPowerups();
 }
 
 function tryPickupBarrier(room, player) {
@@ -1462,6 +1547,62 @@ function updateHealthPickup(room, now) {
   Object.assign(room.healthPickup, randomPickupSpawn(room.arena), { available: true, respawnAt: 0 });
   addFeed(room, "全回復アイテム出現", "blue");
   broadcast(room, { type: "feed", feed: room.feed });
+}
+
+function teamScore(room, team) {
+  return [...room.players.values()]
+    .filter((player) => player.color === team)
+    .reduce((sum, player) => sum + (player.score || 0), 0);
+}
+
+function isComebackEligible(room, player) {
+  const own = teamScore(room, player.color);
+  const enemy = teamScore(room, oppositeTeam(player.color));
+  return enemy - own >= 2 || (player.deaths || 0) > (player.kills || 0);
+}
+
+function tryPickupPowerups(room, player) {
+  if (!room.powerups || player.isBot || player.eliminated || player.health <= 0) return;
+  const now = Date.now();
+  for (const powerup of room.powerups) {
+    if (!powerup.available) continue;
+    const distance = Math.hypot(player.x - powerup.x, player.y - powerup.y, player.z - powerup.z);
+    if (distance > 1.9) continue;
+    powerup.available = false;
+    powerup.pickedBy = player.name;
+    powerup.respawnAt = now + powerupRespawnMs + Math.floor(Math.random() * 6500);
+    if (powerup.kind === "speed") {
+      player.speedBoostUntil = now + powerupDurationMs;
+      addFeed(room, `${player.name} がスピードブーストを取得`, player.color);
+    } else if (powerup.kind === "ammo") {
+      addFeed(room, `${player.name} が弾薬パックを取得`, player.color);
+    } else if (powerup.kind === "damage") {
+      player.damageBoostUntil = now + 8500;
+      addFeed(room, `${player.name} が火力ブーストを取得`, player.color);
+    } else if (powerup.kind === "comeback") {
+      const eligible = isComebackEligible(room, player);
+      player.comebackUntil = now + (eligible ? 12_000 : 6500);
+      player.shieldUntil = Math.max(player.shieldUntil || 0, now + (eligible ? 4500 : 2200));
+      player.damageBoostUntil = Math.max(player.damageBoostUntil || 0, now + (eligible ? 8000 : 3500));
+      player.donPunchCharge = Math.min(8, (player.donPunchCharge || 0) + (eligible ? 2 : 1));
+      addFeed(room, eligible ? `${player.name} が逆転ブーストを取得` : `${player.name} が小型ブーストを取得`, player.color);
+    }
+    send(player.ws, { type: "powerup", kind: powerup.kind });
+    send(player.ws, { type: "sound", sound: powerup.kind === "ammo" ? "reload" : powerup.kind === "speed" ? "jump" : "barrier" });
+    broadcast(room, { type: "feed", feed: room.feed });
+    return;
+  }
+}
+
+function updatePowerups(room, now) {
+  if (!room.powerups) room.powerups = createPowerups(now);
+  for (const powerup of room.powerups) {
+    if (powerup.available || !powerup.respawnAt || now < powerup.respawnAt) continue;
+    powerup.available = true;
+    powerup.pickedBy = "";
+    powerup.respawnAt = 0;
+    powerup.kind = powerupKinds[(powerupKinds.indexOf(powerup.kind) + 1 + Math.floor(Math.random() * powerupKinds.length)) % powerupKinds.length];
+  }
 }
 
 function spawnDonpachi(room, shooter, target) {

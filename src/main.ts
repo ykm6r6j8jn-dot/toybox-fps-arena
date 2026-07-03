@@ -62,6 +62,9 @@ type PlayerState = {
   healPacks?: number;
   donPunchCharge?: number;
   shieldUntil?: number;
+  speedBoostUntil?: number;
+  damageBoostUntil?: number;
+  comebackUntil?: number;
   x: number;
   y: number;
   z: number;
@@ -108,6 +111,18 @@ type BarrierSnapshot = {
 };
 
 type HealthPickupSnapshot = {
+  x: number;
+  y: number;
+  z: number;
+  available: boolean;
+  respawnAt?: number;
+};
+
+type PowerupKind = "speed" | "ammo" | "damage" | "comeback";
+
+type PowerupSnapshot = {
+  id: string;
+  kind: PowerupKind;
   x: number;
   y: number;
   z: number;
@@ -278,6 +293,7 @@ camera.position.set(0, 1.6, 8);
 const clock = new THREE.Clock();
 const playerMeshes = new Map<string, THREE.Group>();
 const tracers: { mesh: THREE.Group; life: number }[] = [];
+const bulletDecals: { mesh: THREE.Mesh; expiresAt: number }[] = [];
 const fireworks: { mesh: THREE.Points; velocities: THREE.Vector3[]; life: number }[] = [];
 const donPunches = new Map<string, { mesh: THREE.Group; expiresAt: number; targetId: string }>();
 const players = new Map<string, PlayerState>();
@@ -429,6 +445,8 @@ let lastSelfHealth = maxHealth;
 let shotNoiseBuffer: AudioBuffer | null = null;
 let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
+const powerupMeshes = new Map<string, THREE.Group>();
+let bulletHoleTexture: THREE.CanvasTexture | null = null;
 const castleCoreMeshes = new Map<PlayerColor, THREE.Group>();
 const castleCores = new Map<PlayerColor, CastleCoreSnapshot>();
 let castleEndsAt = 0;
@@ -578,6 +596,7 @@ function clearArenaObjects() {
   trampolines.length = 0;
   barrierMesh = null;
   healthPickupMesh = null;
+  powerupMeshes.clear();
   castleCoreMeshes.clear();
   castleCores.clear();
 }
@@ -1025,6 +1044,36 @@ function addHealthPickupMesh() {
   group.visible = false;
   trackArenaObject(group);
   healthPickupMesh = group;
+}
+
+function powerupColor(kind: PowerupKind) {
+  if (kind === "speed") return 0x44d7ff;
+  if (kind === "ammo") return 0xffd23a;
+  if (kind === "damage") return 0xff4d4d;
+  return 0xff4dff;
+}
+
+function createPowerupMesh(kind: PowerupKind) {
+  const color = powerupColor(kind);
+  const group = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.72, 0.12, 12), makeMaterial(0xffffff, 0.5));
+  const coreGeometry = kind === "ammo"
+    ? new THREE.BoxGeometry(0.58, 0.42, 0.58)
+    : kind === "speed"
+      ? new THREE.ConeGeometry(0.42, 0.82, 5)
+      : kind === "damage"
+        ? new THREE.OctahedronGeometry(0.48, 0)
+        : new THREE.IcosahedronGeometry(0.52, 1);
+  const core = new THREE.Mesh(coreGeometry, new THREE.MeshBasicMaterial({ color }));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.76, 0.04, 6, 16), makeMaterial(color, 0.46));
+  base.position.y = 0.12;
+  core.position.y = 0.72;
+  ring.position.y = 0.42;
+  ring.rotation.x = Math.PI / 2;
+  group.add(base, core, ring);
+  group.visible = false;
+  trackArenaObject(group);
+  return group;
 }
 
 function createCastleCoreMesh(team: PlayerColor) {
@@ -2660,6 +2709,7 @@ function handleMessage(event: MessageEvent<string>) {
     updateCastleCores(snapshotCores);
     updateBarrierPowerup(message.barrier as BarrierSnapshot | undefined);
     updateHealthPickup(message.healthPickup as HealthPickupSnapshot | undefined);
+    updatePowerups((message.powerups || []) as PowerupSnapshot[]);
     updateSpectatorState();
     updateHud(message.feed || []);
     updateChat(message.chat || []);
@@ -2693,6 +2743,8 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (message.type === "death_info") showKillcam(message);
   if (message.type === "sound") playGameSound(message.sound);
+  if (message.type === "powerup") applyPowerupPickup(message.kind as PowerupKind);
+  if (message.type === "impact") addBulletDecal(message.point, message.normal, message.shooter === self.id);
   if (message.type === "ashinaga") addAshinagaBurst(message.origin, message.target, message.shooter === self.id);
   if (message.type === "donpunch") showToast("ドンパンチ接近");
   if (message.type === "respawn" && message.target === self.id) {
@@ -3043,7 +3095,8 @@ function move(delta: number) {
   const now = performance.now();
   const sneaking = keys.has("ShiftLeft");
   const sprinting = now < sprintUntil && keys.has("KeyW") && !sneaking;
-  const speed = sneaking ? 2.8 : sprinting ? 10.2 : 5.5;
+  const boosted = Date.now() < ((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0));
+  const speed = (sneaking ? 2.8 : sprinting ? 10.2 : 5.5) * (boosted ? 1.18 : 1);
   const forward = getLookDirection();
   forward.y = 0;
   forward.normalize();
@@ -3198,6 +3251,7 @@ function resetSelf() {
       material?.dispose();
     });
   }
+  clearBulletDecals();
   showToast("リセットしました");
 }
 
@@ -3423,6 +3477,7 @@ function returnToLobbyAfterRound() {
   spectatorCard.classList.remove("show");
   killcamCard.classList.remove("show");
   joinPanel.classList.remove("hidden");
+  clearBulletDecals();
   endCelebration();
   if (document.pointerLockElement) void document.exitPointerLock?.();
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
@@ -3703,6 +3758,103 @@ function updateHealthPickup(pickup?: HealthPickupSnapshot) {
   healthPickupMesh.visible = Boolean(pickup.available);
 }
 
+function updatePowerups(powerups: PowerupSnapshot[]) {
+  const seen = new Set<string>();
+  for (const powerup of powerups) {
+    seen.add(powerup.id);
+    let mesh = powerupMeshes.get(powerup.id);
+    if (!mesh) {
+      mesh = createPowerupMesh(powerup.kind);
+      powerupMeshes.set(powerup.id, mesh);
+    }
+    if (mesh.userData.kind !== powerup.kind) {
+      const color = powerupColor(powerup.kind);
+      for (const child of mesh.children) {
+        const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial | THREE.MeshStandardMaterial | undefined;
+        material?.color?.setHex(color);
+      }
+    }
+    mesh.userData.kind = powerup.kind;
+    mesh.position.set(powerup.x, 0.16, powerup.z);
+    mesh.visible = Boolean(powerup.available);
+  }
+  for (const [id, mesh] of powerupMeshes) {
+    if (seen.has(id)) continue;
+    disposeGroup(mesh);
+    powerupMeshes.delete(id);
+  }
+}
+
+function applyPowerupPickup(kind: PowerupKind) {
+  if (kind === "ammo") {
+    self.reserve = Math.max(self.reserve, 999);
+    self.ammo = currentGun().magSize;
+    reloadTimer = 0;
+    showToast("弾薬パック取得");
+  } else if (kind === "speed") {
+    showToast("スピードブースト取得");
+  } else if (kind === "damage") {
+    showToast("火力ブースト取得");
+  } else {
+    showToast("逆転ブースト取得");
+  }
+}
+
+function bulletHoleMap() {
+  if (bulletHoleTexture) return bulletHoleTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d")!;
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 30);
+  gradient.addColorStop(0, "rgba(7, 10, 12, 0.92)");
+  gradient.addColorStop(0.35, "rgba(22, 25, 26, 0.72)");
+  gradient.addColorStop(0.68, "rgba(60, 54, 48, 0.26)");
+  gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  context.strokeStyle = "rgba(255,255,255,0.18)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(31, 32, 13, 0, Math.PI * 2);
+  context.stroke();
+  bulletHoleTexture = new THREE.CanvasTexture(canvas);
+  bulletHoleTexture.colorSpace = THREE.SRGBColorSpace;
+  return bulletHoleTexture;
+}
+
+function addBulletDecal(
+  point: { x: number; y: number; z: number },
+  normal: { x: number; y: number; z: number },
+  own: boolean
+) {
+  const normalVector = new THREE.Vector3(normal.x, normal.y, normal.z).normalize();
+  if (normalVector.lengthSq() < 0.5) return;
+  const material = new THREE.MeshBasicMaterial({
+    map: bulletHoleMap(),
+    transparent: true,
+    depthWrite: false,
+    opacity: own ? 0.92 : 0.72,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3
+  });
+  const size = own ? 0.34 : 0.28;
+  const decal = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material);
+  decal.position.set(point.x, point.y, point.z).add(normalVector.clone().multiplyScalar(0.018));
+  decal.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normalVector);
+  decal.rotateZ(Math.random() * Math.PI * 2);
+  scene.add(decal);
+  bulletDecals.push({ mesh: decal, expiresAt: performance.now() + 45_000 });
+  while (bulletDecals.length > 60) {
+    const old = bulletDecals.shift();
+    if (!old) break;
+    scene.remove(old.mesh);
+    old.mesh.geometry.dispose();
+    (old.mesh.material as THREE.Material).dispose();
+  }
+}
+
 function updateDonPunches(delta: number) {
   for (const [id, punch] of donPunches) {
     punch.mesh.rotation.y += delta * 6;
@@ -3722,6 +3874,38 @@ function updateHealthPickupAnimation(delta: number) {
   if (!healthPickupMesh || !healthPickupMesh.visible) return;
   healthPickupMesh.rotation.y += delta * 1.6;
   healthPickupMesh.position.y = 0.16 + Math.sin(performance.now() * 0.004) * 0.08;
+}
+
+function updatePowerupAnimation(delta: number) {
+  const now = performance.now();
+  for (const mesh of powerupMeshes.values()) {
+    if (!mesh.visible) continue;
+    mesh.rotation.y += delta * 1.45;
+    mesh.position.y = 0.16 + Math.sin(now * 0.004 + mesh.position.x) * 0.07;
+  }
+}
+
+function updateBulletDecals() {
+  const now = performance.now();
+  for (let i = bulletDecals.length - 1; i >= 0; i -= 1) {
+    const decal = bulletDecals[i];
+    const material = decal.mesh.material as THREE.MeshBasicMaterial;
+    const remaining = decal.expiresAt - now;
+    material.opacity = Math.max(0, Math.min(material.opacity, remaining / 3000));
+    if (remaining > 0) continue;
+    scene.remove(decal.mesh);
+    decal.mesh.geometry.dispose();
+    material.dispose();
+    bulletDecals.splice(i, 1);
+  }
+}
+
+function clearBulletDecals() {
+  for (const decal of bulletDecals.splice(0)) {
+    scene.remove(decal.mesh);
+    decal.mesh.geometry.dispose();
+    (decal.mesh.material as THREE.Material).dispose();
+  }
 }
 
 function disposeGroup(group: THREE.Group) {
@@ -3843,14 +4027,17 @@ function updateHud(feed: FeedItem[]) {
   ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
+  const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
+  const damageLeft = Math.max(0, ((me?.damageBoostUntil || 0) - Date.now()) / 1000);
   const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "oneLife" ? "  1 LIFE" : gameMode === "castle" ? "  CASTLE" : "";
+  const powerText = speedLeft > 0 ? `  SPD ${speedLeft.toFixed(0)}s` : damageLeft > 0 ? `  DMG ${damageLeft.toFixed(0)}s` : "";
   movementStatusEl.textContent = shieldLeft > 0
     ? `BARRIER ${shieldLeft.toFixed(1)}s`
     : me?.eliminated
       ? "ELIMINATED"
       : creativeMode || me?.creative
         ? `CREATIVE  高度 ${Math.max(0, self.position.y - 1.6).toFixed(1)}m`
-        : `${movingMode}  高度 ${Math.max(0, self.position.y - 1.6).toFixed(1)}m${lifeText}`;
+        : `${movingMode}  高度 ${Math.max(0, self.position.y - 1.6).toFixed(1)}m${lifeText}${powerText}`;
   movementStatusEl.parentElement?.classList.toggle("shielded", shieldLeft > 0);
   const charge = Math.min(8, me?.donPunchCharge ?? 0);
   const ready = charge >= 4;
@@ -4152,6 +4339,8 @@ function animate() {
   updateDonPunches(delta);
   updateBarrierAnimation(delta);
   updateHealthPickupAnimation(delta);
+  updatePowerupAnimation(delta);
+  updateBulletDecals();
   updateFireworks(delta);
   syncState(now);
   renderer.render(scene, camera);
