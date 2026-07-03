@@ -1287,6 +1287,10 @@ body.members-open .player-slots {
   z-index: 10;
   display: grid;
   place-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   background: linear-gradient(120deg, rgba(110, 202, 255, 0.42), rgba(247, 251, 255, 0.05));
   transition: opacity 0.22s ease, visibility 0.22s ease;
 }
@@ -1381,11 +1385,13 @@ body.members-open .player-slots {
   width: min(430px, calc(100vw - 32px));
   display: grid;
   gap: 14px;
+  margin: auto;
   padding: 22px;
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 8px;
   background: rgba(18, 32, 46, 0.88);
   box-shadow: 0 28px 70px rgba(13, 31, 45, 0.24);
+  touch-action: pan-y;
 }
 
 .join-card > strong {
@@ -1503,6 +1509,7 @@ body.members-open .player-slots {
 .settings-panel {
   top: 72px;
   right: 14px;
+  z-index: 12;
   width: min(320px, calc(100vw - 28px));
   display: none;
   padding: 14px;
@@ -2001,6 +2008,48 @@ body.celebrating::after {
 @media (pointer: coarse) and (orientation: landscape), (max-height: 520px) and (orientation: landscape) {
   .mobile-controls {
     display: block;
+  }
+
+  .mobile-aim-zone {
+    top: max(56px, calc(env(safe-area-inset-top) + 52px));
+    bottom: 0;
+  }
+
+  .join-panel {
+    place-items: start center;
+    padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+
+  .join-card {
+    width: min(760px, calc(100vw - 24px));
+    gap: 9px;
+    margin: 0 auto;
+    padding: 14px;
+  }
+
+  .join-card > strong {
+    font-size: 22px;
+  }
+
+  .join-card p,
+  .join-card small {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .join-card label {
+    gap: 4px;
+  }
+
+  .join-card input {
+    height: 38px;
+  }
+
+  .mode-select button,
+  .team-select button,
+  .party-select button {
+    min-height: 48px;
+    padding: 6px;
   }
 
   .center-reticle {
