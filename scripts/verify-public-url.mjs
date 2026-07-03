@@ -76,14 +76,14 @@ await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
     snapshot.players?.some((player) => player.name === "PublicAlpha") &&
     snapshot.players?.some((player) => player.name === "PublicBeta") &&
-    !snapshot.players?.some((player) => String(player.name || "").startsWith("CPU-"))
+    !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
   ) &&
     beta.state.snapshots.some((snapshot) =>
       snapshot.players?.some((player) => player.name === "PublicAlpha") &&
       snapshot.players?.some((player) => player.name === "PublicBeta") &&
-      !snapshot.players?.some((player) => String(player.name || "").startsWith("CPU-"))
+      !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
     ),
-  "both public clients see each other without CPU fill"
+  "both public clients see each other without CP fill"
 );
 
 await new Promise((resolve) => setTimeout(resolve, 1500));

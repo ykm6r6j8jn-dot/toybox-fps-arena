@@ -158,7 +158,7 @@
           <button id="soundToggle" class="setting-toggle" type="button">ON</button>
         </div>
         <div class="setting-row">
-          <span>CPU</span>
+          <span>CP</span>
           <div class="cpu-buttons" id="cpuButtons">
             <button data-cpu="0">0</button>
             <button data-cpu="1">1</button>
@@ -168,7 +168,7 @@
           </div>
         </div>
         <div class="setting-row">
-          <span>CPU補充</span>
+          <span>CP補充</span>
           <div class="cpu-buttons cpu-fill-buttons" id="cpuFillButtons">
             <button data-cpu-fill="on" class="active">ON</button>
             <button data-cpu-fill="off">OFF</button>
@@ -225,6 +225,16 @@
               <span>赤側</span>
             </button>
           </div>
+          <div class="party-select settings-relation-select" id="settingsRelationSelect" role="group" aria-label="プレイ中プレイヤー関係">
+            <button type="button" data-relation="coop">
+              <strong>協力</strong>
+              <span>人間は仲間</span>
+            </button>
+            <button type="button" class="active" data-relation="versus">
+              <strong>対戦</strong>
+              <span>人間同士も敵</span>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -264,14 +274,24 @@
               <span>4人チーム</span>
             </button>
           </div>
-          <div class="party-select cpu-fill-select" id="lobbyCpuFillSelect" role="group" aria-label="CPU補充">
+          <div class="party-select cpu-fill-select" id="lobbyCpuFillSelect" role="group" aria-label="CP補充">
             <button type="button" class="active" data-cpu-fill="on">
-              <strong>CPUあり</strong>
+              <strong>CPあり</strong>
               <span>不足分を補充</span>
             </button>
             <button type="button" data-cpu-fill="off">
-              <strong>CPUなし</strong>
+              <strong>CPなし</strong>
               <span>人間だけで対戦</span>
+            </button>
+          </div>
+          <div class="party-select relation-select" id="relationSelect" role="group" aria-label="プレイヤー関係">
+            <button type="button" data-relation="coop">
+              <strong>協力</strong>
+              <span>人間は仲間</span>
+            </button>
+            <button type="button" class="active" data-relation="versus">
+              <strong>対戦</strong>
+              <span>人間同士も敵</span>
             </button>
           </div>
           <div class="team-select" id="teamSelect" role="group" aria-label="チーム選択">

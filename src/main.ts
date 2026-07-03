@@ -33,6 +33,7 @@ type BeforeInstallPromptEvent = Event & {
 
 type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
+type RelationMode = "versus" | "coop";
 type GameMode = "oneLife" | "life3" | "castle";
 type ArenaId = "toybox";
 type PartySize = 1 | 2 | 4;
@@ -172,8 +173,10 @@ const modeSelect = $("#modeSelect");
 const teamSelect = $("#teamSelect");
 const partySelect = $("#partySelect");
 const lobbyCpuFillSelect = $("#lobbyCpuFillSelect");
+const relationSelect = $("#relationSelect");
 const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
+const settingsRelationSelect = $("#settingsRelationSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
@@ -343,6 +346,7 @@ let currentArena: ArenaId = "toybox";
 let teamChoice: TeamChoice = (localStorage.getItem("toybox-team") as TeamChoice) || "auto";
 let partySize: PartySize = ([1, 2, 4].includes(Number(localStorage.getItem("toybox-party-size"))) ? Number(localStorage.getItem("toybox-party-size")) : 1) as PartySize;
 let cpuFillEnabled = localStorage.getItem("toybox-cpu-fill") !== "off";
+let relationMode: RelationMode = localStorage.getItem("toybox-relation-mode") === "coop" ? "coop" : "versus";
 let matchMaxPlayers = 20;
 let celebrationUntil = 0;
 let lastFireworkAt = 0;
@@ -432,6 +436,7 @@ let mobileGuideDismissed = localStorage.getItem("toybox-mobile-fullscreen-guide"
 let killcamUntil = 0;
 let spectatorTargetId = "";
 let resultWinnerSeen = "";
+let lobbyReturnTimer = 0;
 const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
 function viewportSize() {
@@ -492,20 +497,29 @@ function setCpuFill(enabled: boolean) {
   }
 }
 
+function setRelationMode(mode: RelationMode | string) {
+  relationMode = mode === "coop" ? "coop" : "versus";
+  localStorage.setItem("toybox-relation-mode", relationMode);
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-relation]")) {
+    button.classList.toggle("active", button.dataset.relation === relationMode);
+  }
+}
+
 function isHostPlayer() {
   return (nameInput.value.trim() || "プレイヤー") === "ひでお";
 }
 
-function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice, nextCpuFill = cpuFillEnabled) {
+function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice, nextCpuFill = cpuFillEnabled, nextRelation = relationMode) {
   if (!self.joined) return false;
   if (!isHostPlayer()) {
     showToast("試合設定はホスト「ひでお」が変更できます。");
     setGameMode(gameMode);
     setTeamChoice(teamChoice);
     setCpuFill(cpuFillEnabled);
+    setRelationMode(relationMode);
     return true;
   }
-  send({ type: "set_room_config", gameMode: nextMode, team: nextTeam, cpuFill: nextCpuFill });
+  send({ type: "set_room_config", gameMode: nextMode, team: nextTeam, cpuFill: nextCpuFill, relationMode: nextRelation });
   return true;
 }
 
@@ -2108,7 +2122,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")
   button.addEventListener("click", () => {
     const mode = (button.dataset.mode as GameMode) || "oneLife";
     if (self.joined) {
-      requestRoomConfig(mode, teamChoice);
+      requestRoomConfig(mode, teamChoice, cpuFillEnabled, relationMode);
       return;
     }
     setGameMode(mode);
@@ -2119,7 +2133,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-team]")
   button.addEventListener("click", () => {
     const team = (button.dataset.team as TeamChoice) || "auto";
     if (self.joined) {
-      requestRoomConfig(gameMode, team);
+      requestRoomConfig(gameMode, team, cpuFillEnabled, relationMode);
       return;
     }
     setTeamChoice(team);
@@ -2130,10 +2144,21 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-cpu-fil
   button.addEventListener("click", () => {
     const enabled = button.dataset.cpuFill !== "off";
     if (self.joined) {
-      requestRoomConfig(gameMode, teamChoice, enabled);
+      requestRoomConfig(gameMode, teamChoice, enabled, relationMode);
       return;
     }
     setCpuFill(enabled);
+  });
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-relation]")) {
+  button.addEventListener("click", () => {
+    const nextRelation = button.dataset.relation === "coop" ? "coop" : "versus";
+    if (self.joined) {
+      requestRoomConfig(gameMode, teamChoice, cpuFillEnabled, nextRelation);
+      return;
+    }
+    setRelationMode(nextRelation);
   });
 }
 
@@ -2270,6 +2295,29 @@ document.addEventListener("contextmenu", (event) => {
   if (target && (canvas.contains(target) || mobileAimZone.contains(target) || mobileStick.contains(target))) {
     event.preventDefault();
   }
+});
+const isTextEntryTarget = (target: EventTarget | null) =>
+  target instanceof HTMLElement && Boolean(target.closest("input, textarea, [contenteditable='true']"));
+const preventMobileGesture = (event: Event) => {
+  if (isTextEntryTarget(event.target)) return;
+  event.preventDefault();
+};
+let lastTouchEndAt = 0;
+document.addEventListener("gesturestart", preventMobileGesture, { passive: false });
+document.addEventListener("gesturechange", preventMobileGesture, { passive: false });
+document.addEventListener("gestureend", preventMobileGesture, { passive: false });
+document.addEventListener("touchmove", (event) => {
+  if (isTextEntryTarget(event.target)) return;
+  if (event.touches.length > 1) event.preventDefault();
+}, { passive: false });
+document.addEventListener("touchend", (event) => {
+  if (isTextEntryTarget(event.target)) return;
+  const now = Date.now();
+  if (now - lastTouchEndAt < 360) event.preventDefault();
+  lastTouchEndAt = now;
+}, { passive: false });
+document.addEventListener("selectstart", (event) => {
+  if (!isTextEntryTarget(event.target)) event.preventDefault();
 });
 window.addEventListener("orientationchange", () => setTimeout(() => showMobileFullscreenGuide(), 700));
 setTimeout(() => showMobileFullscreenGuide(), 1000);
@@ -2430,6 +2478,7 @@ setTeamChoice(teamChoice);
 setArenaChoice(arenaChoice);
 setPartySize(partySize);
 setCpuFill(cpuFillEnabled);
+setRelationMode(relationMode);
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -2461,7 +2510,7 @@ function join(room: string) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("open", () => {
-    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, cosmeticColor: customColor });
+    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -2475,6 +2524,10 @@ function handleMessage(event: MessageEvent<string>) {
     self.id = message.id;
     self.room = message.room;
     self.joined = true;
+    if (lobbyReturnTimer) {
+      window.clearTimeout(lobbyReturnTimer);
+      lobbyReturnTimer = 0;
+    }
     resultWinnerSeen = "";
     resultPanel.classList.remove("open");
     self.position.set(message.spawn.x, message.spawn.y, message.spawn.z);
@@ -2492,6 +2545,7 @@ function handleMessage(event: MessageEvent<string>) {
     arenaChoice = "toybox";
     if (message.partySize) setPartySize(Number(message.partySize));
     if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
+    if (message.relationMode) setRelationMode(message.relationMode as RelationMode);
     matchMaxPlayers = Number(message.maxPlayers) || 20;
     targetScore = Number(message.targetScore) || 0;
     setGameMode(gameMode);
@@ -2510,6 +2564,7 @@ function handleMessage(event: MessageEvent<string>) {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.partySize) setPartySize(Number(message.partySize));
     if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
+    if (message.relationMode) setRelationMode(message.relationMode as RelationMode);
     if (message.maxPlayers) matchMaxPlayers = Number(message.maxPlayers) || matchMaxPlayers;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
     if (message.arena) {
@@ -2553,6 +2608,7 @@ function handleMessage(event: MessageEvent<string>) {
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
     if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
+    if (message.relationMode) setRelationMode(message.relationMode as RelationMode);
     castleEndsAt = Number(message.castleEndsAt) || 0;
     updateCastleCores(message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined);
     updateFeed(message.feed || []);
@@ -3282,9 +3338,38 @@ function showResults(name: string) {
     </div>
   `).join("");
   resultPanel.classList.add("open");
+  scheduleLobbyReturn();
 }
 
 closeResult.addEventListener("click", () => resultPanel.classList.remove("open"));
+
+function scheduleLobbyReturn() {
+  if (lobbyReturnTimer) return;
+  showToast("5秒後にロビーへ戻ります。");
+  lobbyReturnTimer = window.setTimeout(returnToLobbyAfterRound, 5200);
+}
+
+function returnToLobbyAfterRound() {
+  lobbyReturnTimer = 0;
+  self.joined = false;
+  self.ready = false;
+  desktopFiring = false;
+  mobileFiring = false;
+  roomCodeEl.textContent = "----";
+  readyButton.classList.remove("active");
+  readyButton.querySelector("span")!.textContent = "準備完了";
+  resultPanel.classList.remove("open");
+  spectatorCard.classList.remove("show");
+  killcamCard.classList.remove("show");
+  joinPanel.classList.remove("hidden");
+  endCelebration();
+  if (document.pointerLockElement) void document.exitPointerLock?.();
+  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+  socket = null;
+  history.replaceState(null, "", location.pathname);
+  updateLobbyBgm();
+  void refreshOnlinePlayers();
+}
 
 function updateCamera() {
   const spectated = updateSpectatorState();

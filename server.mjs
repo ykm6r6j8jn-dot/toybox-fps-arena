@@ -27,6 +27,7 @@ const gameModes = new Set(["oneLife", "life3", "castle"]);
 const partySizes = new Set([1, 2, 4]);
 const arenas = new Set(["toybox"]);
 const teams = new Set(["blue", "red"]);
+const relationModes = new Set(["versus", "coop"]);
 const playerCastleCoreMaxHealth = 7500;
 const cpuCastleCoreMaxHealth = 10000;
 const castleCoreRadius = 2.4;
@@ -263,6 +264,11 @@ function normalizePartySize(value) {
   return partySizes.has(size) ? size : 1;
 }
 
+function normalizeRelationMode(value) {
+  const mode = String(value || "versus");
+  return relationModes.has(mode) ? mode : "versus";
+}
+
 function normalizeTeam(value, room) {
   const requested = String(value || "auto");
   if (room.mode === "castle") {
@@ -282,6 +288,7 @@ function humanPlayers(room) {
 }
 
 function assignMatchTeam(room) {
+  if (room.relationMode === "coop") return room.playerTeam || "blue";
   const counts = { blue: 0, red: 0 };
   for (const player of humanPlayers(room)) {
     if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
@@ -325,22 +332,23 @@ function normalizeCpuFill(value) {
   return value !== false;
 }
 
-function findMatchRoom(mode = "oneLife", partySize = 1, cpuFill = true) {
+function findMatchRoom(mode = "oneLife", partySize = 1, cpuFill = true, relationMode = "versus") {
   const gameMode = normalizeGameMode(mode);
   const size = normalizePartySize(partySize);
   const fill = normalizeCpuFill(cpuFill);
+  const relation = normalizeRelationMode(relationMode);
   for (const room of rooms.values()) {
-    if (!room.matchmaking || room.winner || room.mode !== gameMode || room.partySize !== size || room.cpuFill !== fill) continue;
+    if (!room.matchmaking || room.winner || room.mode !== gameMode || room.partySize !== size || room.cpuFill !== fill || room.relationMode !== relation) continue;
     if (humanPlayers(room).length < maxPlayers) return room;
   }
   return null;
 }
 
-function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchmaking = true, cpuFill = true) {
+function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchmaking = true, cpuFill = true, relationMode = "versus") {
   const normalized = (code || "").trim().toUpperCase();
   if (normalized && rooms.has(normalized)) return rooms.get(normalized);
   if (!normalized) {
-    const match = findMatchRoom(mode, partySize, cpuFill);
+    const match = findMatchRoom(mode, partySize, cpuFill, relationMode);
     if (match) return match;
   }
   const createdCode = normalized && normalized.length === 6 ? normalized : roomCode();
@@ -353,6 +361,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     arena: arenaId,
     matchmaking,
     cpuFill: normalizeCpuFill(cpuFill),
+    relationMode: normalizeRelationMode(relationMode),
     partySize: size,
     matchStarted: false,
     maxHumanPlayers: maxPlayers,
@@ -619,8 +628,10 @@ wss.on("connection", (ws) => {
     if (message.type === "join") {
       const requestedPartySize = normalizePartySize(message.partySize);
       const requestedCpuFill = normalizeCpuFill(message.cpuFill);
-      const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill);
+      const requestedRelationMode = normalizeRelationMode(message.relationMode);
+      const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
       if (humanPlayers(room).length === 0) room.cpuFill = requestedCpuFill;
+      if (humanPlayers(room).length === 0) room.relationMode = requestedRelationMode;
       if (room.matchmaking) {
         for (const player of [...room.players.values()]) {
           if (player.isBot) room.players.delete(player.id);
@@ -634,6 +645,9 @@ wss.on("connection", (ws) => {
 
       const id = crypto.randomUUID();
       const spawn = spawnPoint(room.players.size);
+      if (room.relationMode === "coop" && !room.playerTeam) {
+        room.playerTeam = teams.has(String(message.team || "")) ? String(message.team) : "blue";
+      }
       const team = room.matchmaking ? assignMatchTeam(room) : normalizeTeam(message.team, room);
       if (room.mode === "castle" && !room.playerTeam) {
         room.playerTeam = team;
@@ -672,13 +686,13 @@ wss.on("connection", (ws) => {
       currentRoom = room;
       currentPlayer = player;
       if (player.name === "ひでお") {
-        applyRoomConfig(room, player, message.gameMode, message.team, message.cpuFill);
+        applyRoomConfig(room, player, message.gameMode, message.team, message.cpuFill, message.relationMode);
         addFeed(room, `ひでお が ${modeLabel(room.mode)} に変更`, player.color);
       }
       syncMatchCpuFill(room);
       addFeed(room, `${player.name} が参加`, player.color);
       const welcomeSpawn = { x: player.x, y: player.y, z: player.z, yaw: player.yaw };
-      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, cpuFill: room.cpuFill, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn });
+      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, cpuFill: room.cpuFill, relationMode: room.relationMode, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn });
       broadcast(room, { type: "feed", feed: room.feed });
       return;
     }
@@ -760,12 +774,13 @@ wss.on("connection", (ws) => {
         send(currentPlayer.ws, { type: "error", message: "試合設定はホスト「ひでお」が変更できます。" });
         return;
       }
-      applyRoomConfig(currentRoom, currentPlayer, message.gameMode, message.team, message.cpuFill);
+      applyRoomConfig(currentRoom, currentPlayer, message.gameMode, message.team, message.cpuFill, message.relationMode);
       addFeed(currentRoom, `ひでお が ${modeLabel(currentRoom.mode)} に変更`, currentPlayer.color);
       broadcast(currentRoom, {
         type: "room_config",
         gameMode: currentRoom.mode,
         cpuFill: currentRoom.cpuFill,
+        relationMode: currentRoom.relationMode,
         targetScore: currentRoom.targetScore || 0,
         feed: currentRoom.feed,
         castleCores: currentRoom.castleCores,
@@ -798,12 +813,12 @@ wss.on("connection", (ws) => {
       if (currentRoom.matchmaking) {
         currentRoom.cpuFill = Number(message.count) !== 0;
         syncMatchCpuFill(currentRoom);
-        addFeed(currentRoom, currentRoom.cpuFill ? "CPU補充 ON" : "CPU補充 OFF", currentPlayer.color);
+        addFeed(currentRoom, currentRoom.cpuFill ? "CP補充 ON" : "CP補充 OFF", currentPlayer.color);
         broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
         return;
       }
       setCpuCount(currentRoom, clamp(Number(message.count), 0, maxCpuPlayers));
-      addFeed(currentRoom, `CPU ${currentRoom.cpuCount}体`, currentPlayer.color);
+      addFeed(currentRoom, `CP ${currentRoom.cpuCount}体`, currentPlayer.color);
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
       return;
     }
@@ -933,6 +948,7 @@ setInterval(() => {
       arena: room.arena,
       partySize: room.partySize || 1,
       cpuFill: room.cpuFill,
+      relationMode: room.relationMode,
       maxPlayers: room.maxHumanPlayers || maxPlayers,
       targetScore: room.targetScore || 0,
       castleCores: room.castleCores,
@@ -1180,7 +1196,7 @@ function setCpuCount(room, count) {
     room.players.set(id, {
       id,
       ws: null,
-      name: `CPU-${i + 1}`,
+      name: `CP-${i + 1}`,
       color: cpuTeam || (i % 2 === 0 ? "red" : "blue"),
       cosmeticColor: (cpuTeam || (i % 2 === 0 ? "red" : "blue")) === "red" ? "#ff4d4d" : "#1598f0",
       ready: true,
@@ -1219,7 +1235,7 @@ function createCpuPlayer(room, id, index, team) {
   return {
     id,
     ws: null,
-    name: `CPU-${index + 1}`,
+    name: `CP-${index + 1}`,
     color: team,
     cosmeticColor: team === "red" ? "#ff4d4d" : "#1598f0",
     ready: true,
@@ -1261,7 +1277,29 @@ function syncMatchCpuFill(room) {
     room.cpuCount = 0;
     if (!room.matchStarted && humanPlayers(room).length > 0) {
       room.matchStarted = true;
-      addFeed(room, "CPUなしバトル開始", "blue");
+      addFeed(room, "CPなしバトル開始", "blue");
+    }
+    return;
+  }
+  const humans = humanPlayers(room);
+  if (room.relationMode === "coop" && room.mode !== "castle") {
+    room.playerTeam = room.playerTeam || humans[0]?.color || "blue";
+    for (const player of humans) {
+      player.color = room.playerTeam;
+      player.cosmeticColor = player.cosmeticColor || (room.playerTeam === "blue" ? "#1598f0" : "#ff4d4d");
+    }
+    const botTeam = oppositeTeam(room.playerTeam);
+    const needed = Math.max(0, maxPlayers - humans.length);
+    let botIndex = 0;
+    for (let i = 0; i < needed && botIndex < maxCpuPlayers && room.players.size < maxPlayers; i += 1) {
+      const id = `cpu-${room.code}-match-${botTeam}-${i}`;
+      room.players.set(id, createCpuPlayer(room, id, botIndex, botTeam));
+      botIndex += 1;
+    }
+    room.cpuCount = botIndex;
+    if (!room.matchStarted && humans.length > 0) {
+      room.matchStarted = true;
+      addFeed(room, `協力バトル開始 人間 vs CP`, room.playerTeam);
     }
     return;
   }
@@ -1286,15 +1324,21 @@ function syncMatchCpuFill(room) {
   }
 }
 
-function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill) {
+function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, relationMode = room.relationMode) {
   const nextMode = normalizeGameMode(mode);
   const requestedTeam = teams.has(String(teamChoice || "")) ? String(teamChoice) : "";
   room.mode = nextMode;
   room.cpuFill = normalizeCpuFill(cpuFill);
+  room.relationMode = normalizeRelationMode(relationMode);
   room.targetScore = 0;
-  room.playerTeam = nextMode === "castle" ? requestedTeam || host.color || "blue" : null;
+  room.playerTeam = nextMode === "castle" || room.relationMode === "coop" ? requestedTeam || host.color || "blue" : null;
 
   if (nextMode === "castle") {
+    for (const player of room.players.values()) {
+      player.color = player.isBot ? oppositeTeam(room.playerTeam) : room.playerTeam;
+      player.cosmeticColor = player.cosmeticColor || (player.color === "blue" ? "#1598f0" : "#ff4d4d");
+    }
+  } else if (room.relationMode === "coop") {
     for (const player of room.players.values()) {
       player.color = player.isBot ? oppositeTeam(room.playerTeam) : room.playerTeam;
       player.cosmeticColor = player.cosmeticColor || (player.color === "blue" ? "#1598f0" : "#ff4d4d");
@@ -1302,6 +1346,13 @@ function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill) {
   } else if (requestedTeam) {
     host.color = requestedTeam;
     host.cosmeticColor = host.cosmeticColor || (requestedTeam === "blue" ? "#1598f0" : "#ff4d4d");
+  } else {
+    let humanIndex = 0;
+    for (const player of room.players.values()) {
+      if (player.isBot) continue;
+      player.color = humanIndex % 2 === 0 ? "blue" : "red";
+      humanIndex += 1;
+    }
   }
 
   resetRoomScores(room);
