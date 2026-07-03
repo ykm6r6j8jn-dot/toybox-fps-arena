@@ -28,6 +28,7 @@ const partySizes = new Set([1, 2, 4]);
 const arenas = new Set(["toybox"]);
 const teams = new Set(["blue", "red"]);
 const relationModes = new Set(["versus", "coop"]);
+const skins = new Set(["rounded", "scout", "heavy", "bee"]);
 const playerCastleCoreMaxHealth = 7500;
 const cpuCastleCoreMaxHealth = 10000;
 const castleCoreRadius = 2.4;
@@ -269,6 +270,11 @@ function normalizeRelationMode(value) {
   return relationModes.has(mode) ? mode : "versus";
 }
 
+function normalizeSkin(value) {
+  const skin = String(value || "rounded");
+  return skins.has(skin) ? skin : "rounded";
+}
+
 function normalizeTeam(value, room) {
   const requested = String(value || "auto");
   if (room.mode === "castle") {
@@ -419,6 +425,7 @@ function publicPlayer(player) {
     name: player.name,
     color: player.color,
     cosmeticColor: player.cosmeticColor,
+    skin: normalizeSkin(player.skin),
     ready: player.ready,
     health: player.health,
     score: player.score,
@@ -659,6 +666,7 @@ wss.on("connection", (ws) => {
         name: String(message.name || "プレイヤー").slice(0, 14),
         color: team,
         cosmeticColor: safeColor(message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
+        skin: normalizeSkin(message.skin),
         ready: false,
         health: maxHealth,
         score: 0,
@@ -749,6 +757,7 @@ wss.on("connection", (ws) => {
 
     if (message.type === "customize") {
       currentPlayer.cosmeticColor = safeColor(message.cosmeticColor) || currentPlayer.cosmeticColor;
+      currentPlayer.skin = normalizeSkin(message.skin || currentPlayer.skin);
       return;
     }
 
@@ -1199,6 +1208,7 @@ function setCpuCount(room, count) {
       name: `CP-${i + 1}`,
       color: cpuTeam || (i % 2 === 0 ? "red" : "blue"),
       cosmeticColor: (cpuTeam || (i % 2 === 0 ? "red" : "blue")) === "red" ? "#ff4d4d" : "#1598f0",
+      skin: ["rounded", "scout", "heavy", "bee"][i % 4],
       ready: true,
       health: maxHealth,
       score: 0,
@@ -1238,6 +1248,7 @@ function createCpuPlayer(room, id, index, team) {
     name: `CP-${index + 1}`,
     color: team,
     cosmeticColor: team === "red" ? "#ff4d4d" : "#1598f0",
+    skin: ["rounded", "scout", "heavy", "bee"][index % 4],
     ready: true,
     health: maxHealth,
     score: 0,

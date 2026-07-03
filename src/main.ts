@@ -37,12 +37,14 @@ type RelationMode = "versus" | "coop";
 type GameMode = "oneLife" | "life3" | "castle";
 type ArenaId = "toybox";
 type PartySize = 1 | 2 | 4;
+type SkinId = "rounded" | "scout" | "heavy" | "bee";
 
 type PlayerState = {
   id: string;
   name: string;
   color: PlayerColor;
   cosmeticColor?: string;
+  skin?: SkinId;
   ready: boolean;
   health: number;
   score: number;
@@ -174,6 +176,7 @@ const teamSelect = $("#teamSelect");
 const partySelect = $("#partySelect");
 const lobbyCpuFillSelect = $("#lobbyCpuFillSelect");
 const relationSelect = $("#relationSelect");
+const skinSelect = $("#skinSelect");
 const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const settingsRelationSelect = $("#settingsRelationSelect");
@@ -250,6 +253,10 @@ const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
 
 nameInput.value = localStorage.getItem("toybox-name") || `Player${Math.floor(Math.random() * 90 + 10)}`;
+nameInput.addEventListener("input", () => {
+  const name = nameInput.value.trim();
+  if (name) localStorage.setItem("toybox-name", name);
+});
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -307,6 +314,9 @@ const currentGun = () => guns[currentGunIndex];
 const isScopedGun = (gun = currentGun()) => gun.kind === "marksman" || gun.kind === "awm";
 let soundEnabled = localStorage.getItem("toybox-sound") !== "off";
 let customColor = localStorage.getItem("toybox-color") || "#1598f0";
+let currentSkin: SkinId = (["rounded", "scout", "heavy", "bee"].includes(localStorage.getItem("toybox-skin") || "")
+  ? localStorage.getItem("toybox-skin")
+  : "rounded") as SkinId;
 let audioContext: AudioContext | null = null;
 let audioUnlocked = false;
 let audioUnlocking: Promise<void> | null = null;
@@ -503,6 +513,19 @@ function setRelationMode(mode: RelationMode | string) {
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-relation]")) {
     button.classList.toggle("active", button.dataset.relation === relationMode);
   }
+}
+
+function normalizeSkinId(skin?: string): SkinId {
+  return skin === "scout" || skin === "heavy" || skin === "bee" ? skin : "rounded";
+}
+
+function setSkin(skin: SkinId | string) {
+  currentSkin = normalizeSkinId(skin);
+  localStorage.setItem("toybox-skin", currentSkin);
+  for (const button of skinSelect.querySelectorAll<HTMLButtonElement>("[data-skin]")) {
+    button.classList.toggle("active", button.dataset.skin === currentSkin);
+  }
+  send({ type: "customize", cosmeticColor: customColor, skin: currentSkin });
 }
 
 function isHostPlayer() {
@@ -1891,14 +1914,22 @@ function addWeapon() {
 
 function createPlayerMesh(player: PlayerState) {
   const group = new THREE.Group();
+  group.userData.skin = normalizeSkinId(player.skin);
+  const skinId = normalizeSkinId(player.skin);
   const teamMaterial = makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red), 0.7);
-  const skinMaterial = makeMaterial(0xffc0a0, 0.76);
+  const skinMaterial = makeMaterial(skinId === "bee" ? 0xffd23a : skinId === "scout" ? 0xf0b98d : 0xffc0a0, 0.76);
   const bootMaterial = makeMaterial(0x151b20, 0.78);
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.82, 3, 6), teamMaterial);
-  body.position.y = 0.85;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 10, 8), skinMaterial);
-  head.position.y = 1.58;
-  const marker = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.32, 3), makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757)));
+  const bodyGeometry = skinId === "heavy"
+    ? new THREE.CapsuleGeometry(0.42, 0.76, 3, 7)
+    : skinId === "scout"
+      ? new THREE.CapsuleGeometry(0.28, 0.92, 3, 6)
+      : new THREE.CapsuleGeometry(0.34, 0.82, 3, 6);
+  const body = new THREE.Mesh(bodyGeometry, teamMaterial);
+  body.position.y = skinId === "scout" ? 0.9 : 0.85;
+  const head = new THREE.Mesh(skinId === "heavy" ? new THREE.SphereGeometry(0.28, 10, 8) : new THREE.SphereGeometry(0.25, 10, 8), skinMaterial);
+  head.position.y = skinId === "scout" ? 1.66 : 1.58;
+  const markerGeometry = skinId === "bee" ? new THREE.SphereGeometry(0.2, 10, 8) : new THREE.ConeGeometry(0.22, 0.32, 3);
+  const marker = new THREE.Mesh(markerGeometry, makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757)));
   marker.position.y = 2.25;
   marker.rotation.x = Math.PI;
   const weapon = new THREE.Group();
@@ -1913,12 +1944,12 @@ function createPlayerMesh(player: PlayerState) {
   weaponSight.position.set(0, 0.1, -0.18);
   weapon.add(weaponBody, weaponStock, weaponBarrel, weaponSight);
   weapon.position.set(0.36, 1.08, -0.42);
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.265, 10, 6), bootMaterial);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(skinId === "heavy" ? 0.32 : 0.265, 10, 6), bootMaterial);
   helmet.position.y = 1.68;
-  helmet.scale.set(1.08, 0.56, 1.02);
+  helmet.scale.set(skinId === "heavy" ? 1.14 : 1.08, skinId === "scout" ? 0.42 : 0.56, 1.02);
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.07, 0.08), materials.dark);
   visor.position.set(0, 1.61, -0.22);
-  const vest = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.54, 0.42), teamMaterial);
+  const vest = new THREE.Mesh(new THREE.BoxGeometry(skinId === "heavy" ? 0.72 : 0.58, skinId === "scout" ? 0.42 : 0.54, skinId === "heavy" ? 0.5 : 0.42), teamMaterial);
   vest.position.y = 0.92;
   const belt = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.1, 0.44), bootMaterial);
   belt.position.y = 0.56;
@@ -1944,15 +1975,40 @@ function createPlayerMesh(player: PlayerState) {
   shield.position.y = 0.98;
   shield.visible = false;
   group.add(body, head, marker, weapon, shield, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove);
+  if (skinId === "bee") {
+    const stripeMaterial = makeMaterial(0x111820, 0.7);
+    const stripeA = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.45), stripeMaterial);
+    const stripeB = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.08, 0.43), stripeMaterial);
+    stripeA.position.y = 0.99;
+    stripeB.position.y = 0.78;
+    group.add(stripeA, stripeB);
+  }
   scene.add(group);
   return group;
 }
 
 function applyPlayerMeshColor(mesh: THREE.Group, player: PlayerState) {
+  const nextSkin = normalizeSkinId(player.skin);
+  if (mesh.userData.skin !== nextSkin) {
+    const replacement = createPlayerMesh(player);
+    replacement.position.copy(mesh.position);
+    replacement.rotation.copy(mesh.rotation);
+    playerMeshes.set(player.id, replacement);
+    scene.remove(mesh);
+    mesh.traverse((child) => {
+      const maybeMesh = child as THREE.Mesh;
+      maybeMesh.geometry?.dispose();
+      const material = maybeMesh.material;
+      if (Array.isArray(material)) material.forEach((item) => item.dispose());
+      else material?.dispose();
+    });
+    return;
+  }
   const color = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red);
   const markerColor = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757);
   ((mesh.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(color);
   ((mesh.children[2] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(markerColor);
+  ((mesh.children[7] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(color);
 }
 
 function colorToNumber(color?: string) {
@@ -2182,6 +2238,9 @@ for (const button of colorSwatches.querySelectorAll<HTMLButtonElement>("button")
   const color = button.dataset.color || "#1598f0";
   button.style.background = color;
   button.addEventListener("click", () => setCustomColor(color));
+}
+for (const button of skinSelect.querySelectorAll<HTMLButtonElement>("[data-skin]")) {
+  button.addEventListener("click", () => setSkin(button.dataset.skin || "rounded"));
 }
 for (const button of cpuButtons.querySelectorAll<HTMLButtonElement>("button")) {
   button.addEventListener("click", () => {
@@ -2479,6 +2538,7 @@ setArenaChoice(arenaChoice);
 setPartySize(partySize);
 setCpuFill(cpuFillEnabled);
 setRelationMode(relationMode);
+setSkin(currentSkin);
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -2505,12 +2565,13 @@ function useHealPack() {
 function join(room: string) {
   const name = nameInput.value.trim() || "プレイヤー";
   localStorage.setItem("toybox-name", name);
+  localStorage.setItem("toybox-skin", currentSkin);
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
 
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("open", () => {
-    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor });
+    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -2687,7 +2748,7 @@ function setCustomColor(color: string) {
   for (const button of colorSwatches.querySelectorAll<HTMLButtonElement>("button")) {
     button.classList.toggle("active", button.dataset.color === color);
   }
-  send({ type: "customize", cosmeticColor: color });
+  send({ type: "customize", cosmeticColor: color, skin: currentSkin });
 }
 
 function setSoundEnabled(enabled: boolean) {
@@ -3870,7 +3931,7 @@ function updateFlowHud(now = performance.now()) {
 
 function updateSlots() {
   const list = [...players.values()].sort((a, b) => b.score - a.score);
-  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}`).join("|")}`;
+  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.cosmeticColor}:${player.skin}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}`).join("|")}`;
   if (signature === slotsSignature) return;
   slotsSignature = signature;
   playerSlots.innerHTML = "";
@@ -3878,11 +3939,11 @@ function updateSlots() {
     const player = list[i];
     const slot = document.createElement("div");
     const canChangeTeam = Boolean(player) && (gameMode === "oneLife" || gameMode === "life3");
-    const shape = ["circle", "triangle", "hex", "dot", "square"][i % 5];
+    const shape = player?.skin || ["circle", "triangle", "hex", "dot", "square"][i % 5];
     slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${canChangeTeam ? "team-editable" : ""} shape-${shape}`;
     const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : gameMode === "oneLife" ? "IN" : player?.score;
     slot.innerHTML = player
-      ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
+      ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar" style="--slot-color:${escapeHtml(player.cosmeticColor || "")}"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
           canChangeTeam
             ? `<div class="slot-team-actions" aria-label="チーム変更"><button data-player-id="${player.id}" data-team-change="blue" class="${player.color === "blue" ? "active" : ""}">青</button><button data-player-id="${player.id}" data-team-change="red" class="${player.color === "red" ? "active" : ""}">赤</button></div>`
             : ""
