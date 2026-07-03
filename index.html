@@ -335,12 +335,62 @@
               </label>
               <button id="joinRoom" type="button">入室</button>
             </div>
+            <div class="poker-lobby-card">
+              <header>
+                <strong>テキサスポーカー</strong>
+                <span>2000Don / 10秒ターン</span>
+              </header>
+              <div class="poker-cpu-select" id="pokerCpuSelect" role="group" aria-label="ポーカーCP数">
+                <button type="button" data-poker-cpu="0">CP0</button>
+                <button type="button" data-poker-cpu="1">CP1</button>
+                <button type="button" class="active" data-poker-cpu="2">CP2</button>
+                <button type="button" data-poker-cpu="3">CP3</button>
+                <button type="button" data-poker-cpu="5">CP5</button>
+              </div>
+              <button id="createPokerRoom" type="button">テキサスポーカー入室</button>
+            </div>
           </div>
           <div class="online-panel">
             <strong>現在オンライン</strong>
             <div id="onlinePlayers">確認中...</div>
           </div>
           <small>クリックで視点操作、WASDで移動、左クリックで射撃、Qで必殺技。</small>
+        </div>
+      </section>
+
+      <section class="poker-panel" id="pokerPanel" aria-label="テキサスポーカー">
+        <div class="poker-shell">
+          <header class="poker-header">
+            <div>
+              <span>Texas Poker</span>
+              <strong id="pokerRoomCode">------</strong>
+            </div>
+            <div class="poker-pot">
+              <span>Pot</span>
+              <strong id="pokerPot">0Don</strong>
+            </div>
+            <button id="leavePoker" type="button">ロビーへ</button>
+          </header>
+          <div class="poker-table">
+            <div class="poker-felt">
+              <div class="poker-stage">
+                <span id="pokerStage">待機中</span>
+                <strong id="pokerEvent">テキサスポーカーへようこそ</strong>
+                <small id="pokerTimer">10</small>
+              </div>
+              <div class="community-cards" id="pokerCommunity"></div>
+              <div class="poker-seats" id="pokerSeats"></div>
+            </div>
+          </div>
+          <footer class="poker-actions">
+            <div class="my-cards" id="pokerMyCards"></div>
+            <div class="poker-action-buttons">
+              <button id="pokerFold" type="button">フォールド</button>
+              <button id="pokerCall" type="button">チェック</button>
+              <button id="pokerRaise" type="button">レイズ +50</button>
+            </div>
+            <div class="poker-stack-line" id="pokerStackLine">2000Don</div>
+          </footer>
         </div>
       </section>
 

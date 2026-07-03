@@ -139,6 +139,42 @@ type CastleCoreSnapshot = {
   maxHealth: number;
 };
 
+type PokerPlayer = {
+  id: string;
+  name: string;
+  chips: number;
+  bet: number;
+  folded: boolean;
+  allIn: boolean;
+  acted: boolean;
+  isBot: boolean;
+  seat: number;
+  lastAction?: string;
+  cards: string[];
+  cardCount: number;
+};
+
+type PokerSnapshot = {
+  room: string;
+  selfId: string;
+  players: PokerPlayer[];
+  community: string[];
+  pot: number;
+  stage: string;
+  dealerSeat: number;
+  turnId: string;
+  turnEndsAt: number;
+  now: number;
+  toCall: number;
+  currentBet: number;
+  minRaise: number;
+  lastEvent: string;
+  showdown?: {
+    winners: { id: string; name: string; label: string; amount: number }[];
+    revealed: { id: string; hand: string[] }[];
+  };
+};
+
 const $ = <T extends HTMLElement>(selector: string) => {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`Missing element: ${selector}`);
@@ -198,6 +234,22 @@ const settingsRelationSelect = $("#settingsRelationSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
 const roomInput = $("#roomInput") as HTMLInputElement;
 const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
+const createPokerRoomButton = $("#createPokerRoom") as HTMLButtonElement;
+const pokerCpuSelect = $("#pokerCpuSelect");
+const pokerPanel = $("#pokerPanel");
+const pokerRoomCodeEl = $("#pokerRoomCode");
+const pokerPotEl = $("#pokerPot");
+const pokerStageEl = $("#pokerStage");
+const pokerEventEl = $("#pokerEvent");
+const pokerTimerEl = $("#pokerTimer");
+const pokerCommunityEl = $("#pokerCommunity");
+const pokerSeatsEl = $("#pokerSeats");
+const pokerMyCardsEl = $("#pokerMyCards");
+const pokerStackLineEl = $("#pokerStackLine");
+const pokerFoldButton = $("#pokerFold") as HTMLButtonElement;
+const pokerCallButton = $("#pokerCall") as HTMLButtonElement;
+const pokerRaiseButton = $("#pokerRaise") as HTMLButtonElement;
+const leavePokerButton = $("#leavePoker") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
 const inviteButton = $("#inviteButton") as HTMLButtonElement;
@@ -305,6 +357,11 @@ const bulletDecals: { mesh: THREE.Mesh; expiresAt: number }[] = [];
 const fireworks: { mesh: THREE.Points; velocities: THREE.Vector3[]; life: number }[] = [];
 const donPunches = new Map<string, { mesh: THREE.Group; expiresAt: number; targetId: string }>();
 const players = new Map<string, PlayerState>();
+let pokerJoined = false;
+let pokerSelfId = "";
+let pokerRoomCode = "";
+let pokerCpuCount = Number(localStorage.getItem("donpachi-poker-cpu") || "2") || 2;
+let latestPokerSnapshot: PokerSnapshot | null = null;
 const arenaObjects: THREE.Object3D[] = [];
 const minimapBoxes: { x: number; z: number; w: number; h: number }[] = [];
 const keys = new Set<string>();
@@ -2290,6 +2347,19 @@ roomInput.addEventListener("keydown", (event) => {
   event.preventDefault();
   joinTypedRoom();
 });
+for (const button of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button")) {
+  button.classList.toggle("active", Number(button.dataset.pokerCpu) === pokerCpuCount);
+  button.addEventListener("click", () => {
+    pokerCpuCount = Number(button.dataset.pokerCpu) || 0;
+    localStorage.setItem("donpachi-poker-cpu", String(pokerCpuCount));
+    for (const item of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button")) item.classList.toggle("active", item === button);
+  });
+}
+createPokerRoomButton.addEventListener("click", () => joinPoker(roomInput.value));
+pokerFoldButton.addEventListener("click", () => sendPokerAction("fold"));
+pokerCallButton.addEventListener("click", () => sendPokerAction("call"));
+pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", 50));
+leavePokerButton.addEventListener("click", leavePokerRoom);
 memberToggle.addEventListener("click", () => {
   const open = !document.body.classList.contains("members-open");
   document.body.classList.toggle("members-open", open);
@@ -2730,6 +2800,46 @@ function joinTypedRoom() {
   join(code);
 }
 
+function joinPoker(room: string) {
+  const name = nameInput.value.trim() || "プレイヤー";
+  localStorage.setItem("toybox-name", name);
+  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+  self.joined = false;
+  pokerJoined = false;
+  pokerSelfId = "";
+  latestPokerSnapshot = null;
+  const code = sanitizeRoomCode(room);
+  if (code) roomInput.value = code;
+  const protocol = location.protocol === "https:" ? "wss" : "ws";
+  socket = new WebSocket(`${protocol}://${location.host}/ws`);
+  socket.addEventListener("open", () => {
+    send({ type: "poker_join", name, room: code, cpuCount: pokerCpuCount });
+  });
+  socket.addEventListener("message", handleMessage);
+  socket.addEventListener("close", () => {
+    if (pokerJoined) showToast("ポーカールームから切断されました。");
+  });
+}
+
+function leavePokerRoom() {
+  pokerJoined = false;
+  pokerSelfId = "";
+  pokerRoomCode = "";
+  latestPokerSnapshot = null;
+  pokerPanel.classList.remove("open");
+  document.body.classList.remove("poker-open");
+  joinPanel.classList.remove("hidden");
+  history.replaceState(null, "", location.pathname);
+  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+  socket = null;
+  updateLobbyBgm();
+}
+
+function sendPokerAction(action: "fold" | "call" | "raise", raiseBy = 0) {
+  if (!pokerJoined) return;
+  send({ type: "poker_action", action, raiseBy });
+}
+
 function join(room: string) {
   const name = nameInput.value.trim() || "プレイヤー";
   localStorage.setItem("toybox-name", name);
@@ -2749,6 +2859,30 @@ function join(room: string) {
 
 function handleMessage(event: MessageEvent<string>) {
   const message = JSON.parse(event.data);
+  if (message.type === "poker_welcome") {
+    pokerJoined = true;
+    pokerSelfId = String(message.id || "");
+    pokerRoomCode = String(message.room || "");
+    roomInput.value = pokerRoomCode;
+    pokerRoomCodeEl.textContent = pokerRoomCode;
+    roomCodeEl.textContent = pokerRoomCode;
+    joinPanel.classList.add("hidden");
+    pokerPanel.classList.add("open");
+    document.body.classList.add("poker-open");
+    updateLobbyBgm();
+    history.replaceState(null, "", `?room=${pokerRoomCode}`);
+    showToast("テキサスポーカーに参加しました。");
+    return;
+  }
+  if (message.type === "poker_snapshot") {
+    latestPokerSnapshot = message as PokerSnapshot;
+    renderPoker(latestPokerSnapshot);
+    return;
+  }
+  if (message.type === "poker_error") {
+    showToast(String(message.message || "ポーカーエラー"));
+    return;
+  }
   if (message.type === "welcome") {
     self.id = message.id;
     self.room = message.room;
@@ -4326,6 +4460,81 @@ function updateChat(chat: ChatItem[]) {
       <span>${escapeHtml(item.text)}</span>
     </div>
   `).join("");
+}
+
+function pokerStageLabel(stage: string) {
+  return {
+    waiting: "待機中",
+    preflop: "プリフロップ",
+    flop: "フロップ",
+    turn: "ターン",
+    river: "リバー",
+    showdown: "ショーダウン"
+  }[stage] || stage;
+}
+
+function parseCard(card: string) {
+  const suit = card.slice(-1);
+  const rankValue = Number(card.slice(0, -1));
+  const rank = { 14: "A", 13: "K", 12: "Q", 11: "J" }[rankValue as 11 | 12 | 13 | 14] || String(rankValue);
+  const symbol = { S: "♠", H: "♥", D: "♦", C: "♣" }[suit as "S" | "H" | "D" | "C"] || "?";
+  const red = suit === "H" || suit === "D";
+  return { rank, symbol, red };
+}
+
+function renderCard(card?: string, hidden = false) {
+  if (!card || hidden) {
+    return `<div class="playing-card card-back"><span></span></div>`;
+  }
+  const parsed = parseCard(card);
+  const suitClass = parsed.red ? "red" : "black";
+  return `
+    <div class="playing-card ${suitClass}">
+      <div class="card-corner top"><strong>${parsed.rank}</strong><span>${parsed.symbol}</span></div>
+      <div class="card-pip">${parsed.symbol}</div>
+      <div class="card-corner bottom"><strong>${parsed.rank}</strong><span>${parsed.symbol}</span></div>
+    </div>
+  `;
+}
+
+function renderPoker(snapshot: PokerSnapshot) {
+  pokerRoomCodeEl.textContent = snapshot.room;
+  pokerPotEl.textContent = `${snapshot.pot}Don`;
+  pokerStageEl.textContent = pokerStageLabel(snapshot.stage);
+  pokerEventEl.textContent = snapshot.lastEvent || "進行中";
+  const remaining = snapshot.turnEndsAt ? Math.max(0, Math.ceil((snapshot.turnEndsAt - snapshot.now) / 1000)) : 0;
+  pokerTimerEl.textContent = snapshot.stage === "showdown" || snapshot.stage === "waiting" ? "--" : String(remaining);
+  pokerTimerEl.classList.toggle("danger", remaining <= 3 && remaining > 0);
+  pokerCommunityEl.innerHTML = [0, 1, 2, 3, 4].map((index) => renderCard(snapshot.community[index], !snapshot.community[index])).join("");
+
+  const revealed = new Map((snapshot.showdown?.revealed || []).map((item) => [item.id, item.hand]));
+  pokerSeatsEl.innerHTML = snapshot.players.map((player) => {
+    const isMe = player.id === snapshot.selfId;
+    const isTurn = player.id === snapshot.turnId;
+    const winner = snapshot.showdown?.winners.find((item) => item.id === player.id);
+    const cards = isMe ? player.cards : revealed.get(player.id) || [];
+    const cardHtml = player.cardCount
+      ? [0, 1].map((index) => renderCard(cards[index], !cards[index])).join("")
+      : "";
+    return `
+      <div class="poker-seat ${isMe ? "me" : ""} ${isTurn ? "turn" : ""} ${player.folded ? "folded" : ""}">
+        <div class="seat-cards">${cardHtml}</div>
+        <strong>${escapeHtml(player.name)}</strong>
+        <span>${player.chips}Don</span>
+        <small>${player.bet ? `BET ${player.bet}` : player.lastAction || (player.isBot ? "CP" : "PLAYER")}</small>
+        ${winner ? `<em>${escapeHtml(winner.label)} +${winner.amount}Don</em>` : ""}
+      </div>
+    `;
+  }).join("");
+
+  const me = snapshot.players.find((player) => player.id === snapshot.selfId);
+  pokerMyCardsEl.innerHTML = me?.cards?.length ? me.cards.map((card) => renderCard(card)).join("") : `${renderCard("", true)}${renderCard("", true)}`;
+  pokerStackLineEl.textContent = me ? `${me.name} / ${me.chips}Don / コール ${snapshot.toCall}Don` : "2000Don";
+  const myTurn = snapshot.turnId === snapshot.selfId && snapshot.stage !== "showdown" && snapshot.stage !== "waiting";
+  pokerFoldButton.disabled = !myTurn;
+  pokerCallButton.disabled = !myTurn;
+  pokerRaiseButton.disabled = !myTurn || !me || me.chips <= snapshot.toCall + 50;
+  pokerCallButton.textContent = snapshot.toCall > 0 ? `コール ${snapshot.toCall}` : "チェック";
 }
 
 function drawMinimap() {

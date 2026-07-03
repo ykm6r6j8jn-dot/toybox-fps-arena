@@ -10,6 +10,12 @@ const isProd = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 5188);
 const maxPlayers = 20;
 const maxCpuPlayers = 19;
+const pokerStartingChips = 2000;
+const pokerTurnMs = 10_000;
+const pokerSmallBlind = 10;
+const pokerBigBlind = 20;
+const maxPokerSeats = 6;
+const maxPokerCpus = 5;
 const matchTeamSize = maxPlayers / 2;
 const maxHealth = 200;
 const arenaHalfSize = 96;
@@ -187,6 +193,7 @@ const mimeTypes = new Map([
 ]);
 
 const rooms = new Map();
+const pokerRooms = new Map();
 let vite;
 
 if (!isProd) {
@@ -411,6 +418,431 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
   };
   rooms.set(createdCode, room);
   return room;
+}
+
+function normalizePokerCpuCount(value) {
+  return clamp(Math.floor(Number(value) || 0), 0, maxPokerCpus);
+}
+
+function createDeck() {
+  const suits = ["S", "H", "D", "C"];
+  const deck = [];
+  for (const suit of suits) {
+    for (let rank = 2; rank <= 14; rank += 1) deck.push({ rank, suit });
+  }
+  for (let i = deck.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+function cardCode(card) {
+  return `${card.rank}${card.suit}`;
+}
+
+function getPokerRoom(code, cpuCount = 2) {
+  const normalized = String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  if (normalized && pokerRooms.has(normalized)) return pokerRooms.get(normalized);
+  const roomCodeValue = normalized.length === 6 ? normalized : roomCode();
+  const room = {
+    code: roomCodeValue,
+    createdAt: Date.now(),
+    players: new Map(),
+    seats: [],
+    dealerSeat: -1,
+    deck: [],
+    community: [],
+    pot: 0,
+    stage: "waiting",
+    currentBet: 0,
+    minRaise: pokerBigBlind,
+    turnSeat: -1,
+    turnEndsAt: 0,
+    handNumber: 0,
+    lastEvent: "テキサスポーカーへようこそ",
+    showdown: null,
+    cpuTarget: normalizePokerCpuCount(cpuCount)
+  };
+  pokerRooms.set(roomCodeValue, room);
+  syncPokerCpus(room, cpuCount);
+  return room;
+}
+
+function pokerHumans(room) {
+  return [...room.players.values()].filter((player) => !player.isBot);
+}
+
+function pokerActivePlayers(room) {
+  return room.seats.map((id) => room.players.get(id)).filter((player) => player && player.chips + player.bet > 0);
+}
+
+function pokerLivePlayers(room) {
+  return pokerActivePlayers(room).filter((player) => !player.folded);
+}
+
+function syncPokerCpus(room, cpuCount = room.cpuTarget) {
+  room.cpuTarget = normalizePokerCpuCount(cpuCount);
+  const humans = pokerHumans(room).length;
+  const targetCpu = Math.min(room.cpuTarget, Math.max(0, maxPokerSeats - humans));
+  let cpus = [...room.players.values()].filter((player) => player.isBot);
+  while (cpus.length > targetCpu) {
+    const cpu = cpus.pop();
+    room.players.delete(cpu.id);
+    room.seats = room.seats.filter((id) => id !== cpu.id);
+  }
+  while (cpus.length < targetCpu && room.players.size < maxPokerSeats) {
+    const id = `poker-cp-${crypto.randomUUID()}`;
+    const cpu = {
+      id,
+      ws: null,
+      name: `CP${cpus.length + 1}`,
+      chips: pokerStartingChips,
+      hand: [],
+      bet: 0,
+      folded: false,
+      allIn: false,
+      acted: false,
+      isBot: true,
+      seat: room.seats.length,
+      lastAction: "待機"
+    };
+    room.players.set(id, cpu);
+    room.seats.push(id);
+    cpus.push(cpu);
+  }
+  normalizePokerSeats(room);
+}
+
+function normalizePokerSeats(room) {
+  room.seats = room.seats.filter((id) => room.players.has(id));
+  room.seats.forEach((id, index) => {
+    const player = room.players.get(id);
+    if (player) player.seat = index;
+  });
+}
+
+function maybeStartPokerHand(room) {
+  if (room.stage !== "waiting" || pokerActivePlayers(room).length < 2) return;
+  startPokerHand(room);
+}
+
+function startPokerHand(room) {
+  const seated = room.seats.map((id) => room.players.get(id)).filter(Boolean);
+  for (const player of seated) {
+    if (player.chips <= 0) player.chips = pokerStartingChips;
+    player.hand = [];
+    player.bet = 0;
+    player.folded = false;
+    player.allIn = false;
+    player.acted = false;
+    player.lastAction = "";
+  }
+  room.deck = createDeck();
+  room.community = [];
+  room.pot = 0;
+  room.stage = "preflop";
+  room.currentBet = pokerBigBlind;
+  room.minRaise = pokerBigBlind;
+  room.showdown = null;
+  room.handNumber += 1;
+  const active = pokerActivePlayers(room);
+  room.dealerSeat = nextPokerSeat(room, room.dealerSeat);
+  const smallBlindSeat = active.length === 2 ? room.dealerSeat : nextPokerSeat(room, room.dealerSeat);
+  const bigBlindSeat = nextPokerSeat(room, smallBlindSeat);
+  for (let i = 0; i < 2; i += 1) {
+    for (const player of active) player.hand.push(room.deck.pop());
+  }
+  postPokerBet(room, room.players.get(room.seats[smallBlindSeat]), pokerSmallBlind);
+  postPokerBet(room, room.players.get(room.seats[bigBlindSeat]), pokerBigBlind);
+  room.turnSeat = nextPokerSeat(room, bigBlindSeat);
+  room.turnEndsAt = Date.now() + pokerTurnMs;
+  room.lastEvent = `新しいハンド #${room.handNumber} / ブラインド ${pokerSmallBlind}/${pokerBigBlind}`;
+}
+
+function nextPokerSeat(room, fromSeat) {
+  if (room.seats.length === 0) return -1;
+  for (let step = 1; step <= room.seats.length; step += 1) {
+    const seat = (fromSeat + step + room.seats.length) % room.seats.length;
+    const player = room.players.get(room.seats[seat]);
+    if (player && player.chips + player.bet > 0 && !player.folded && !player.allIn) return seat;
+  }
+  return -1;
+}
+
+function postPokerBet(room, player, amount) {
+  if (!player || player.folded || player.chips <= 0) return 0;
+  const paid = Math.min(player.chips, Math.max(0, amount));
+  player.chips -= paid;
+  player.bet += paid;
+  player.allIn = player.chips <= 0;
+  room.pot += paid;
+  return paid;
+}
+
+function pokerToCall(room, player) {
+  return Math.max(0, room.currentBet - (player?.bet || 0));
+}
+
+function handlePokerAction(room, player, action, raiseBy = 0, automatic = false) {
+  if (!player || player.isBot || room.stage === "waiting" || room.stage === "showdown") return;
+  if (room.seats[room.turnSeat] !== player.id) {
+    send(player.ws, { type: "poker_error", message: "まだあなたのターンではありません。" });
+    return;
+  }
+  applyPokerDecision(room, player, action, raiseBy, automatic);
+}
+
+function applyPokerDecision(room, player, action, raiseBy = 0, automatic = false) {
+  const toCall = pokerToCall(room, player);
+  if (action === "fold" && toCall > 0) {
+    player.folded = true;
+    player.acted = true;
+    player.lastAction = automatic ? "時間切れフォールド" : "フォールド";
+    room.lastEvent = `${player.name} がフォールド`;
+  } else if (action === "raise" && player.chips > toCall) {
+    const requestedRaise = Math.max(pokerBigBlind, Math.floor(Number(raiseBy) || pokerBigBlind));
+    const paid = postPokerBet(room, player, toCall + requestedRaise);
+    room.currentBet = Math.max(room.currentBet, player.bet);
+    room.minRaise = requestedRaise;
+    for (const other of pokerLivePlayers(room)) {
+      if (other.id !== player.id && !other.allIn) other.acted = false;
+    }
+    player.acted = true;
+    player.lastAction = `${paid}Don レイズ`;
+    room.lastEvent = `${player.name} が ${player.bet}Don までレイズ`;
+  } else {
+    const paid = postPokerBet(room, player, toCall);
+    player.acted = true;
+    player.lastAction = paid > 0 ? `${paid}Don コール` : "チェック";
+    room.lastEvent = `${player.name} が ${player.lastAction}`;
+  }
+  advancePokerAfterAction(room);
+}
+
+function advancePokerAfterAction(room) {
+  const live = pokerLivePlayers(room);
+  if (live.length <= 1) {
+    awardPokerPot(room, live[0], `${live[0]?.name || "勝者"} が全員を降ろした`);
+    return;
+  }
+  if (pokerBettingComplete(room)) {
+    advancePokerStreet(room);
+    return;
+  }
+  room.turnSeat = nextPokerSeat(room, room.turnSeat);
+  room.turnEndsAt = Date.now() + pokerTurnMs;
+}
+
+function pokerBettingComplete(room) {
+  const live = pokerLivePlayers(room).filter((player) => !player.allIn);
+  if (live.length <= 1) return true;
+  return live.every((player) => player.acted && player.bet === room.currentBet);
+}
+
+function advancePokerStreet(room) {
+  for (const player of room.players.values()) {
+    player.bet = 0;
+    player.acted = false;
+  }
+  room.currentBet = 0;
+  room.minRaise = pokerBigBlind;
+  if (room.stage === "preflop") {
+    room.community.push(room.deck.pop(), room.deck.pop(), room.deck.pop());
+    room.stage = "flop";
+    room.lastEvent = "フロップ";
+  } else if (room.stage === "flop") {
+    room.community.push(room.deck.pop());
+    room.stage = "turn";
+    room.lastEvent = "ターン";
+  } else if (room.stage === "turn") {
+    room.community.push(room.deck.pop());
+    room.stage = "river";
+    room.lastEvent = "リバー";
+  } else {
+    resolvePokerShowdown(room);
+    return;
+  }
+  room.turnSeat = nextPokerSeat(room, room.dealerSeat);
+  room.turnEndsAt = Date.now() + pokerTurnMs;
+  if (room.turnSeat < 0) resolvePokerShowdown(room);
+}
+
+function awardPokerPot(room, winner, reason) {
+  if (winner) winner.chips += room.pot;
+  room.showdown = {
+    winners: winner ? [{ id: winner.id, name: winner.name, label: reason, amount: room.pot }] : [],
+    revealed: [...room.players.values()].map((player) => ({ id: player.id, hand: player.hand.map(cardCode) }))
+  };
+  room.pot = 0;
+  room.stage = "showdown";
+  room.turnSeat = -1;
+  room.turnEndsAt = Date.now() + 4500;
+  room.lastEvent = reason;
+}
+
+function resolvePokerShowdown(room) {
+  const contenders = pokerLivePlayers(room);
+  let best = null;
+  let winners = [];
+  for (const player of contenders) {
+    const evaluated = evaluateBestPokerHand([...player.hand, ...room.community]);
+    player.lastAction = evaluated.label;
+    if (!best || comparePokerScore(evaluated.score, best.score) > 0) {
+      best = evaluated;
+      winners = [player];
+    } else if (comparePokerScore(evaluated.score, best.score) === 0) {
+      winners.push(player);
+    }
+  }
+  const share = winners.length ? Math.floor(room.pot / winners.length) : 0;
+  for (const winner of winners) winner.chips += share;
+  room.showdown = {
+    winners: winners.map((winner) => ({ id: winner.id, name: winner.name, label: best?.label || "勝利", amount: share })),
+    revealed: [...room.players.values()].map((player) => ({ id: player.id, hand: player.hand.map(cardCode) }))
+  };
+  room.pot = 0;
+  room.stage = "showdown";
+  room.turnSeat = -1;
+  room.turnEndsAt = Date.now() + 5500;
+  room.lastEvent = `${winners.map((winner) => winner.name).join(" / ")} が ${best?.label || "勝利"}`;
+}
+
+function evaluateBestPokerHand(cards) {
+  let best = null;
+  for (let a = 0; a < cards.length - 4; a += 1) {
+    for (let b = a + 1; b < cards.length - 3; b += 1) {
+      for (let c = b + 1; c < cards.length - 2; c += 1) {
+        for (let d = c + 1; d < cards.length - 1; d += 1) {
+          for (let e = d + 1; e < cards.length; e += 1) {
+            const score = evaluateFivePokerCards([cards[a], cards[b], cards[c], cards[d], cards[e]]);
+            if (!best || comparePokerScore(score.score, best.score) > 0) best = score;
+          }
+        }
+      }
+    }
+  }
+  return best || { score: [0], label: "ハイカード" };
+}
+
+function evaluateFivePokerCards(cards) {
+  const ranks = cards.map((card) => card.rank).sort((a, b) => b - a);
+  const counts = new Map();
+  for (const rank of ranks) counts.set(rank, (counts.get(rank) || 0) + 1);
+  const groups = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]);
+  const flush = cards.every((card) => card.suit === cards[0].suit);
+  const straightHigh = pokerStraightHigh(ranks);
+  if (flush && straightHigh) return { score: [8, straightHigh], label: straightHigh === 14 ? "ロイヤル級ストレートフラッシュ" : "ストレートフラッシュ" };
+  if (groups[0][1] === 4) return { score: [7, groups[0][0], groups[1][0]], label: "フォーカード" };
+  if (groups[0][1] === 3 && groups[1]?.[1] === 2) return { score: [6, groups[0][0], groups[1][0]], label: "フルハウス" };
+  if (flush) return { score: [5, ...ranks], label: "フラッシュ" };
+  if (straightHigh) return { score: [4, straightHigh], label: "ストレート" };
+  if (groups[0][1] === 3) return { score: [3, groups[0][0], ...groups.slice(1).map((group) => group[0])], label: "スリーカード" };
+  if (groups[0][1] === 2 && groups[1]?.[1] === 2) return { score: [2, groups[0][0], groups[1][0], groups[2][0]], label: "ツーペア" };
+  if (groups[0][1] === 2) return { score: [1, groups[0][0], ...groups.slice(1).map((group) => group[0])], label: "ワンペア" };
+  return { score: [0, ...ranks], label: "ハイカード" };
+}
+
+function pokerStraightHigh(ranks) {
+  const unique = [...new Set(ranks)].sort((a, b) => b - a);
+  if (unique.includes(14)) unique.push(1);
+  for (let i = 0; i <= unique.length - 5; i += 1) {
+    if (unique[i] - unique[i + 4] === 4) return unique[i];
+  }
+  return 0;
+}
+
+function comparePokerScore(a, b) {
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i += 1) {
+    const diff = (a[i] || 0) - (b[i] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+function updatePokerRoom(room, now) {
+  if (pokerHumans(room).length === 0) {
+    pokerRooms.delete(room.code);
+    return;
+  }
+  if (room.stage === "waiting") {
+    maybeStartPokerHand(room);
+    return;
+  }
+  if (room.stage === "showdown") {
+    if (now >= room.turnEndsAt) startPokerHand(room);
+    return;
+  }
+  const current = room.players.get(room.seats[room.turnSeat]);
+  if (!current) {
+    advancePokerAfterAction(room);
+    return;
+  }
+  if (current.isBot || now >= room.turnEndsAt) {
+    const decision = choosePokerBotAction(room, current, now >= room.turnEndsAt);
+    applyPokerDecision(room, current, decision.action, decision.raiseBy, now >= room.turnEndsAt);
+  }
+}
+
+function choosePokerBotAction(room, player, timedOut = false) {
+  const toCall = pokerToCall(room, player);
+  if (timedOut) return toCall > 0 ? { action: "fold" } : { action: "call" };
+  if (toCall <= 0) {
+    if (player.chips > 160 && Math.random() < 0.18) return { action: "raise", raiseBy: 40 };
+    return { action: "call" };
+  }
+  if (toCall > Math.max(180, player.chips * 0.22) && Math.random() < 0.62) return { action: "fold" };
+  if (player.chips > toCall + 120 && Math.random() < 0.14) return { action: "raise", raiseBy: 60 };
+  return { action: "call" };
+}
+
+function publicPokerPlayer(player, viewerId) {
+  return {
+    id: player.id,
+    name: player.name,
+    chips: player.chips,
+    bet: player.bet,
+    folded: player.folded,
+    allIn: player.allIn,
+    acted: player.acted,
+    isBot: player.isBot,
+    seat: player.seat,
+    lastAction: player.lastAction,
+    cards: player.id === viewerId || player.folded === false && false ? player.hand.map(cardCode) : [],
+    cardCount: player.hand.length
+  };
+}
+
+function pokerSnapshotFor(room, viewerId) {
+  const viewer = room.players.get(viewerId);
+  const current = room.players.get(room.seats[room.turnSeat]);
+  const toCall = viewer ? pokerToCall(room, viewer) : 0;
+  return {
+    type: "poker_snapshot",
+    room: room.code,
+    selfId: viewerId,
+    players: [...room.players.values()].map((player) => publicPokerPlayer(player, viewerId)),
+    community: room.community.map(cardCode),
+    pot: room.pot,
+    stage: room.stage,
+    dealerSeat: room.dealerSeat,
+    turnId: current?.id || "",
+    turnEndsAt: room.turnEndsAt,
+    now: Date.now(),
+    toCall,
+    currentBet: room.currentBet,
+    minRaise: room.minRaise,
+    lastEvent: room.lastEvent,
+    showdown: room.showdown
+  };
+}
+
+function broadcastPoker(room) {
+  for (const player of room.players.values()) {
+    if (!player.ws || player.ws.readyState !== 1) continue;
+    send(player.ws, pokerSnapshotFor(room, player.id));
+  }
 }
 
 function spawnPoint(index = 0) {
@@ -679,12 +1111,67 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, arena = "toybox") {
 wss.on("connection", (ws) => {
   let currentRoom;
   let currentPlayer;
+  let currentPokerRoom;
+  let currentPokerPlayer;
 
   ws.on("message", (raw) => {
     let message;
     try {
       message = JSON.parse(String(raw));
     } catch {
+      return;
+    }
+
+    if (message.type === "poker_join") {
+      const requestedCpuCount = normalizePokerCpuCount(message.cpuCount);
+      const room = getPokerRoom(message.room, requestedCpuCount);
+      if (room.players.size >= maxPokerSeats) {
+        const removableCpu = [...room.players.values()].find((player) => player.isBot);
+        if (removableCpu) {
+          room.players.delete(removableCpu.id);
+          room.seats = room.seats.filter((id) => id !== removableCpu.id);
+        }
+      }
+      if (room.players.size >= maxPokerSeats) {
+        send(ws, { type: "poker_error", message: "このポーカールームは満席です。" });
+        return;
+      }
+      const id = crypto.randomUUID();
+      const player = {
+        id,
+        ws,
+        name: String(message.name || "プレイヤー").slice(0, 14),
+        chips: pokerStartingChips,
+        hand: [],
+        bet: 0,
+        folded: false,
+        allIn: false,
+        acted: false,
+        isBot: false,
+        seat: room.seats.length,
+        lastAction: "参加"
+      };
+      if (room.stage !== "waiting" && room.stage !== "showdown") {
+        player.folded = true;
+        player.acted = true;
+        player.lastAction = "次ハンド待ち";
+      }
+      room.players.set(id, player);
+      room.seats.push(id);
+      syncPokerCpus(room, requestedCpuCount);
+      currentPokerRoom = room;
+      currentPokerPlayer = player;
+      room.lastEvent = `${player.name} がポーカールームに参加`;
+      maybeStartPokerHand(room);
+      send(ws, { type: "poker_welcome", id, room: room.code, startingChips: pokerStartingChips, turnMs: pokerTurnMs });
+      broadcastPoker(room);
+      return;
+    }
+
+    if (message.type === "poker_action") {
+      if (!currentPokerRoom || !currentPokerPlayer) return;
+      handlePokerAction(currentPokerRoom, currentPokerPlayer, String(message.action || "call"), Number(message.raiseBy) || 0, false);
+      broadcastPoker(currentPokerRoom);
       return;
     }
 
@@ -974,6 +1461,19 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    if (currentPokerRoom && currentPokerPlayer) {
+      currentPokerRoom.players.delete(currentPokerPlayer.id);
+      currentPokerRoom.seats = currentPokerRoom.seats.filter((id) => id !== currentPokerPlayer.id);
+      currentPokerRoom.lastEvent = `${currentPokerPlayer.name} が退出`;
+      if (pokerHumans(currentPokerRoom).length === 0) pokerRooms.delete(currentPokerRoom.code);
+      else {
+        syncPokerCpus(currentPokerRoom, currentPokerRoom.cpuTarget);
+        if (currentPokerRoom.stage !== "waiting" && pokerLivePlayers(currentPokerRoom).length <= 1) {
+          awardPokerPot(currentPokerRoom, pokerLivePlayers(currentPokerRoom)[0], "退出によりハンド終了");
+        }
+        broadcastPoker(currentPokerRoom);
+      }
+    }
     if (!currentRoom || !currentPlayer) return;
     currentRoom.players.delete(currentPlayer.id);
     addFeed(currentRoom, `${currentPlayer.name} が退出`, currentPlayer.color);
@@ -1044,6 +1544,14 @@ setInterval(() => {
     });
   }
 }, 110);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of pokerRooms.values()) {
+    updatePokerRoom(room, now);
+    if (pokerRooms.has(room.code)) broadcastPoker(room);
+  }
+}, 450);
 
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
