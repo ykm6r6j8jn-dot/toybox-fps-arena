@@ -302,10 +302,14 @@ const isScopedGun = (gun = currentGun()) => gun.kind === "marksman" || gun.kind 
 let soundEnabled = localStorage.getItem("toybox-sound") !== "off";
 let customColor = localStorage.getItem("toybox-color") || "#1598f0";
 let audioContext: AudioContext | null = null;
+let audioUnlocked = false;
+let audioUnlocking: Promise<void> | null = null;
 const lobbyBgm = new Audio("/audio/lobby-bgm.m4a");
 lobbyBgm.loop = true;
 lobbyBgm.preload = "auto";
 lobbyBgm.volume = 0.38;
+lobbyBgm.setAttribute("playsinline", "true");
+syncAudioDataset();
 const self = {
   id: "",
   room: "",
@@ -2049,8 +2053,13 @@ document.addEventListener("visibilitychange", () => {
   updateLobbyBgm();
 });
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
-document.addEventListener("pointerdown", () => updateLobbyBgm(), { passive: true });
-document.addEventListener("keydown", () => updateLobbyBgm());
+const unlockAudioFromGesture = () => {
+  void unlockAudio();
+};
+document.addEventListener("pointerdown", unlockAudioFromGesture, { capture: true, passive: true });
+document.addEventListener("touchstart", unlockAudioFromGesture, { capture: true, passive: true });
+document.addEventListener("click", unlockAudioFromGesture, { capture: true });
+document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
 createRoomButton.addEventListener("click", () => join(""));
 memberToggle.addEventListener("click", () => {
@@ -2616,11 +2625,57 @@ function setSoundEnabled(enabled: boolean) {
   localStorage.setItem("toybox-sound", enabled ? "on" : "off");
   soundToggle.textContent = enabled ? "ON" : "OFF";
   muteButton.classList.toggle("active", !enabled);
-  updateLobbyBgm();
+  if (enabled && navigator.userActivation?.isActive) void unlockAudio();
+  else if (enabled) updateLobbyBgm();
+  else lobbyBgm.pause();
+  syncAudioDataset();
 }
 
 function isLobbyBgmAllowed() {
   return soundEnabled && !document.hidden && !self.joined && !joinPanel.classList.contains("hidden");
+}
+
+function getAudioContext() {
+  if (!soundEnabled) return null;
+  const audioWindow = window as Window &
+    typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+  const AudioContextCtor = window.AudioContext || audioWindow.webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  audioContext ||= new AudioContextCtor();
+  return audioContext;
+}
+
+async function unlockAudio() {
+  if (!soundEnabled) return;
+  if (audioUnlocking) return audioUnlocking;
+  audioUnlocking = (async () => {
+    const context = getAudioContext();
+    if (context) {
+      if (context.state !== "running") await context.resume().catch(() => undefined);
+      if (!audioUnlocked) {
+        const buffer = context.createBuffer(1, 1, context.sampleRate);
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        gain.gain.value = 0.0001;
+        source.buffer = buffer;
+        source.connect(gain).connect(context.destination);
+        source.start(0);
+      }
+      audioUnlocked = context.state === "running";
+    }
+    if (isLobbyBgmAllowed() && lobbyBgm.paused) await lobbyBgm.play().catch(() => undefined);
+    syncAudioDataset();
+  })().finally(() => {
+    audioUnlocking = null;
+  });
+  return audioUnlocking;
+}
+
+function syncAudioDataset() {
+  document.documentElement.dataset.soundEnabled = soundEnabled ? "true" : "false";
+  document.documentElement.dataset.audioContext = audioContext?.state || "none";
+  document.documentElement.dataset.audioUnlocked = audioUnlocked ? "true" : "false";
+  document.documentElement.dataset.lobbyAudio = lobbyBgm.paused ? "paused" : "playing";
 }
 
 function updateLobbyBgm() {
@@ -2629,62 +2684,77 @@ function updateLobbyBgm() {
     return;
   }
   if (!lobbyBgm.paused) return;
-  void lobbyBgm.play().catch(() => {
-    // Browser autoplay rules require a user gesture before BGM can begin.
-  });
+  void unlockAudio();
 }
 
+(window as Window &
+  typeof globalThis & {
+    __toyboxAudioState?: () => {
+      soundEnabled: boolean;
+      contextState: string;
+      unlocked: boolean;
+      lobbyPaused: boolean;
+      lobbyReadyState: number;
+    };
+  }).__toyboxAudioState = () => ({
+  soundEnabled,
+  contextState: audioContext?.state || "none",
+  unlocked: audioUnlocked,
+  lobbyPaused: lobbyBgm.paused,
+  lobbyReadyState: lobbyBgm.readyState
+});
+
 function playTone(frequency: number, duration = 0.07, volume = 0.04) {
-  if (!soundEnabled) return;
-  audioContext ||= new AudioContext();
-  void audioContext.resume();
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
+  const context = getAudioContext();
+  if (!context) return;
+  void unlockAudio();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
   oscillator.frequency.value = frequency;
   oscillator.type = "square";
-  gain.gain.setValueAtTime(volume, audioContext.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
-  oscillator.connect(gain).connect(audioContext.destination);
+  gain.gain.setValueAtTime(volume, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + duration);
+  oscillator.connect(gain).connect(context.destination);
   oscillator.start();
-  oscillator.stop(audioContext.currentTime + duration);
+  oscillator.stop(context.currentTime + duration);
 }
 
 function playSweep(start: number, end: number, duration: number, volume = 0.045, type: OscillatorType = "sine") {
-  if (!soundEnabled) return;
-  audioContext ||= new AudioContext();
-  void audioContext.resume();
-  const now = audioContext.currentTime;
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
+  const context = getAudioContext();
+  if (!context) return;
+  void unlockAudio();
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
   oscillator.type = type;
   oscillator.frequency.setValueAtTime(start, now);
   oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, end), now + duration);
   gain.gain.setValueAtTime(volume, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-  oscillator.connect(gain).connect(audioContext.destination);
+  oscillator.connect(gain).connect(context.destination);
   oscillator.start(now);
   oscillator.stop(now + duration);
 }
 
 function playNoiseHit(duration = 0.12, volume = 0.08, frequency = 360) {
-  if (!soundEnabled) return;
-  audioContext ||= new AudioContext();
-  void audioContext.resume();
-  const now = audioContext.currentTime;
-  const samples = Math.max(1, Math.floor(audioContext.sampleRate * duration));
-  const buffer = audioContext.createBuffer(1, samples, audioContext.sampleRate);
+  const context = getAudioContext();
+  if (!context) return;
+  void unlockAudio();
+  const now = context.currentTime;
+  const samples = Math.max(1, Math.floor(context.sampleRate * duration));
+  const buffer = context.createBuffer(1, samples, context.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < samples; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / samples);
-  const source = audioContext.createBufferSource();
+  const source = context.createBufferSource();
   source.buffer = buffer;
-  const filter = audioContext.createBiquadFilter();
+  const filter = context.createBiquadFilter();
   filter.type = "bandpass";
   filter.frequency.value = frequency;
   filter.Q.value = 1.1;
-  const gain = audioContext.createGain();
+  const gain = context.createGain();
   gain.gain.setValueAtTime(volume, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-  source.connect(filter).connect(gain).connect(audioContext.destination);
+  source.connect(filter).connect(gain).connect(context.destination);
   source.start(now);
   source.stop(now + duration);
 }
@@ -2724,15 +2794,15 @@ function playGameSound(name: unknown) {
 }
 
 function playGunSound(gun: Gun) {
-  if (!soundEnabled) return;
-  audioContext ||= new AudioContext();
-  void audioContext.resume();
+  const context = getAudioContext();
+  if (!context) return;
+  void unlockAudio();
   if (!shotNoiseBuffer) {
-    shotNoiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * 0.18, audioContext.sampleRate);
+    shotNoiseBuffer = context.createBuffer(1, context.sampleRate * 0.18, context.sampleRate);
     const data = shotNoiseBuffer.getChannelData(0);
     for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
   }
-  const now = audioContext.currentTime;
+  const now = context.currentTime;
   const profile = {
     rifle: { thump: 92, crack: 760, dur: 0.11, vol: 0.16 },
     ak47: { thump: 74, crack: 720, dur: 0.13, vol: 0.18 },
@@ -2744,27 +2814,27 @@ function playGunSound(gun: Gun) {
     type95: { thump: 104, crack: 860, dur: 0.09, vol: 0.12 }
   }[gun.kind];
 
-  const noise = audioContext.createBufferSource();
+  const noise = context.createBufferSource();
   noise.buffer = shotNoiseBuffer;
-  const filter = audioContext.createBiquadFilter();
+  const filter = context.createBiquadFilter();
   filter.type = "bandpass";
   filter.frequency.value = profile.crack;
   filter.Q.value = gun.kind === "shotgun" ? 0.8 : 1.4;
-  const noiseGain = audioContext.createGain();
+  const noiseGain = context.createGain();
   noiseGain.gain.setValueAtTime(profile.vol, now);
   noiseGain.gain.exponentialRampToValueAtTime(0.001, now + profile.dur);
-  noise.connect(filter).connect(noiseGain).connect(audioContext.destination);
+  noise.connect(filter).connect(noiseGain).connect(context.destination);
   noise.start(now);
   noise.stop(now + profile.dur);
 
-  const thump = audioContext.createOscillator();
-  const thumpGain = audioContext.createGain();
+  const thump = context.createOscillator();
+  const thumpGain = context.createGain();
   thump.type = "triangle";
   thump.frequency.setValueAtTime(profile.thump, now);
   thump.frequency.exponentialRampToValueAtTime(profile.thump * 0.45, now + profile.dur);
   thumpGain.gain.setValueAtTime(profile.vol * 0.7, now);
   thumpGain.gain.exponentialRampToValueAtTime(0.001, now + profile.dur * 0.9);
-  thump.connect(thumpGain).connect(audioContext.destination);
+  thump.connect(thumpGain).connect(context.destination);
   thump.start(now);
   thump.stop(now + profile.dur);
 }
