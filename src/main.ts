@@ -304,6 +304,8 @@ const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "Spac
 const arenaHalfSize = 96;
 const playerRadius = 0.24;
 const jumpVelocity = 7.2;
+const nameTagCanvasWidth = 256;
+const nameTagCanvasHeight = 64;
 type GunKind = "rifle" | "ak47" | "aug" | "smg" | "shotgun" | "marksman" | "awm" | "type95";
 type Gun = {
   kind: GunKind;
@@ -1968,6 +1970,7 @@ function addWeapon() {
 function createPlayerMesh(player: PlayerState) {
   const group = new THREE.Group();
   group.userData.skin = normalizeSkinId(player.skin);
+  group.userData.nameTagKey = "";
   const skinId = normalizeSkinId(player.skin);
   const teamMaterial = makeMaterial(colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red), 0.7);
   const skinMaterial = makeMaterial(skinId === "bee" ? 0xffd23a : skinId === "scout" ? 0xf0b98d : 0xffc0a0, 0.76);
@@ -2036,8 +2039,94 @@ function createPlayerMesh(player: PlayerState) {
     stripeB.position.y = 0.78;
     group.add(stripeA, stripeB);
   }
+  updatePlayerNameTag(group, player);
   scene.add(group);
   return group;
+}
+
+function clampNameTagText(name: string) {
+  const safeName = (name || "Player").trim() || "Player";
+  return safeName.length > 14 ? `${safeName.slice(0, 13)}...` : safeName;
+}
+
+function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function makeNameTagTexture(player: PlayerState) {
+  const canvasTag = document.createElement("canvas");
+  canvasTag.width = nameTagCanvasWidth;
+  canvasTag.height = nameTagCanvasHeight;
+  const ctx = canvasTag.getContext("2d")!;
+  const label = clampNameTagText(player.name);
+  const accent = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757);
+  const accentCss = `#${accent.toString(16).padStart(6, "0")}`;
+
+  ctx.clearRect(0, 0, nameTagCanvasWidth, nameTagCanvasHeight);
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 4;
+  roundedRectPath(ctx, 10, 8, nameTagCanvasWidth - 20, 46, 16);
+  ctx.fillStyle = "rgba(13, 20, 28, 0.78)";
+  ctx.fill();
+  ctx.restore();
+
+  roundedRectPath(ctx, 14, 12, 10, 38, 6);
+  ctx.fillStyle = accentCss;
+  ctx.fill();
+
+  ctx.font = "700 24px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.strokeText(label, nameTagCanvasWidth / 2 + 5, 32);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(label, nameTagCanvasWidth / 2 + 5, 32);
+
+  const texture = new THREE.CanvasTexture(canvasTag);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+function disposeNameTagSprite(sprite?: THREE.Sprite) {
+  if (!sprite) return;
+  disposeMaterial(sprite.material);
+  sprite.parent?.remove(sprite);
+}
+
+function updatePlayerNameTag(group: THREE.Group, player: PlayerState) {
+  const colorKey = player.cosmeticColor || player.color;
+  const nextKey = `${player.name}|${colorKey}`;
+  if (group.userData.nameTagKey === nextKey && group.userData.nameTagSprite) return;
+  disposeNameTagSprite(group.userData.nameTagSprite as THREE.Sprite | undefined);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeNameTagTexture(player),
+    transparent: true,
+    depthTest: true,
+    depthWrite: false
+  }));
+  sprite.position.set(0, 2.68, 0);
+  sprite.scale.set(1.8, 0.45, 1);
+  sprite.renderOrder = 3;
+  group.userData.nameTagSprite = sprite;
+  group.userData.nameTagKey = nextKey;
+  group.add(sprite);
 }
 
 function applyPlayerMeshColor(mesh: THREE.Group, player: PlayerState) {
@@ -2049,14 +2138,11 @@ function applyPlayerMeshColor(mesh: THREE.Group, player: PlayerState) {
     playerMeshes.set(player.id, replacement);
     scene.remove(mesh);
     mesh.traverse((child) => {
-      const maybeMesh = child as THREE.Mesh;
-      maybeMesh.geometry?.dispose();
-      const material = maybeMesh.material;
-      if (Array.isArray(material)) material.forEach((item) => item.dispose());
-      else material?.dispose();
+      disposeObjectResources(child);
     });
     return;
   }
+  updatePlayerNameTag(mesh, player);
   const color = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red);
   const markerColor = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757);
   ((mesh.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(color);
@@ -3925,13 +4011,27 @@ function clearBulletDecals() {
   }
 }
 
+function disposeMaterial(material?: THREE.Material | THREE.Material[]) {
+  if (!material) return;
+  if (Array.isArray(material)) {
+    material.forEach((item) => disposeMaterial(item));
+    return;
+  }
+  const mappedMaterial = material as THREE.Material & { map?: THREE.Texture };
+  mappedMaterial.map?.dispose();
+  material.dispose();
+}
+
+function disposeObjectResources(object: THREE.Object3D) {
+  const renderable = object as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+  renderable.geometry?.dispose();
+  disposeMaterial(renderable.material);
+}
+
 function disposeGroup(group: THREE.Group) {
   scene.remove(group);
   group.traverse((child) => {
-    const mesh = child as THREE.Mesh | THREE.Line;
-    mesh.geometry?.dispose();
-    const material = mesh.material as THREE.Material | undefined;
-    material?.dispose();
+    disposeObjectResources(child);
   });
 }
 
