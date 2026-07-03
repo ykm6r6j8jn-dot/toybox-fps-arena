@@ -2079,7 +2079,7 @@ body.celebrating::after {
 .poker-header,
 .poker-actions {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   align-items: center;
   gap: 10px;
   padding: 10px;
@@ -2090,7 +2090,8 @@ body.celebrating::after {
 }
 
 .poker-header span,
-.poker-pot span {
+.poker-pot span,
+.poker-countdown span {
   display: block;
   color: rgba(255, 255, 255, 0.62);
   font-size: 11px;
@@ -2099,7 +2100,8 @@ body.celebrating::after {
 }
 
 .poker-header strong,
-.poker-pot strong {
+.poker-pot strong,
+.poker-countdown strong {
   font-size: 24px;
   font-weight: 950;
 }
@@ -2117,6 +2119,25 @@ body.celebrating::after {
 .poker-pot {
   min-width: 110px;
   text-align: right;
+}
+
+.poker-countdown {
+  min-width: 88px;
+  padding: 5px 12px;
+  border: 1px solid rgba(147, 228, 60, 0.4);
+  border-radius: 8px;
+  background: rgba(147, 228, 60, 0.13);
+  text-align: center;
+}
+
+.poker-countdown strong {
+  color: #b9ff63;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.poker-countdown strong.danger {
+  color: #ff5757;
 }
 
 .poker-table {
@@ -2306,6 +2327,50 @@ body.celebrating::after {
   opacity: 0.92;
 }
 
+.card-rank-main {
+  display: none;
+}
+
+.playing-card.my-card {
+  width: 86px;
+  border-width: 2px;
+  border-radius: 9px;
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.34), inset 0 0 0 3px rgba(255, 255, 255, 0.9);
+}
+
+.playing-card.my-card .card-corner {
+  line-height: 0.95;
+}
+
+.playing-card.my-card .card-corner strong {
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.playing-card.my-card .card-corner span {
+  font-size: 22px;
+}
+
+.playing-card.my-card .card-pip {
+  align-items: start;
+  padding-top: 38px;
+  font-size: 42px;
+  opacity: 0.96;
+}
+
+.playing-card.my-card .card-rank-main {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-top: 22px;
+  color: inherit;
+  font-size: 40px;
+  font-weight: 950;
+  line-height: 1;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
 .card-back {
   display: grid;
   place-items: center;
@@ -2371,6 +2436,15 @@ body.celebrating::after {
     min-width: 84px;
   }
 
+  .poker-countdown {
+    min-width: 72px;
+    padding: 5px 8px;
+  }
+
+  .poker-countdown strong {
+    font-size: 24px;
+  }
+
   .poker-table {
     min-height: 330px;
   }
@@ -2406,6 +2480,10 @@ body.celebrating::after {
     border-radius: 5px;
   }
 
+  .playing-card.my-card {
+    width: 64px;
+  }
+
   .card-corner strong {
     font-size: 10px;
   }
@@ -2416,6 +2494,24 @@ body.celebrating::after {
 
   .card-pip {
     font-size: 22px;
+  }
+
+  .playing-card.my-card .card-corner strong {
+    font-size: 18px;
+  }
+
+  .playing-card.my-card .card-corner span {
+    font-size: 16px;
+  }
+
+  .playing-card.my-card .card-pip {
+    padding-top: 29px;
+    font-size: 32px;
+  }
+
+  .playing-card.my-card .card-rank-main {
+    padding-top: 17px;
+    font-size: 31px;
   }
 
   .poker-actions {

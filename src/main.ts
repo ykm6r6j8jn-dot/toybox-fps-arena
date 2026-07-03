@@ -243,6 +243,7 @@ const pokerPotEl = $("#pokerPot");
 const pokerStageEl = $("#pokerStage");
 const pokerEventEl = $("#pokerEvent");
 const pokerTimerEl = $("#pokerTimer");
+const pokerHeaderTimerEl = $("#pokerHeaderTimer");
 const pokerCommunityEl = $("#pokerCommunity");
 const pokerSeatsEl = $("#pokerSeats");
 const pokerMyCardsEl = $("#pokerMyCards");
@@ -4497,16 +4498,17 @@ function parseCard(card: string) {
   return { rank, symbol, red };
 }
 
-function renderCard(card?: string, hidden = false) {
+function renderCard(card?: string, hidden = false, variant = "") {
   if (!card || hidden) {
-    return `<div class="playing-card card-back"><span></span></div>`;
+    return `<div class="playing-card card-back ${variant}"><span></span></div>`;
   }
   const parsed = parseCard(card);
   const suitClass = parsed.red ? "red" : "black";
   return `
-    <div class="playing-card ${suitClass}">
+    <div class="playing-card ${suitClass} ${variant}">
       <div class="card-corner top"><strong>${parsed.rank}</strong><span>${parsed.symbol}</span></div>
       <div class="card-pip">${parsed.symbol}</div>
+      <div class="card-rank-main">${parsed.rank}</div>
       <div class="card-corner bottom"><strong>${parsed.rank}</strong><span>${parsed.symbol}</span></div>
     </div>
   `;
@@ -4518,8 +4520,11 @@ function renderPoker(snapshot: PokerSnapshot) {
   pokerStageEl.textContent = pokerStageLabel(snapshot.stage);
   pokerEventEl.textContent = snapshot.lastEvent || "進行中";
   const remaining = snapshot.turnEndsAt ? Math.max(0, Math.ceil((snapshot.turnEndsAt - snapshot.now) / 1000)) : 0;
-  pokerTimerEl.textContent = snapshot.stage === "showdown" || snapshot.stage === "waiting" ? "--" : String(remaining);
+  const timerText = snapshot.stage === "showdown" || snapshot.stage === "waiting" ? "--" : `${remaining}s`;
+  pokerTimerEl.textContent = timerText;
+  pokerHeaderTimerEl.textContent = timerText;
   pokerTimerEl.classList.toggle("danger", remaining <= 3 && remaining > 0);
+  pokerHeaderTimerEl.classList.toggle("danger", remaining <= 3 && remaining > 0);
   pokerCommunityEl.innerHTML = [0, 1, 2, 3, 4].map((index) => renderCard(snapshot.community[index], !snapshot.community[index])).join("");
 
   const revealed = new Map((snapshot.showdown?.revealed || []).map((item) => [item.id, item.hand]));
@@ -4543,7 +4548,7 @@ function renderPoker(snapshot: PokerSnapshot) {
   }).join("");
 
   const me = snapshot.players.find((player) => player.id === snapshot.selfId);
-  pokerMyCardsEl.innerHTML = me?.cards?.length ? me.cards.map((card) => renderCard(card)).join("") : `${renderCard("", true)}${renderCard("", true)}`;
+  pokerMyCardsEl.innerHTML = me?.cards?.length ? me.cards.map((card) => renderCard(card, false, "my-card")).join("") : `${renderCard("", true, "my-card")}${renderCard("", true, "my-card")}`;
   pokerStackLineEl.textContent = me ? `${me.name} / ${me.chips}Don / コール ${snapshot.toCall}Don` : "2000Don";
   const myTurn = snapshot.turnId === snapshot.selfId && snapshot.stage !== "showdown" && snapshot.stage !== "waiting";
   pokerFoldButton.disabled = !myTurn;
