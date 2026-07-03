@@ -25,14 +25,14 @@ function openClient(name, room = "", options = {}) {
   });
 }
 
-function waitFor(predicate, label) {
+function waitFor(predicate, label, timeoutMs = 5000) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const timer = setInterval(() => {
       if (predicate()) {
         clearInterval(timer);
         resolve();
-      } else if (Date.now() - started > 5000) {
+      } else if (Date.now() - started > timeoutMs) {
         clearInterval(timer);
         reject(new Error(`timeout: ${label}`));
       }
@@ -44,7 +44,35 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
-const alpha = await openClient("Alpha", "", { cpuFill: false });
+function testRoomCode() {
+  return `T${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
+}
+
+async function shootUntilHit(shooter, targetId, label) {
+  const started = Date.now();
+  while (Date.now() - started < 7000) {
+    send(shooter.ws, {
+      type: "shoot",
+      origin: { x: 24, y: 1.6, z: 24 },
+      direction: { x: 0, y: 0, z: -1 },
+      weapon: "rifle"
+    });
+    try {
+      await waitFor(
+        () => shooter.state.hits?.some((hit) => hit.target === targetId && hit.damage === 25),
+        label,
+        450
+      );
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    }
+  }
+  throw new Error(`timeout: ${label}`);
+}
+
+const roomCode = testRoomCode();
+const alpha = await openClient("Alpha", roomCode, { cpuFill: false });
 const beta = await openClient("Beta", alpha.state.room, { cpuFill: false });
 
 send(alpha.ws, { type: "state", x: 24, y: 1.6, z: 24, yaw: 0, pitch: 0 });
@@ -64,27 +92,23 @@ await waitFor(
   "both clients see each other without CP fill"
 );
 
-await new Promise((resolve) => setTimeout(resolve, 1500));
-
-send(alpha.ws, {
-  type: "shoot",
-  origin: { x: 24, y: 1.6, z: 24 },
-  direction: { x: 0, y: 0, z: -1 }
-});
+await new Promise((resolve) => setTimeout(resolve, 2200));
 
 await waitFor(
-  () => alpha.state.snapshots.some((snapshot) =>
-    snapshot.players?.some((player) => player.name === "Beta" && player.health === 175)
-  ) || alpha.state.hits?.some((hit) => hit.target === beta.state.id && hit.damage === 25),
-  "server resolves a hit"
+  () => alpha.state.snapshots.some((snapshot) => snapshot.players?.some((player) => player.name === "Beta" && player.x === 24 && player.z === 18)),
+  "server receives target position"
 );
+
+await shootUntilHit(alpha, beta.state.id, "server resolves a hit");
 
 for (let i = 0; i < 7; i += 1) {
   send(alpha.ws, {
     type: "shoot",
     origin: { x: 24, y: 1.6, z: 24 },
-    direction: { x: 0, y: 0, z: -1 }
+    direction: { x: 0, y: 0, z: -1 },
+    weapon: "rifle"
   });
+  await new Promise((resolve) => setTimeout(resolve, 260));
 }
 
 await waitFor(

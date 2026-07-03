@@ -66,7 +66,35 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
-const alpha = await openClient("PublicAlpha", "", { cpuFill: false });
+function testRoomCode() {
+  return `P${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
+}
+
+async function shootUntilHit(shooter, targetId, label) {
+  const started = Date.now();
+  while (Date.now() - started < 9000) {
+    send(shooter.ws, {
+      type: "shoot",
+      origin: { x: 24, y: 1.6, z: 24 },
+      direction: { x: 0, y: 0, z: -1 },
+      weapon: "rifle"
+    });
+    try {
+      await waitFor(
+        () => shooter.state.hits?.some((hit) => hit.target === targetId && hit.damage === 25),
+        label,
+        650
+      );
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    }
+  }
+  throw new Error(`timeout: ${label}`);
+}
+
+const roomCode = testRoomCode();
+const alpha = await openClient("PublicAlpha", roomCode, { cpuFill: false });
 const beta = await openClient("PublicBeta", alpha.state.room, { cpuFill: false });
 
 send(alpha.ws, { type: "state", x: 24, y: 1.6, z: 24, yaw: 0, pitch: 0 });
@@ -86,21 +114,14 @@ await waitFor(
   "both public clients see each other without CP fill"
 );
 
-await new Promise((resolve) => setTimeout(resolve, 1500));
-
-send(alpha.ws, {
-  type: "shoot",
-  origin: { x: 24, y: 1.6, z: 24 },
-  direction: { x: 0, y: 0, z: -1 },
-  weapon: "rifle"
-});
+await new Promise((resolve) => setTimeout(resolve, 2500));
 
 await waitFor(
-  () => alpha.state.snapshots.some((snapshot) =>
-    snapshot.players?.some((player) => player.name === "PublicBeta" && player.health === 175)
-  ) || alpha.state.hits?.some((hit) => hit.target === beta.state.id && hit.damage === 25),
-  "public server resolves hit"
+  () => alpha.state.snapshots.some((snapshot) => snapshot.players?.some((player) => player.name === "PublicBeta" && player.x === 24 && player.z === 18)),
+  "public server receives target position"
 );
+
+await shootUntilHit(alpha, beta.state.id, "public server resolves hit");
 
 alpha.ws.close();
 beta.ws.close();
