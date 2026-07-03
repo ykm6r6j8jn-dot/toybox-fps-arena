@@ -196,6 +196,8 @@ const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const settingsRelationSelect = $("#settingsRelationSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
+const roomInput = $("#roomInput") as HTMLInputElement;
+const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
 const inviteButton = $("#inviteButton") as HTMLButtonElement;
@@ -271,6 +273,12 @@ nameInput.value = localStorage.getItem("toybox-name") || `Player${Math.floor(Mat
 nameInput.addEventListener("input", () => {
   const name = nameInput.value.trim();
   if (name) localStorage.setItem("toybox-name", name);
+});
+const initialRoomCode = sanitizeRoomCode(new URLSearchParams(location.search).get("room") || "");
+if (initialRoomCode) roomInput.value = initialRoomCode;
+roomInput.addEventListener("input", () => {
+  const nextCode = sanitizeRoomCode(roomInput.value);
+  if (roomInput.value !== nextCode) roomInput.value = nextCode;
 });
 
 const renderer = new THREE.WebGLRenderer({
@@ -2276,6 +2284,12 @@ document.addEventListener("click", unlockAudioFromGesture, { capture: true });
 document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
 createRoomButton.addEventListener("click", () => join(""));
+joinRoomButton.addEventListener("click", () => joinTypedRoom());
+roomInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  joinTypedRoom();
+});
 memberToggle.addEventListener("click", () => {
   const open = !document.body.classList.contains("members-open");
   document.body.classList.toggle("members-open", open);
@@ -2701,6 +2715,21 @@ function useHealPack() {
   send({ type: "use_heal" });
 }
 
+function sanitizeRoomCode(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+}
+
+function joinTypedRoom() {
+  const code = sanitizeRoomCode(roomInput.value);
+  roomInput.value = code;
+  if (code.length !== 6) {
+    showToast("6文字のルームコードを入力してください");
+    roomInput.focus();
+    return;
+  }
+  join(code);
+}
+
 function join(room: string) {
   const name = nameInput.value.trim() || "プレイヤー";
   localStorage.setItem("toybox-name", name);
@@ -2753,6 +2782,7 @@ function handleMessage(event: MessageEvent<string>) {
     switchArena(arenaChoice);
     setTeamChoice((message.team as TeamChoice) || teamChoice);
     roomCodeEl.textContent = self.room;
+    roomInput.value = self.room;
     joinPanel.classList.add("hidden");
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${self.room}`);

@@ -1805,6 +1805,31 @@ body.members-open .player-slots {
   font-weight: 950;
 }
 
+.room-join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 8px;
+  align-items: end;
+}
+
+.room-join-row label {
+  gap: 5px;
+}
+
+.room-join-row input {
+  text-transform: uppercase;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.room-join-row button {
+  height: 46px;
+  min-height: 46px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 .online-panel {
   display: grid;
   gap: 8px;
