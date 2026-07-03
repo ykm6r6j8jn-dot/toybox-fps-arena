@@ -2057,7 +2057,9 @@ const unlockAudioFromGesture = () => {
   void unlockAudio();
 };
 document.addEventListener("pointerdown", unlockAudioFromGesture, { capture: true, passive: true });
+document.addEventListener("pointerup", unlockAudioFromGesture, { capture: true, passive: true });
 document.addEventListener("touchstart", unlockAudioFromGesture, { capture: true, passive: true });
+document.addEventListener("touchend", unlockAudioFromGesture, { capture: true, passive: true });
 document.addEventListener("click", unlockAudioFromGesture, { capture: true });
 document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
