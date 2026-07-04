@@ -393,7 +393,11 @@
             <div class="poker-action-buttons">
               <button id="pokerFold" type="button">フォールド</button>
               <button id="pokerCall" type="button">チェック</button>
-              <button id="pokerRaise" type="button">レイズ +50</button>
+              <label class="raise-input" for="pokerRaiseAmount">
+                <span>レイズ額</span>
+                <input id="pokerRaiseAmount" type="number" min="20" max="2000" step="10" value="50" inputmode="numeric" />
+              </label>
+              <button id="pokerRaise" type="button">レイズ</button>
             </div>
             <div class="poker-stack-line" id="pokerStackLine">2000Don</div>
           </footer>

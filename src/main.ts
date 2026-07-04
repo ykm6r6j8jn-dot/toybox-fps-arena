@@ -251,6 +251,7 @@ const pokerStackLineEl = $("#pokerStackLine");
 const pokerFoldButton = $("#pokerFold") as HTMLButtonElement;
 const pokerCallButton = $("#pokerCall") as HTMLButtonElement;
 const pokerRaiseButton = $("#pokerRaise") as HTMLButtonElement;
+const pokerRaiseAmountInput = $("#pokerRaiseAmount") as HTMLInputElement;
 const copyPokerInviteButton = $("#copyPokerInvite") as HTMLButtonElement;
 const leavePokerButton = $("#leavePoker") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
@@ -2362,7 +2363,10 @@ for (const button of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button"
 createPokerRoomButton.addEventListener("click", () => joinPoker(roomInput.value));
 pokerFoldButton.addEventListener("click", () => sendPokerAction("fold"));
 pokerCallButton.addEventListener("click", () => sendPokerAction("call"));
-pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", 50));
+pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", currentPokerRaiseAmount()));
+pokerRaiseAmountInput.addEventListener("change", () => {
+  pokerRaiseAmountInput.value = String(currentPokerRaiseAmount());
+});
 copyPokerInviteButton.addEventListener("click", copyInvite);
 leavePokerButton.addEventListener("click", leavePokerRoom);
 memberToggle.addEventListener("click", () => {
@@ -2849,6 +2853,13 @@ function leavePokerRoom() {
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
   socket = null;
   updateLobbyBgm();
+}
+
+function currentPokerRaiseAmount() {
+  const parsed = Math.floor(Number(pokerRaiseAmountInput.value) || 0);
+  const minimum = Math.max(20, Number(pokerRaiseAmountInput.min) || 20);
+  const maximum = Math.max(minimum, Number(pokerRaiseAmountInput.max) || minimum);
+  return Math.min(Math.max(parsed, minimum), maximum);
 }
 
 function sendPokerAction(action: "fold" | "call" | "raise", raiseBy = 0) {
@@ -4551,10 +4562,21 @@ function renderPoker(snapshot: PokerSnapshot) {
   pokerMyCardsEl.innerHTML = me?.cards?.length ? me.cards.map((card) => renderCard(card, false, "my-card")).join("") : `${renderCard("", true, "my-card")}${renderCard("", true, "my-card")}`;
   pokerStackLineEl.textContent = me ? `${me.name} / ${me.chips}Don / コール ${snapshot.toCall}Don` : "2000Don";
   const myTurn = snapshot.turnId === snapshot.selfId && snapshot.stage !== "showdown" && snapshot.stage !== "waiting";
+  const requestedMinRaise = Math.max(20, Math.floor(Number(snapshot.minRaise) || 20));
+  const maxRaise = me ? Math.max(0, me.chips - snapshot.toCall) : 0;
+  const minRaise = maxRaise > 0 ? Math.min(requestedMinRaise, maxRaise) : requestedMinRaise;
+  const canRaise = Boolean(myTurn && me && maxRaise > 0);
+  pokerRaiseAmountInput.min = String(minRaise);
+  pokerRaiseAmountInput.max = String(Math.max(minRaise, maxRaise));
+  pokerRaiseAmountInput.step = "10";
+  const sanitizedRaise = currentPokerRaiseAmount();
+  if (pokerRaiseAmountInput.value !== String(sanitizedRaise)) pokerRaiseAmountInput.value = String(sanitizedRaise);
+  pokerRaiseAmountInput.disabled = !canRaise;
   pokerFoldButton.disabled = !myTurn;
   pokerCallButton.disabled = !myTurn;
-  pokerRaiseButton.disabled = !myTurn || !me || me.chips <= snapshot.toCall + 50;
+  pokerRaiseButton.disabled = !canRaise;
   pokerCallButton.textContent = snapshot.toCall > 0 ? `コール ${snapshot.toCall}` : "チェック";
+  pokerRaiseButton.textContent = canRaise && sanitizedRaise >= maxRaise ? `オールイン ${maxRaise}` : `レイズ ${sanitizedRaise}`;
 }
 
 function drawMinimap() {
