@@ -16,6 +16,7 @@ const pokerSmallBlind = 10;
 const pokerBigBlind = 20;
 const maxPokerSeats = 6;
 const maxPokerCpus = 5;
+const pokerJankenChoices = new Set(["rock", "scissors", "paper"]);
 const matchTeamSize = maxPlayers / 2;
 const maxHealth = 200;
 const arenaHalfSize = 96;
@@ -474,11 +475,35 @@ function pokerHumans(room) {
 }
 
 function pokerActivePlayers(room) {
-  return room.seats.map((id) => room.players.get(id)).filter((player) => player && player.chips + player.bet > 0);
+  const handInProgress = room.stage !== "waiting" && room.stage !== "showdown";
+  return room.seats.map((id) => room.players.get(id)).filter((player) => {
+    if (!player) return false;
+    if (player.chips + player.bet > 0) return true;
+    return handInProgress && player.hand.length > 0 && !player.folded;
+  });
 }
 
 function pokerLivePlayers(room) {
   return pokerActivePlayers(room).filter((player) => !player.folded);
+}
+
+function createPokerBotProfile(index = 0) {
+  const types = [
+    { style: "慎重派", courage: 0.36, bluff: 0.08, trap: 0.2, curiosity: 0.38 },
+    { style: "強気派", courage: 0.72, bluff: 0.2, trap: 0.12, curiosity: 0.7 },
+    { style: "ブラフ派", courage: 0.58, bluff: 0.34, trap: 0.1, curiosity: 0.64 },
+    { style: "読み合い派", courage: 0.5, bluff: 0.16, trap: 0.31, curiosity: 0.54 },
+    { style: "ビビり派", courage: 0.27, bluff: 0.06, trap: 0.16, curiosity: 0.28 }
+  ];
+  const base = types[index % types.length];
+  const variance = () => (Math.random() - 0.5) * 0.12;
+  return {
+    style: base.style,
+    courage: clamp(base.courage + variance(), 0.18, 0.86),
+    bluff: clamp(base.bluff + variance(), 0.02, 0.42),
+    trap: clamp(base.trap + variance(), 0.04, 0.42),
+    curiosity: clamp(base.curiosity + variance(), 0.18, 0.86)
+  };
 }
 
 function syncPokerCpus(room, cpuCount = room.cpuTarget) {
@@ -505,7 +530,11 @@ function syncPokerCpus(room, cpuCount = room.cpuTarget) {
       acted: false,
       isBot: true,
       seat: room.seats.length,
-      lastAction: "待機"
+      lastAction: "待機",
+      mood: "観察中",
+      streak: 0,
+      thinkUntil: 0,
+      botProfile: createPokerBotProfile(cpus.length)
     };
     room.players.set(id, cpu);
     room.seats.push(id);
@@ -527,16 +556,49 @@ function maybeStartPokerHand(room) {
   startPokerHand(room);
 }
 
+function setPokerWaiting(room, event = "Donがない時はCPじゃんけんで復帰できます") {
+  room.stage = "waiting";
+  room.turnSeat = -1;
+  room.turnEndsAt = 0;
+  room.currentBet = 0;
+  room.minRaise = pokerBigBlind;
+  room.community = [];
+  room.pot = 0;
+  room.showdown = null;
+  room.lastEvent = event;
+  for (const player of room.players.values()) {
+    player.hand = [];
+    player.bet = 0;
+    player.allIn = false;
+    player.folded = player.chips <= 0;
+    player.acted = player.chips <= 0;
+    player.thinkUntil = 0;
+  }
+}
+
 function startPokerHand(room) {
   const seated = room.seats.map((id) => room.players.get(id)).filter(Boolean);
   for (const player of seated) {
-    if (player.chips <= 0) player.chips = pokerStartingChips;
+    if (player.isBot && player.chips <= 0) {
+      player.chips = 1200;
+      player.lastAction = "CP補充 1200Don";
+      player.mood = "再挑戦";
+    }
+  }
+  const active = pokerActivePlayers(room);
+  if (active.length < 2) {
+    setPokerWaiting(room);
+    return;
+  }
+  for (const player of seated) {
     player.hand = [];
     player.bet = 0;
-    player.folded = false;
+    player.folded = player.chips <= 0;
     player.allIn = false;
-    player.acted = false;
-    player.lastAction = "";
+    player.acted = player.chips <= 0;
+    player.thinkUntil = 0;
+    if (player.chips > 0) player.lastAction = "";
+    if (player.isBot) player.mood = player.botProfile?.style || "観察中";
   }
   room.deck = createDeck();
   room.community = [];
@@ -546,7 +608,6 @@ function startPokerHand(room) {
   room.minRaise = pokerBigBlind;
   room.showdown = null;
   room.handNumber += 1;
-  const active = pokerActivePlayers(room);
   room.dealerSeat = nextPokerSeat(room, room.dealerSeat);
   const smallBlindSeat = active.length === 2 ? room.dealerSeat : nextPokerSeat(room, room.dealerSeat);
   const bigBlindSeat = nextPokerSeat(room, smallBlindSeat);
@@ -601,7 +662,7 @@ function applyPokerDecision(room, player, action, raiseBy = 0, automatic = false
     player.lastAction = automatic ? "時間切れフォールド" : "フォールド";
     room.lastEvent = `${player.name} がフォールド`;
   } else if (action === "raise" && player.chips > toCall) {
-    const requestedRaise = Math.max(pokerBigBlind, Math.floor(Number(raiseBy) || pokerBigBlind));
+    const requestedRaise = Math.max(room.minRaise || pokerBigBlind, pokerBigBlind, Math.floor(Number(raiseBy) || pokerBigBlind));
     const paid = postPokerBet(room, player, toCall + requestedRaise);
     room.currentBet = Math.max(room.currentBet, player.bet);
     room.minRaise = requestedRaise;
@@ -635,9 +696,10 @@ function advancePokerAfterAction(room) {
 }
 
 function pokerBettingComplete(room) {
-  const live = pokerLivePlayers(room).filter((player) => !player.allIn);
-  if (live.length <= 1) return true;
-  return live.every((player) => player.acted && player.bet === room.currentBet);
+  const live = pokerLivePlayers(room);
+  const pending = live.filter((player) => !player.allIn);
+  if (pending.length === 0) return true;
+  return pending.every((player) => player.acted && player.bet === room.currentBet) && live.every((player) => player.allIn || player.bet === room.currentBet);
 }
 
 function advancePokerStreet(room) {
@@ -670,6 +732,10 @@ function advancePokerStreet(room) {
 
 function awardPokerPot(room, winner, reason) {
   if (winner) winner.chips += room.pot;
+  for (const player of room.players.values()) {
+    player.streak = winner && player.id === winner.id ? (player.streak || 0) + 1 : 0;
+    if (player.isBot) player.mood = winner && player.id === winner.id ? "乗っている" : "立て直し中";
+  }
   room.showdown = {
     winners: winner ? [{ id: winner.id, name: winner.name, label: reason, amount: room.pot }] : [],
     revealed: [...room.players.values()].map((player) => ({ id: player.id, hand: player.hand.map(cardCode) }))
@@ -697,6 +763,11 @@ function resolvePokerShowdown(room) {
   }
   const share = winners.length ? Math.floor(room.pot / winners.length) : 0;
   for (const winner of winners) winner.chips += share;
+  const winnerIds = new Set(winners.map((winner) => winner.id));
+  for (const player of room.players.values()) {
+    player.streak = winnerIds.has(player.id) ? (player.streak || 0) + 1 : 0;
+    if (player.isBot) player.mood = winnerIds.has(player.id) ? "読み勝ち" : "反省中";
+  }
   room.showdown = {
     winners: winners.map((winner) => ({ id: winner.id, name: winner.name, label: best?.label || "勝利", amount: share })),
     revealed: [...room.players.values()].map((player) => ({ id: player.id, hand: player.hand.map(cardCode) }))
@@ -771,7 +842,10 @@ function updatePokerRoom(room, now) {
     return;
   }
   if (room.stage === "showdown") {
-    if (now >= room.turnEndsAt) startPokerHand(room);
+    if (now >= room.turnEndsAt) {
+      if (pokerActivePlayers(room).length >= 2) startPokerHand(room);
+      else setPokerWaiting(room);
+    }
     return;
   }
   const current = room.players.get(room.seats[room.turnSeat]);
@@ -779,22 +853,131 @@ function updatePokerRoom(room, now) {
     advancePokerAfterAction(room);
     return;
   }
+  if (current.isBot && now < room.turnEndsAt) {
+    if (!current.thinkUntil) current.thinkUntil = now + 700 + Math.floor(Math.random() * 1900);
+    if (now < current.thinkUntil) return;
+  }
   if (current.isBot || now >= room.turnEndsAt) {
     const decision = choosePokerBotAction(room, current, now >= room.turnEndsAt);
+    current.thinkUntil = 0;
     applyPokerDecision(room, current, decision.action, decision.raiseBy, now >= room.turnEndsAt);
   }
 }
 
 function choosePokerBotAction(room, player, timedOut = false) {
   const toCall = pokerToCall(room, player);
-  if (timedOut) return toCall > 0 ? { action: "fold" } : { action: "call" };
+  const profile = player.botProfile || createPokerBotProfile(player.seat || 0);
+  const strength = estimatePokerStrength(player, room.community);
+  const stack = Math.max(1, player.chips + player.bet);
+  const pressure = toCall / stack;
+  const potOdds = toCall > 0 ? toCall / Math.max(1, room.pot + toCall) : 0;
+  const bigBet = toCall >= Math.max(90, stack * 0.18);
+  const scaryBet = toCall >= Math.max(160, stack * 0.28);
+  const canRaise = player.chips > toCall + Math.max(room.minRaise || pokerBigBlind, pokerBigBlind);
+  const baseRaise = Math.max(room.minRaise || pokerBigBlind, pokerBigBlind);
+  const raiseBy = Math.min(player.chips - toCall, baseRaise + Math.round((45 + Math.random() * 95) * (0.7 + strength)));
+
+  if (timedOut) {
+    player.mood = toCall > 0 ? "時間切れで弱気" : "時間切れチェック";
+    return toCall > 0 ? { action: "fold" } : { action: "call" };
+  }
+
   if (toCall <= 0) {
-    if (player.chips > 160 && Math.random() < 0.18) return { action: "raise", raiseBy: 40 };
+    const trap = strength > 0.72 && Math.random() < profile.trap;
+    const valueBet = strength > 0.62 && Math.random() < 0.36 + profile.courage * 0.28;
+    const bluff = strength < 0.42 && Math.random() < profile.bluff;
+    if (trap) {
+      player.mood = "罠を張る";
+      return { action: "call" };
+    }
+    if (canRaise && (valueBet || bluff)) {
+      player.mood = bluff ? "ブラフ気配" : "強気";
+      return { action: "raise", raiseBy };
+    }
+    player.mood = strength > 0.55 ? "様子見の余裕" : "様子見";
     return { action: "call" };
   }
-  if (toCall > Math.max(180, player.chips * 0.22) && Math.random() < 0.62) return { action: "fold" };
-  if (player.chips > toCall + 120 && Math.random() < 0.14) return { action: "raise", raiseBy: 60 };
+
+  const fear = clamp(pressure * 1.75 + potOdds * 0.45 - strength - profile.courage * 0.4, 0, 1);
+  const curiosityCall = Math.random() < profile.curiosity * 0.18 && pressure < 0.16;
+  if ((scaryBet || bigBet) && strength < 0.58 && Math.random() < fear + 0.18) {
+    player.mood = scaryBet ? "かなりビビり" : "少しビビり";
+    return { action: "fold" };
+  }
+  if (pressure > 0.42 && strength < 0.76 && !curiosityCall) {
+    player.mood = "降りて守る";
+    return { action: "fold" };
+  }
+  if (canRaise && strength > 0.74 && Math.random() < 0.52 + profile.courage * 0.22) {
+    player.mood = "勝負に出る";
+    return { action: "raise", raiseBy };
+  }
+  if (canRaise && strength < 0.36 && pressure < 0.12 && Math.random() < profile.bluff * 0.8) {
+    player.mood = "ブラフ勝負";
+    return { action: "raise", raiseBy: Math.min(player.chips - toCall, baseRaise + 40 + Math.floor(Math.random() * 90)) };
+  }
+  player.mood = bigBet ? "悩んでコール" : strength > 0.56 ? "追いかける" : "薄く参加";
   return { action: "call" };
+}
+
+function estimatePokerStrength(player, community) {
+  const cards = [...player.hand, ...community];
+  if (cards.length >= 5) {
+    const evaluated = evaluateBestPokerHand(cards);
+    const classScore = (evaluated.score[0] || 0) / 8;
+    const kicker = Math.min(0.14, ((evaluated.score[1] || 0) - 2) / 90);
+    return clamp(classScore + kicker, 0.08, 0.98);
+  }
+  const [a, b] = player.hand;
+  if (!a || !b) return 0.3;
+  const high = Math.max(a.rank, b.rank);
+  const low = Math.min(a.rank, b.rank);
+  const suited = a.suit === b.suit;
+  const pair = a.rank === b.rank;
+  const connected = Math.abs(a.rank - b.rank) <= 2;
+  let score = 0.18 + (high - 2) / 28 + (low - 2) / 42;
+  if (pair) score += 0.28 + high / 60;
+  if (suited) score += 0.07;
+  if (connected) score += 0.06;
+  if (high >= 13 && low >= 10) score += 0.08;
+  return clamp(score, 0.08, 0.92);
+}
+
+function pokerJankenLabel(choice) {
+  if (choice === "rock") return "グー";
+  if (choice === "scissors") return "チョキ";
+  return "パー";
+}
+
+function handlePokerJanken(room, player, choice) {
+  if (!player || player.isBot || !pokerJankenChoices.has(choice)) {
+    if (player?.ws) send(player.ws, { type: "poker_error", message: "じゃんけんを選び直してください。" });
+    return;
+  }
+  if (player.chips > 0) {
+    send(player.ws, { type: "poker_error", message: "まだDonがあります。じゃんけんは破産時だけ使えます。" });
+    return;
+  }
+  if (player.bet > 0 || player.allIn) {
+    send(player.ws, { type: "poker_error", message: "オールイン中は勝敗確定まで待ってください。" });
+    return;
+  }
+  const cpChoice = [...pokerJankenChoices][Math.floor(Math.random() * pokerJankenChoices.size)];
+  const win =
+    (choice === "rock" && cpChoice === "scissors") ||
+    (choice === "scissors" && cpChoice === "paper") ||
+    (choice === "paper" && cpChoice === "rock");
+  const draw = choice === cpChoice;
+  const amount = win ? 2000 : draw ? 1000 : 500;
+  const result = win ? "勝ち" : draw ? "あいこ" : "負け";
+  player.chips += amount;
+  player.folded = false;
+  player.acted = false;
+  player.allIn = false;
+  player.lastAction = `CPじゃんけん ${result} +${amount}Don`;
+  room.lastEvent = `${player.name}: ${pokerJankenLabel(choice)} / CP: ${pokerJankenLabel(cpChoice)} / ${amount}Don復帰`;
+  send(player.ws, { type: "poker_janken_result", result, amount, playerChoice: choice, cpChoice });
+  if (room.stage === "waiting") maybeStartPokerHand(room);
 }
 
 function publicPokerPlayer(player, viewerId) {
@@ -809,6 +992,8 @@ function publicPokerPlayer(player, viewerId) {
     isBot: player.isBot,
     seat: player.seat,
     lastAction: player.lastAction,
+    mood: player.mood || "",
+    streak: player.streak || 0,
     cards: player.id === viewerId || player.folded === false && false ? player.hand.map(cardCode) : [],
     cardCount: player.hand.length
   };
@@ -1149,7 +1334,10 @@ wss.on("connection", (ws) => {
         acted: false,
         isBot: false,
         seat: room.seats.length,
-        lastAction: "参加"
+        lastAction: "参加",
+        mood: "",
+        streak: 0,
+        thinkUntil: 0
       };
       if (room.stage !== "waiting" && room.stage !== "showdown") {
         player.folded = true;
@@ -1171,6 +1359,13 @@ wss.on("connection", (ws) => {
     if (message.type === "poker_action") {
       if (!currentPokerRoom || !currentPokerPlayer) return;
       handlePokerAction(currentPokerRoom, currentPokerPlayer, String(message.action || "call"), Number(message.raiseBy) || 0, false);
+      broadcastPoker(currentPokerRoom);
+      return;
+    }
+
+    if (message.type === "poker_janken") {
+      if (!currentPokerRoom || !currentPokerPlayer) return;
+      handlePokerJanken(currentPokerRoom, currentPokerPlayer, String(message.choice || ""));
       broadcastPoker(currentPokerRoom);
       return;
     }

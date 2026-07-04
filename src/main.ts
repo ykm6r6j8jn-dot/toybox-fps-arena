@@ -150,6 +150,8 @@ type PokerPlayer = {
   isBot: boolean;
   seat: number;
   lastAction?: string;
+  mood?: string;
+  streak?: number;
   cards: string[];
   cardCount: number;
 };
@@ -252,6 +254,7 @@ const pokerFoldButton = $("#pokerFold") as HTMLButtonElement;
 const pokerCallButton = $("#pokerCall") as HTMLButtonElement;
 const pokerRaiseButton = $("#pokerRaise") as HTMLButtonElement;
 const pokerRaiseAmountInput = $("#pokerRaiseAmount") as HTMLInputElement;
+const pokerJankenPanel = $("#pokerJankenPanel") as HTMLElement;
 const copyPokerInviteButton = $("#copyPokerInvite") as HTMLButtonElement;
 const leavePokerButton = $("#leavePoker") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
@@ -2367,6 +2370,9 @@ pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", curren
 pokerRaiseAmountInput.addEventListener("change", () => {
   pokerRaiseAmountInput.value = String(currentPokerRaiseAmount());
 });
+for (const button of pokerJankenPanel.querySelectorAll<HTMLButtonElement>("[data-poker-janken]")) {
+  button.addEventListener("click", () => sendPokerJanken(button.dataset.pokerJanken || ""));
+}
 copyPokerInviteButton.addEventListener("click", copyInvite);
 leavePokerButton.addEventListener("click", leavePokerRoom);
 memberToggle.addEventListener("click", () => {
@@ -2867,6 +2873,11 @@ function sendPokerAction(action: "fold" | "call" | "raise", raiseBy = 0) {
   send({ type: "poker_action", action, raiseBy });
 }
 
+function sendPokerJanken(choice: string) {
+  if (!pokerJoined) return;
+  send({ type: "poker_janken", choice });
+}
+
 function join(room: string) {
   const name = nameInput.value.trim() || "プレイヤー";
   localStorage.setItem("toybox-name", name);
@@ -2908,6 +2919,10 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (message.type === "poker_error") {
     showToast(String(message.message || "ポーカーエラー"));
+    return;
+  }
+  if (message.type === "poker_janken_result") {
+    showToast(`CPじゃんけん ${message.result} / +${message.amount}Don`);
     return;
   }
   if (message.type === "welcome") {
@@ -4544,6 +4559,8 @@ function renderPoker(snapshot: PokerSnapshot) {
     const isTurn = player.id === snapshot.turnId;
     const winner = snapshot.showdown?.winners.find((item) => item.id === player.id);
     const cards = isMe ? player.cards : revealed.get(player.id) || [];
+    const mood = player.isBot && player.mood ? `<small class="poker-mood">${escapeHtml(player.mood)}</small>` : "";
+    const streak = player.streak && player.streak > 1 ? `<b class="poker-streak">${player.streak}連勝</b>` : "";
     const cardHtml = player.cardCount
       ? [0, 1].map((index) => renderCard(cards[index], !cards[index])).join("")
       : "";
@@ -4553,6 +4570,8 @@ function renderPoker(snapshot: PokerSnapshot) {
         <strong>${escapeHtml(player.name)}</strong>
         <span>${player.chips}Don</span>
         <small>${player.bet ? `BET ${player.bet}` : player.lastAction || (player.isBot ? "CP" : "PLAYER")}</small>
+        ${mood}
+        ${streak}
         ${winner ? `<em>${escapeHtml(winner.label)} +${winner.amount}Don</em>` : ""}
       </div>
     `;
@@ -4560,20 +4579,22 @@ function renderPoker(snapshot: PokerSnapshot) {
 
   const me = snapshot.players.find((player) => player.id === snapshot.selfId);
   pokerMyCardsEl.innerHTML = me?.cards?.length ? me.cards.map((card) => renderCard(card, false, "my-card")).join("") : `${renderCard("", true, "my-card")}${renderCard("", true, "my-card")}`;
-  pokerStackLineEl.textContent = me ? `${me.name} / ${me.chips}Don / コール ${snapshot.toCall}Don` : "2000Don";
+  const bankrupt = Boolean(me && me.chips <= 0 && me.bet <= 0);
+  pokerJankenPanel.hidden = !bankrupt;
+  pokerStackLineEl.textContent = me ? `${me.name} / ${me.chips}Don / コール ${snapshot.toCall}Don${bankrupt ? " / じゃんけん復帰待ち" : ""}` : "2000Don";
   const myTurn = snapshot.turnId === snapshot.selfId && snapshot.stage !== "showdown" && snapshot.stage !== "waiting";
   const requestedMinRaise = Math.max(20, Math.floor(Number(snapshot.minRaise) || 20));
   const maxRaise = me ? Math.max(0, me.chips - snapshot.toCall) : 0;
   const minRaise = maxRaise > 0 ? Math.min(requestedMinRaise, maxRaise) : requestedMinRaise;
-  const canRaise = Boolean(myTurn && me && maxRaise > 0);
+  const canRaise = Boolean(myTurn && me && maxRaise > 0 && !bankrupt);
   pokerRaiseAmountInput.min = String(minRaise);
   pokerRaiseAmountInput.max = String(Math.max(minRaise, maxRaise));
   pokerRaiseAmountInput.step = "10";
   const sanitizedRaise = currentPokerRaiseAmount();
   if (pokerRaiseAmountInput.value !== String(sanitizedRaise)) pokerRaiseAmountInput.value = String(sanitizedRaise);
   pokerRaiseAmountInput.disabled = !canRaise;
-  pokerFoldButton.disabled = !myTurn;
-  pokerCallButton.disabled = !myTurn;
+  pokerFoldButton.disabled = !myTurn || bankrupt;
+  pokerCallButton.disabled = !myTurn || bankrupt;
   pokerRaiseButton.disabled = !canRaise;
   pokerCallButton.textContent = snapshot.toCall > 0 ? `コール ${snapshot.toCall}` : "チェック";
   pokerRaiseButton.textContent = canRaise && sanitizedRaise >= maxRaise ? `オールイン ${maxRaise}` : `レイズ ${sanitizedRaise}`;
