@@ -2548,12 +2548,16 @@ body.celebrating::after {
 
 @media (max-width: 860px) {
   .poker-panel {
-    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background:
+      radial-gradient(circle at 18% 9%, rgba(255, 210, 58, 0.2), transparent 30%),
+      radial-gradient(circle at 83% 14%, rgba(53, 170, 255, 0.17), transparent 32%),
+      linear-gradient(145deg, #050b10, #0f2d22 52%, #050b10);
   }
 
   .poker-shell {
     min-height: calc(var(--app-height, 100vh) - 16px);
-    grid-template-rows: auto minmax(320px, 1fr) auto;
+    grid-template-rows: auto minmax(390px, 1fr) auto;
     gap: 8px;
   }
 
@@ -2562,6 +2566,8 @@ body.celebrating::after {
     grid-template-columns: 1fr auto auto;
     gap: 7px;
     padding: 8px;
+    background: rgba(5, 10, 16, 0.82);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
   }
 
   .poker-header {
@@ -2593,30 +2599,32 @@ body.celebrating::after {
   }
 
   .poker-countdown strong {
-    font-size: 24px;
+    font-size: 28px;
   }
 
   .poker-table {
-    min-height: 342px;
+    min-height: 390px;
   }
 
   .poker-felt {
-    min-height: 342px;
-    border-width: 10px;
+    min-height: 390px;
+    border-width: 11px;
     border-radius: 34px;
   }
 
   .poker-stage {
-    inset: 28% 18% auto;
+    inset: 24% 15% auto;
+    background: rgba(3, 12, 9, 0.72);
   }
 
   .community-cards {
-    gap: 5px;
+    gap: 6px;
   }
 
   .poker-seat {
-    width: 116px;
-    padding: 6px;
+    width: 128px;
+    padding: 7px;
+    background: rgba(5, 12, 18, 0.82);
   }
 
   .poker-seat:nth-child(1) { bottom: 2%; }
@@ -2627,42 +2635,42 @@ body.celebrating::after {
   .poker-seat:nth-child(6) { right: 2%; bottom: 18%; }
 
   .playing-card {
-    width: 42px;
+    width: 48px;
     border-radius: 5px;
   }
 
   .playing-card.my-card {
-    width: 72px;
+    width: 84px;
   }
 
   .card-corner strong {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .card-corner span {
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .card-pip {
-    font-size: 22px;
+    font-size: 25px;
   }
 
   .playing-card.my-card .card-corner strong {
-    font-size: 18px;
+    font-size: 23px;
   }
 
   .playing-card.my-card .card-corner span {
-    font-size: 16px;
+    font-size: 21px;
   }
 
   .playing-card.my-card .card-pip {
-    padding-top: 29px;
-    font-size: 32px;
+    padding-top: 37px;
+    font-size: 41px;
   }
 
   .playing-card.my-card .card-rank-main {
-    padding-top: 17px;
-    font-size: 31px;
+    padding-top: 21px;
+    font-size: 40px;
   }
 
   .poker-actions {
@@ -2671,7 +2679,7 @@ body.celebrating::after {
 
   .my-cards {
     grid-column: 1 / -1;
-    min-height: 72px;
+    min-height: 88px;
   }
 
   .poker-action-buttons {
@@ -2682,9 +2690,9 @@ body.celebrating::after {
   }
 
   .poker-action-buttons button {
-    min-height: 52px;
+    min-height: 56px;
     padding: 0 7px;
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .raise-input {
@@ -2692,8 +2700,8 @@ body.celebrating::after {
   }
 
   .raise-input input {
-    height: 52px;
-    font-size: 18px;
+    height: 56px;
+    font-size: 20px;
   }
 
   .poker-raise-presets {
@@ -2703,16 +2711,16 @@ body.celebrating::after {
   }
 
   .poker-raise-presets button {
-    min-height: 42px;
+    min-height: 46px;
     min-width: 0;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .poker-stack-line {
     grid-column: 1 / -1;
     min-width: 0;
     text-align: center;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .poker-janken {
@@ -2901,6 +2909,58 @@ body.celebrating::after {
 
   .result-row small {
     grid-column: 1 / -1;
+  }
+}
+
+@media (pointer: coarse) and (max-height: 620px) {
+  .poker-shell {
+    min-height: max(520px, calc(var(--app-height, 100vh) - 16px));
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .poker-table,
+  .poker-felt {
+    min-height: 410px;
+  }
+
+  .poker-stage {
+    inset: 22% 20% auto;
+  }
+
+  .poker-actions {
+    border-color: rgba(147, 228, 60, 0.28);
+  }
+}
+
+@media (max-width: 560px) {
+  .poker-shell {
+    grid-template-rows: auto minmax(470px, 1fr) auto;
+  }
+
+  .poker-table,
+  .poker-felt {
+    min-height: 470px;
+  }
+
+  .poker-seat {
+    width: 118px;
+  }
+
+  .poker-seat strong {
+    max-width: 100px;
+    font-size: 12px;
+  }
+
+  .playing-card {
+    width: 44px;
+  }
+
+  .playing-card.my-card {
+    width: 82px;
+  }
+
+  .poker-action-buttons {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 

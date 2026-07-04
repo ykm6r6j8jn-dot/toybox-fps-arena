@@ -34,7 +34,7 @@ type BeforeInstallPromptEvent = Event & {
 type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
 type RelationMode = "versus" | "coop";
-type GameMode = "oneLife" | "life3" | "castle";
+type GameMode = "oneLife" | "practice" | "life3" | "castle";
 type ArenaId = "toybox";
 type PartySize = 1 | 2 | 4;
 type SkinId = "rounded" | "scout" | "heavy" | "bee";
@@ -565,7 +565,7 @@ let lastClockText = "";
 renderer.setPixelRatio(activePixelRatio);
 
 function gameModeLabel(mode: GameMode) {
-  return mode === "oneLife" ? "ワンライフ" : mode === "life3" ? "ライフ3" : "城攻め";
+  return mode === "oneLife" ? "ワンライフ" : mode === "practice" ? "練習" : mode === "life3" ? "ライフ3" : "城攻め";
 }
 
 function setGameMode(mode: GameMode) {
@@ -575,7 +575,7 @@ function setGameMode(mode: GameMode) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
   modeLabel.textContent = "ゲームモード";
-  if (targetScoreText) targetScoreText.textContent = mode === "oneLife" ? "1 LIFE" : mode === "life3" ? "LIFE" : "CASTLE";
+  if (targetScoreText) targetScoreText.textContent = mode === "oneLife" ? "1 LIFE" : mode === "practice" ? "PRACTICE" : mode === "life3" ? "LIFE" : "CASTLE";
 }
 
 function setTeamChoice(team: TeamChoice) {
@@ -4385,7 +4385,7 @@ function updateHud(feed: FeedItem[]) {
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
   const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
   const damageLeft = Math.max(0, ((me?.damageBoostUntil || 0) - Date.now()) / 1000);
-  const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "oneLife" ? "  1 LIFE" : gameMode === "castle" ? "  CASTLE" : "";
+  const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "oneLife" ? "  1 LIFE" : gameMode === "practice" ? "  PRACTICE" : gameMode === "castle" ? "  CASTLE" : "";
   const powerText = speedLeft > 0 ? `  SPD ${speedLeft.toFixed(0)}s` : damageLeft > 0 ? `  DMG ${damageLeft.toFixed(0)}s` : "";
   movementStatusEl.textContent = shieldLeft > 0
     ? `BARRIER ${shieldLeft.toFixed(1)}s`
@@ -4481,10 +4481,10 @@ function updateSlots() {
   for (let i = 0; i < matchMaxPlayers; i += 1) {
     const player = list[i];
     const slot = document.createElement("div");
-    const canChangeTeam = Boolean(player) && (gameMode === "oneLife" || gameMode === "life3");
+    const canChangeTeam = Boolean(player) && (gameMode === "oneLife" || gameMode === "practice" || gameMode === "life3");
     const shape = player?.skin || ["circle", "triangle", "hex", "dot", "square"][i % 5];
     slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${canChangeTeam ? "team-editable" : ""} shape-${shape}`;
-    const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : gameMode === "oneLife" ? "IN" : player?.score;
+    const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : gameMode === "oneLife" ? "IN" : gameMode === "practice" ? `${player?.kills ?? 0}K` : player?.score;
     slot.innerHTML = player
       ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar" style="--slot-color:${escapeHtml(player.cosmeticColor || "")}"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
           canChangeTeam
@@ -4506,7 +4506,7 @@ function updateScoreboard() {
       <span>#${index + 1} ${escapeHtml(player.name)}</span>
       <strong>${player.score}</strong>
       <small>${player.kills}K/${player.deaths}D  与${Math.round(player.damageDealt || 0)}  命中${player.hits || 0}</small>
-      <em>${player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : gameMode === "oneLife" ? "alive" : player.ready ? "ready" : "wait"}</em>
+      <em>${player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : gameMode === "oneLife" ? "alive" : gameMode === "practice" ? "practice" : player.ready ? "ready" : "wait"}</em>
     </div>
   `).join("");
 }

@@ -42,7 +42,7 @@ const powerupSpawns = [
 ];
 const initialHealPacks = 5;
 const healPackAmount = 20;
-const gameModes = new Set(["oneLife", "life3", "castle"]);
+const gameModes = new Set(["oneLife", "practice", "life3", "castle"]);
 const partySizes = new Set([1, 2, 4]);
 const arenas = new Set(["toybox"]);
 const teams = new Set(["blue", "red"]);
@@ -325,6 +325,7 @@ function normalizeArena(value) {
 
 function modeLabel(mode) {
   if (mode === "oneLife") return "ワンライフ";
+  if (mode === "practice") return "練習";
   if (mode === "life3") return "ライフ3";
   if (mode === "castle") return "城攻め";
   return "ワンライフ";
@@ -384,6 +385,7 @@ function oppositeTeam(team) {
 function initialLivesForMode(mode) {
   if (mode === "life3") return 3;
   if (mode === "oneLife") return 1;
+  if (mode === "practice") return 0;
   return 0;
 }
 
@@ -1587,8 +1589,8 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "change_team") {
-      if (currentRoom.mode !== "oneLife" && currentRoom.mode !== "life3") {
-        send(currentPlayer.ws, { type: "error", message: "チーム変更はワンライフ/ライフ3で使用できます。" });
+      if (currentRoom.mode !== "oneLife" && currentRoom.mode !== "practice" && currentRoom.mode !== "life3") {
+        send(currentPlayer.ws, { type: "error", message: "チーム変更はワンライフ/練習/ライフ3で使用できます。" });
         return;
       }
       const requestedTeam = String(message.team || "");
@@ -1976,6 +1978,12 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
 }
 
 function handleDeath(room, shooter, target) {
+  if (room.mode === "practice") {
+    addFeed(room, `${target.name} 復帰練習`, target.color);
+    respawnPlayer(target);
+    return;
+  }
+
   if (room.mode === "castle") {
     respawnPlayer(target);
     return;
@@ -2009,7 +2017,7 @@ function respawnPlayer(player) {
 }
 
 function checkSurvivalWinner(room, shooter) {
-  if (room.winner) return;
+  if (room.winner || room.mode === "practice") return;
   const aliveTeams = new Set([...room.players.values()]
     .filter((player) => !player.eliminated && player.health > 0)
     .map((player) => player.color));
