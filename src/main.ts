@@ -254,6 +254,7 @@ const pokerFoldButton = $("#pokerFold") as HTMLButtonElement;
 const pokerCallButton = $("#pokerCall") as HTMLButtonElement;
 const pokerRaiseButton = $("#pokerRaise") as HTMLButtonElement;
 const pokerRaiseAmountInput = $("#pokerRaiseAmount") as HTMLInputElement;
+const pokerRaisePresets = $("#pokerRaisePresets") as HTMLElement;
 const pokerJankenPanel = $("#pokerJankenPanel") as HTMLElement;
 const copyPokerInviteButton = $("#copyPokerInvite") as HTMLButtonElement;
 const leavePokerButton = $("#leavePoker") as HTMLButtonElement;
@@ -2370,6 +2371,15 @@ pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", curren
 pokerRaiseAmountInput.addEventListener("change", () => {
   pokerRaiseAmountInput.value = String(currentPokerRaiseAmount());
 });
+for (const button of pokerRaisePresets.querySelectorAll<HTMLButtonElement>("[data-poker-raise-preset]")) {
+  button.addEventListener("click", () => {
+    const preset = button.dataset.pokerRaisePreset || "";
+    const minimum = Math.max(20, Number(pokerRaiseAmountInput.min) || 20);
+    const maximum = Math.max(minimum, Number(pokerRaiseAmountInput.max) || minimum);
+    const amount = preset === "max" ? maximum : Math.min(maximum, Math.max(minimum, Math.floor(Number(preset) || minimum)));
+    pokerRaiseAmountInput.value = String(amount);
+  });
+}
 for (const button of pokerJankenPanel.querySelectorAll<HTMLButtonElement>("[data-poker-janken]")) {
   button.addEventListener("click", () => sendPokerJanken(button.dataset.pokerJanken || ""));
 }

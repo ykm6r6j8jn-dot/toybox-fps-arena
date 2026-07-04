@@ -2063,6 +2063,7 @@ body.celebrating::after {
     radial-gradient(circle at 50% 35%, rgba(35, 126, 83, 0.68), transparent 42%),
     linear-gradient(145deg, #071018, #123126 48%, #071018);
   overflow: auto;
+  overscroll-behavior: contain;
   touch-action: manipulation;
 }
 
@@ -2428,6 +2429,23 @@ body.celebrating::after {
   gap: 8px;
 }
 
+.poker-raise-presets {
+  grid-column: 2;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.poker-raise-presets button {
+  min-height: 34px;
+  min-width: 58px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 950;
+}
+
 .raise-input {
   min-width: 112px;
   display: grid;
@@ -2529,17 +2547,39 @@ body.celebrating::after {
 }
 
 @media (max-width: 860px) {
+  .poker-panel {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
   .poker-shell {
-    grid-template-rows: auto minmax(310px, 1fr) auto;
+    min-height: calc(var(--app-height, 100vh) - 16px);
+    grid-template-rows: auto minmax(320px, 1fr) auto;
+    gap: 8px;
   }
 
   .poker-header,
   .poker-actions {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
+    gap: 7px;
+    padding: 8px;
+  }
+
+  .poker-header {
+    position: sticky;
+    top: max(8px, env(safe-area-inset-top));
+    z-index: 3;
+  }
+
+  .poker-actions {
+    position: sticky;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    z-index: 4;
+    grid-template-columns: 1fr;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
 
   .poker-header button {
-    min-height: 38px;
+    min-height: 42px;
     padding: 0 10px;
   }
 
@@ -2557,11 +2597,11 @@ body.celebrating::after {
   }
 
   .poker-table {
-    min-height: 330px;
+    min-height: 342px;
   }
 
   .poker-felt {
-    min-height: 330px;
+    min-height: 342px;
     border-width: 10px;
     border-radius: 34px;
   }
@@ -2592,7 +2632,7 @@ body.celebrating::after {
   }
 
   .playing-card.my-card {
-    width: 64px;
+    width: 72px;
   }
 
   .card-corner strong {
@@ -2629,19 +2669,49 @@ body.celebrating::after {
     gap: 8px;
   }
 
+  .my-cards {
+    grid-column: 1 / -1;
+    min-height: 72px;
+  }
+
   .poker-action-buttons {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: 0.9fr 0.9fr 1.1fr 1.1fr;
+    gap: 7px;
+  }
+
+  .poker-action-buttons button {
+    min-height: 52px;
+    padding: 0 7px;
+    font-size: 14px;
   }
 
   .raise-input {
     min-width: 0;
   }
 
-  .poker-stack-line {
+  .raise-input input {
+    height: 52px;
+    font-size: 18px;
+  }
+
+  .poker-raise-presets {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .poker-raise-presets button {
+    min-height: 42px;
     min-width: 0;
-    text-align: right;
+    font-size: 13px;
+  }
+
+  .poker-stack-line {
+    grid-column: 1 / -1;
+    min-width: 0;
+    text-align: center;
     font-size: 12px;
   }
 
