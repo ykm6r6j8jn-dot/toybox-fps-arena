@@ -4559,7 +4559,6 @@ function renderPoker(snapshot: PokerSnapshot) {
     const isTurn = player.id === snapshot.turnId;
     const winner = snapshot.showdown?.winners.find((item) => item.id === player.id);
     const cards = isMe ? player.cards : revealed.get(player.id) || [];
-    const mood = player.isBot && player.mood ? `<small class="poker-mood">${escapeHtml(player.mood)}</small>` : "";
     const streak = player.streak && player.streak > 1 ? `<b class="poker-streak">${player.streak}連勝</b>` : "";
     const cardHtml = player.cardCount
       ? [0, 1].map((index) => renderCard(cards[index], !cards[index])).join("")
@@ -4570,7 +4569,6 @@ function renderPoker(snapshot: PokerSnapshot) {
         <strong>${escapeHtml(player.name)}</strong>
         <span>${player.chips}Don</span>
         <small>${player.bet ? `BET ${player.bet}` : player.lastAction || (player.isBot ? "CP" : "PLAYER")}</small>
-        ${mood}
         ${streak}
         ${winner ? `<em>${escapeHtml(winner.label)} +${winner.amount}Don</em>` : ""}
       </div>

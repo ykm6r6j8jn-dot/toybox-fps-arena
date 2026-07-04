@@ -425,6 +425,16 @@ function normalizePokerCpuCount(value) {
   return clamp(Math.floor(Number(value) || 0), 0, maxPokerCpus);
 }
 
+function secureRandomInt(maxExclusive) {
+  if (maxExclusive <= 1) return 0;
+  const limit = Math.floor(0x100000000 / maxExclusive) * maxExclusive;
+  const buffer = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(buffer);
+  } while (buffer[0] >= limit);
+  return buffer[0] % maxExclusive;
+}
+
 function createDeck() {
   const suits = ["S", "H", "D", "C"];
   const deck = [];
@@ -432,7 +442,7 @@ function createDeck() {
     for (let rank = 2; rank <= 14; rank += 1) deck.push({ rank, suit });
   }
   for (let i = deck.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = secureRandomInt(i + 1);
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;
@@ -962,7 +972,7 @@ function handlePokerJanken(room, player, choice) {
     send(player.ws, { type: "poker_error", message: "オールイン中は勝敗確定まで待ってください。" });
     return;
   }
-  const cpChoice = [...pokerJankenChoices][Math.floor(Math.random() * pokerJankenChoices.size)];
+  const cpChoice = [...pokerJankenChoices][secureRandomInt(pokerJankenChoices.size)];
   const win =
     (choice === "rock" && cpChoice === "scissors") ||
     (choice === "scissors" && cpChoice === "paper") ||

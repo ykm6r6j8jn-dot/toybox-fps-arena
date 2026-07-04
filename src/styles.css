@@ -2282,13 +2282,10 @@ body.celebrating::after {
   color: #ffd23a;
 }
 
-.poker-mood,
 .poker-streak {
   min-height: 18px;
   padding: 2px 7px;
   border-radius: 999px;
-  background: rgba(255, 210, 58, 0.14);
-  color: #ffe27a !important;
   font-size: 10px !important;
 }
 
