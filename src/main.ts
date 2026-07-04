@@ -329,9 +329,9 @@ const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
 
-nameInput.value = localStorage.getItem("toybox-name") || `Player${Math.floor(Math.random() * 90 + 10)}`;
+nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Player${Math.floor(Math.random() * 90 + 10)}`).replace(/[<>]/g, "");
 nameInput.addEventListener("input", () => {
-  const name = nameInput.value.trim();
+  const name = sanitizeTextInput(nameInput.value, 14).replace(/[<>]/g, "");
   if (name) localStorage.setItem("toybox-name", name);
 });
 const initialRoomCode = sanitizeRoomCode(new URLSearchParams(location.search).get("room") || "");
@@ -2477,7 +2477,7 @@ for (const button of partySelect.querySelectorAll<HTMLButtonElement>("[data-part
 }
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const text = chatInput.value.trim();
+  const text = sanitizeTextInput(chatInput.value, 80);
   if (!text || !self.joined) return;
   send({ type: "chat", text });
   chatInput.value = "";
@@ -2814,6 +2814,20 @@ function sanitizeRoomCode(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
 }
 
+function sanitizeTextInput(value: unknown, maxLength: number, fallback = "") {
+  const normalized = String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const clipped = [...normalized].slice(0, maxLength).join("").trim();
+  return clipped || fallback;
+}
+
+function sanitizePlayerNameInput() {
+  return sanitizeTextInput(nameInput.value, 14, "プレイヤー").replace(/[<>]/g, "").trim() || "プレイヤー";
+}
+
 function joinTypedRoom() {
   const code = sanitizeRoomCode(roomInput.value);
   roomInput.value = code;
@@ -2837,7 +2851,8 @@ function joinTypedPokerRoom() {
 }
 
 function joinPoker(room: string) {
-  const name = nameInput.value.trim() || "プレイヤー";
+  const name = sanitizePlayerNameInput();
+  nameInput.value = name;
   localStorage.setItem("toybox-name", name);
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
   self.joined = false;
@@ -2889,7 +2904,8 @@ function sendPokerJanken(choice: string) {
 }
 
 function join(room: string) {
-  const name = nameInput.value.trim() || "プレイヤー";
+  const name = sanitizePlayerNameInput();
+  nameInput.value = name;
   localStorage.setItem("toybox-name", name);
   localStorage.setItem("toybox-skin", currentSkin);
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
@@ -2897,7 +2913,7 @@ function join(room: string) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("open", () => {
-    send({ type: "join", name, room: room.trim().toUpperCase(), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin });
+    send({ type: "join", name, room: sanitizeRoomCode(room), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -2906,7 +2922,14 @@ function join(room: string) {
 }
 
 function handleMessage(event: MessageEvent<string>) {
-  const message = JSON.parse(event.data);
+  let message: Record<string, any>;
+  try {
+    message = JSON.parse(event.data);
+  } catch {
+    showToast("不正な通信データを無視しました。");
+    return;
+  }
+  if (!message || typeof message !== "object") return;
   if (message.type === "poker_welcome") {
     pokerJoined = true;
     pokerSelfId = String(message.id || "");
@@ -4465,7 +4488,7 @@ function updateSlots() {
     slot.innerHTML = player
       ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar" style="--slot-color:${escapeHtml(player.cosmeticColor || "")}"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
           canChangeTeam
-            ? `<div class="slot-team-actions" aria-label="チーム変更"><button data-player-id="${player.id}" data-team-change="blue" class="${player.color === "blue" ? "active" : ""}">青</button><button data-player-id="${player.id}" data-team-change="red" class="${player.color === "red" ? "active" : ""}">赤</button></div>`
+            ? `<div class="slot-team-actions" aria-label="チーム変更"><button data-player-id="${escapeHtml(player.id)}" data-team-change="blue" class="${player.color === "blue" ? "active" : ""}">青</button><button data-player-id="${escapeHtml(player.id)}" data-team-change="red" class="${player.color === "red" ? "active" : ""}">赤</button></div>`
             : ""
         }`
       : `<span class="slot-key">${i + 1}</span><b class="slot-avatar"></b><strong>空き</strong><small>-</small>`;
@@ -4578,7 +4601,7 @@ function renderPoker(snapshot: PokerSnapshot) {
         <div class="seat-cards">${cardHtml}</div>
         <strong>${escapeHtml(player.name)}</strong>
         <span>${player.chips}Don</span>
-        <small>${player.bet ? `BET ${player.bet}` : player.lastAction || (player.isBot ? "CP" : "PLAYER")}</small>
+        <small>${escapeHtml(player.bet ? `BET ${player.bet}` : player.lastAction || (player.isBot ? "CP" : "PLAYER"))}</small>
         ${streak}
         ${winner ? `<em>${escapeHtml(winner.label)} +${winner.amount}Don</em>` : ""}
       </div>
@@ -4732,8 +4755,8 @@ function showToast(message: string) {
   setTimeout(() => toast.classList.remove("show"), 1800);
 }
 
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (char) => ({
+function escapeHtml(value: unknown) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",

@@ -10,6 +10,7 @@ const isProd = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 5188);
 const maxPlayers = 20;
 const maxCpuPlayers = 19;
+const maxWsMessageBytes = 8192;
 const pokerStartingChips = 2000;
 const pokerTurnMs = 10_000;
 const pokerSmallBlind = 10;
@@ -88,6 +89,7 @@ const cpuWeaponMaxRange = new Map([
   ["type95", 58],
   ["cpu", 30]
 ]);
+const allowedWeapons = new Set(weaponDamage.keys());
 const solidObstacles = [];
 const okakoSolidObstacles = [];
 
@@ -193,6 +195,49 @@ const mimeTypes = new Map([
   [".json", "application/json; charset=utf-8"]
 ]);
 
+function securityHeaders(contentType = "text/plain; charset=utf-8") {
+  return {
+    "content-type": contentType,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "content-security-policy": "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+  };
+}
+
+function safeDecodePath(url = "/") {
+  const rawPath = String(url || "/").split("?")[0];
+  if (rawPath.length > 2048) return { error: 414, path: "" };
+  try {
+    const decoded = decodeURIComponent(rawPath);
+    return { error: 0, path: decoded.startsWith("/") ? decoded : `/${decoded}` };
+  } catch {
+    return { error: 400, path: "" };
+  }
+}
+
+function normalizeRoomCode(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+}
+
+function cleanText(value, maxLength, fallback = "") {
+  const normalized = String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const clipped = [...normalized].slice(0, maxLength).join("").trim();
+  return clipped || fallback;
+}
+
+function sanitizePlayerName(value) {
+  return cleanText(value, 14, "プレイヤー").replace(/[<>]/g, "").trim() || "プレイヤー";
+}
+
+function sanitizeChatText(value) {
+  return cleanText(value, 80, "");
+}
+
 const rooms = new Map();
 const pokerRooms = new Map();
 let vite;
@@ -216,7 +261,7 @@ const server = createServer(async (req, res) => {
         color: player.color,
         score: player.score
       })));
-    res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, players }));
     return;
   }
@@ -227,12 +272,18 @@ const server = createServer(async (req, res) => {
   }
 
   const publicRoot = resolve(__dirname, "dist");
-  const safePath = decodeURIComponent((req.url || "/").split("?")[0]);
+  const decodedPath = safeDecodePath(req.url);
+  if (decodedPath.error) {
+    res.writeHead(decodedPath.error, securityHeaders());
+    res.end(decodedPath.error === 414 ? "uri too long" : "bad request");
+    return;
+  }
+  const safePath = decodedPath.path;
   const target = safePath === "/" ? "/index.html" : safePath;
   const filePath = resolve(join(publicRoot, target));
 
   if (!filePath.startsWith(publicRoot)) {
-    res.writeHead(403);
+    res.writeHead(403, securityHeaders());
     res.end("forbidden");
     return;
   }
@@ -240,21 +291,21 @@ const server = createServer(async (req, res) => {
   try {
     const info = await stat(filePath);
     if (!info.isFile()) throw new Error("not file");
-    res.writeHead(200, { "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream" });
+    res.writeHead(200, securityHeaders(mimeTypes.get(extname(filePath)) || "application/octet-stream"));
     createReadStream(filePath).pipe(res);
   } catch {
     try {
       const html = await readFile(join(publicRoot, "index.html"), "utf8");
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.writeHead(200, securityHeaders("text/html; charset=utf-8"));
       res.end(html);
     } catch {
-      res.writeHead(404);
+      res.writeHead(404, securityHeaders());
       res.end("not found");
     }
   }
 });
 
-const wss = new WebSocketServer({ server, path: "/ws" });
+const wss = new WebSocketServer({ server, path: "/ws", maxPayload: maxWsMessageBytes });
 
 function roomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -292,6 +343,11 @@ function normalizeRelationMode(value) {
 function normalizeSkin(value) {
   const skin = String(value || "rounded");
   return skins.has(skin) ? skin : "rounded";
+}
+
+function normalizeWeapon(value) {
+  const weapon = String(value || "rifle");
+  return allowedWeapons.has(weapon) ? weapon : "rifle";
 }
 
 function normalizeTeam(value, room) {
@@ -380,7 +436,7 @@ function findMatchRoom(mode = "oneLife", partySize = 1, cpuFill = true, relation
 }
 
 function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchmaking = true, cpuFill = true, relationMode = "versus") {
-  const normalized = (code || "").trim().toUpperCase();
+  const normalized = normalizeRoomCode(code);
   if (normalized && rooms.has(normalized)) return rooms.get(normalized);
   if (!normalized) {
     const match = findMatchRoom(mode, partySize, cpuFill, relationMode);
@@ -400,7 +456,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     partySize: size,
     matchStarted: false,
     maxHumanPlayers: maxPlayers,
-    weaponStats: {},
+    weaponStats: Object.create(null),
     movementStats: { samples: 0, moving: 0, airborne: 0 },
     targetScore: 0,
     createdAt: Date.now(),
@@ -453,7 +509,7 @@ function cardCode(card) {
 }
 
 function getPokerRoom(code, cpuCount = 2) {
-  const normalized = String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  const normalized = normalizeRoomCode(code);
   if (normalized && pokerRooms.has(normalized)) return pokerRooms.get(normalized);
   const roomCodeValue = normalized.length === 6 ? normalized : roomCode();
   const room = {
@@ -1069,10 +1125,11 @@ function spawnPoint(index = 0) {
 }
 
 function publicPlayer(player) {
+  const color = teams.has(player.color) ? player.color : "blue";
   return {
     id: player.id,
     name: player.name,
-    color: player.color,
+    color,
     cosmeticColor: player.cosmeticColor,
     skin: normalizeSkin(player.skin),
     ready: player.ready,
@@ -1117,7 +1174,12 @@ function broadcast(room, payload) {
 }
 
 function addFeed(room, text, color = "blue") {
-  room.feed.unshift({ id: `${Date.now()}-${Math.random()}`, text, color, at: Date.now() });
+  room.feed.unshift({
+    id: `${Date.now()}-${Math.random()}`,
+    text: cleanText(text, 120, "更新"),
+    color: teams.has(color) ? color : "blue",
+    at: Date.now()
+  });
   room.feed = room.feed.slice(0, 8);
 }
 
@@ -1309,13 +1371,23 @@ wss.on("connection", (ws) => {
   let currentPokerRoom;
   let currentPokerPlayer;
 
+  ws.on("error", () => {
+    if (ws.readyState === ws.OPEN) ws.close(1009, "invalid websocket message");
+  });
+
   ws.on("message", (raw) => {
+    const rawSize = typeof raw === "string" ? Buffer.byteLength(raw) : raw?.byteLength || raw?.length || 0;
+    if (rawSize > maxWsMessageBytes) {
+      ws.close(1009, "message too large");
+      return;
+    }
     let message;
     try {
       message = JSON.parse(String(raw));
     } catch {
       return;
     }
+    if (!message || typeof message !== "object") return;
 
     if (message.type === "poker_join") {
       const requestedCpuCount = normalizePokerCpuCount(message.cpuCount);
@@ -1335,7 +1407,7 @@ wss.on("connection", (ws) => {
       const player = {
         id,
         ws,
-        name: String(message.name || "プレイヤー").slice(0, 14),
+        name: sanitizePlayerName(message.name),
         chips: pokerStartingChips,
         hand: [],
         bet: 0,
@@ -1411,7 +1483,7 @@ wss.on("connection", (ws) => {
       const player = {
         id,
         ws,
-        name: String(message.name || "プレイヤー").slice(0, 14),
+        name: sanitizePlayerName(message.name),
         color: team,
         cosmeticColor: safeColor(message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
         skin: normalizeSkin(message.skin),
@@ -1493,7 +1565,7 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "chat") {
-      const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 80);
+      const text = sanitizeChatText(message.text);
       if (!text) return;
       const item = {
         id: `${Date.now()}-${Math.random()}`,
@@ -1632,7 +1704,7 @@ wss.on("connection", (ws) => {
       if (currentPlayer.eliminated || currentPlayer.health <= 0) return;
       const origin = vectorFrom(message.origin);
       const direction = normalize(vectorFrom(message.direction));
-      const weapon = String(message.weapon);
+      const weapon = normalizeWeapon(message.weapon);
       const range = weaponRange.get(weapon) || 70;
       currentRoom.weaponStats[weapon] = (currentRoom.weaponStats[weapon] || 0) + 1;
       currentPlayer.lastWeapon = weapon;
@@ -2180,7 +2252,7 @@ function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, r
 
 function resetRoomScores(room) {
   room.winner = null;
-  room.weaponStats = {};
+  room.weaponStats = Object.create(null);
   room.movementStats = { samples: 0, moving: 0, airborne: 0 };
   if (room.mode === "castle" && !room.playerTeam) {
     const firstHuman = [...room.players.values()].find((player) => !player.isBot);
