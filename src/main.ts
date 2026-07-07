@@ -177,6 +177,17 @@ type PokerSnapshot = {
   };
 };
 
+type ProgressState = {
+  xp: number;
+  sessions: number;
+  streakDays: number;
+  lastPlayDate: string;
+  bestScore: number;
+  bestKills: number;
+  pokerWins: number;
+  lastReward: string;
+};
+
 const $ = <T extends HTMLElement>(selector: string) => {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`Missing element: ${selector}`);
@@ -324,10 +335,18 @@ const resultPanel = $("#resultPanel");
 const resultTitle = $("#resultTitle");
 const closeResult = $("#closeResult") as HTMLButtonElement;
 const resultRows = $("#resultRows");
+const resultProgress = $("#resultProgress");
+const progressRank = $("#progressRank");
+const progressMeter = $("#progressMeter") as HTMLElement;
+const progressStats = $("#progressStats");
+const progressHint = $("#progressHint");
 const toast = $("#toast");
 const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
+const progressStorageKey = "donpachi-progress-v1";
+let progressState = loadProgressState();
+let lastPokerRewardKey = "";
 
 nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Player${Math.floor(Math.random() * 90 + 10)}`).replace(/[<>]/g, "");
 nameInput.addEventListener("input", () => {
@@ -340,6 +359,7 @@ roomInput.addEventListener("input", () => {
   const nextCode = sanitizeRoomCode(roomInput.value);
   if (roomInput.value !== nextCode) roomInput.value = nextCode;
 });
+renderProgressCard();
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -645,6 +665,129 @@ function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice, nextCpuFi
 
 function setArenaChoice(arena: ArenaId) {
   arenaChoice = "toybox";
+}
+
+function emptyProgressState(): ProgressState {
+  return {
+    xp: 0,
+    sessions: 0,
+    streakDays: 0,
+    lastPlayDate: "",
+    bestScore: 0,
+    bestKills: 0,
+    pokerWins: 0,
+    lastReward: ""
+  };
+}
+
+function loadProgressState(): ProgressState {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(progressStorageKey) || "{}") as Partial<ProgressState>;
+    const base = emptyProgressState();
+    return {
+      xp: Math.max(0, Math.floor(Number(parsed.xp) || base.xp)),
+      sessions: Math.max(0, Math.floor(Number(parsed.sessions) || base.sessions)),
+      streakDays: Math.max(0, Math.floor(Number(parsed.streakDays) || base.streakDays)),
+      lastPlayDate: typeof parsed.lastPlayDate === "string" ? parsed.lastPlayDate : base.lastPlayDate,
+      bestScore: Math.max(0, Math.floor(Number(parsed.bestScore) || base.bestScore)),
+      bestKills: Math.max(0, Math.floor(Number(parsed.bestKills) || base.bestKills)),
+      pokerWins: Math.max(0, Math.floor(Number(parsed.pokerWins) || base.pokerWins)),
+      lastReward: typeof parsed.lastReward === "string" ? parsed.lastReward.slice(0, 48) : base.lastReward
+    };
+  } catch {
+    return emptyProgressState();
+  }
+}
+
+function saveProgressState() {
+  localStorage.setItem(progressStorageKey, JSON.stringify(progressState));
+}
+
+function todayInJapan() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
+}
+
+function dayNumber(date: string) {
+  const stamp = Date.parse(`${date}T00:00:00+09:00`);
+  return Number.isFinite(stamp) ? Math.floor(stamp / 86_400_000) : 0;
+}
+
+function progressInfo() {
+  const level = Math.floor(Math.sqrt(progressState.xp / 120)) + 1;
+  const previous = Math.max(0, (level - 1) * (level - 1) * 120);
+  const next = level * level * 120;
+  const titles = ["ルーキー", "ハチ見習い", "アリーナ常連", "ドンパチ職人", "首領蜂候補", "都市伝説"];
+  const title = titles[Math.min(titles.length - 1, Math.floor((level - 1) / 3))];
+  const progress = next > previous ? (progressState.xp - previous) / (next - previous) : 1;
+  return { level, title, previous, next, progress: THREE.MathUtils.clamp(progress, 0, 1) };
+}
+
+function renderProgressCard(note = "") {
+  const info = progressInfo();
+  const remaining = Math.max(0, info.next - progressState.xp);
+  progressRank.textContent = `${info.title} Lv.${info.level}`;
+  progressMeter.style.width = `${Math.round(info.progress * 100)}%`;
+  progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / Poker ${progressState.pokerWins}勝`;
+  progressHint.textContent = note || (progressState.lastReward ? `${progressState.lastReward} / 次まで ${remaining}XP` : `次のランクまで ${remaining}XP`);
+}
+
+function touchProgressSession(kind: "fps" | "poker") {
+  const today = todayInJapan();
+  if (progressState.lastPlayDate !== today) {
+    const diff = dayNumber(today) - dayNumber(progressState.lastPlayDate);
+    progressState.streakDays = diff === 1 ? progressState.streakDays + 1 : 1;
+    progressState.lastPlayDate = today;
+  }
+  progressState.sessions += 1;
+  progressState.lastReward = kind === "poker" ? "ポーカー卓に着席" : "アリーナ出撃";
+  saveProgressState();
+  renderProgressCard();
+}
+
+function awardProgressXp(amount: number, reason: string) {
+  const gained = Math.max(0, Math.round(amount));
+  if (!gained) return { gained: 0, leveled: false, level: progressInfo().level };
+  const before = progressInfo().level;
+  progressState.xp += gained;
+  progressState.lastReward = `+${gained}XP ${reason}`;
+  saveProgressState();
+  const after = progressInfo().level;
+  renderProgressCard();
+  return { gained, leveled: after > before, level: after };
+}
+
+function resultProgressHtml(reward: { gained: number; leveled: boolean; level: number; reason: string }) {
+  if (!reward.gained) return "";
+  const info = progressInfo();
+  const levelText = reward.leveled ? `ランクアップ Lv.${reward.level}` : `${info.title} Lv.${info.level}`;
+  const remaining = Math.max(0, info.next - progressState.xp);
+  return `<strong>+${reward.gained}XP ${escapeHtml(reward.reason)} / ${escapeHtml(levelText)}</strong><span>次のランクまで ${remaining}XP。連続 ${progressState.streakDays}日プレイ中。</span>`;
+}
+
+function awardRoundProgress(winner: string, rows: PlayerState[]) {
+  const me = rows.find((player) => player.id === self.id);
+  if (!me) return { gained: 0, leveled: false, level: progressInfo().level, reason: "" };
+  const won = winner.includes(me.name)
+    || (winner.includes("青") && me.color === "blue")
+    || (winner.includes("赤") && me.color === "red")
+    || winner.includes(me.color === "blue" ? "Blue" : "Red");
+  progressState.bestScore = Math.max(progressState.bestScore, Math.round(me.score || 0));
+  progressState.bestKills = Math.max(progressState.bestKills, Math.round(me.kills || 0));
+  const gained = Math.min(280, 28 + (me.kills || 0) * 18 + (me.score || 0) * 5 + Math.floor((me.hits || 0) * 2) + Math.floor((me.damageDealt || 0) / 90) + (won ? 52 : 0));
+  const reward = awardProgressXp(gained, won ? "勝利ボーナス" : "バトル完走");
+  return { ...reward, reason: won ? "勝利ボーナス" : "バトル完走" };
+}
+
+function awardPokerProgress(snapshot: PokerSnapshot) {
+  if (snapshot.stage !== "showdown" || !snapshot.showdown) return;
+  const winner = snapshot.showdown.winners.find((item) => item.id === snapshot.selfId);
+  if (!winner) return;
+  const key = `${snapshot.room}:${snapshot.community.join("")}:${snapshot.pot}:${winner.id}:${winner.amount}`;
+  if (key === lastPokerRewardKey) return;
+  lastPokerRewardKey = key;
+  progressState.pokerWins += 1;
+  const reward = awardProgressXp(Math.min(180, 42 + Math.floor(winner.amount / 22)), "ポーカー勝利");
+  if (reward.gained) showToast(`+${reward.gained}XP ポーカー勝利`);
 }
 
 function trackArenaObject<T extends THREE.Object3D>(object: T) {
@@ -2942,12 +3085,14 @@ function handleMessage(event: MessageEvent<string>) {
     document.body.classList.add("poker-open");
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${pokerRoomCode}`);
+    touchProgressSession("poker");
     showToast("テキサスポーカーに参加しました。");
     return;
   }
   if (message.type === "poker_snapshot") {
     latestPokerSnapshot = message as PokerSnapshot;
     renderPoker(latestPokerSnapshot);
+    awardPokerProgress(latestPokerSnapshot);
     return;
   }
   if (message.type === "poker_error") {
@@ -2995,6 +3140,7 @@ function handleMessage(event: MessageEvent<string>) {
     joinPanel.classList.add("hidden");
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${self.room}`);
+    touchProgressSession("fps");
     showToast("ルームに参加しました。画面をクリックして開始。");
     ping();
     return;
@@ -3774,6 +3920,7 @@ function showResults(name: string) {
   resultWinnerSeen = name;
   resultTitle.textContent = `${name} 勝利 - リザルト`;
   const rows = [...players.values()].sort((a, b) => b.score - a.score || b.kills - a.kills || (b.damageDealt || 0) - (a.damageDealt || 0));
+  const reward = awardRoundProgress(name, rows);
   resultRows.innerHTML = rows.map((player, index) => `
     <div class="result-row ${player.color}">
       <span>#${index + 1} ${escapeHtml(player.name)}</span>
@@ -3781,6 +3928,8 @@ function showResults(name: string) {
       <small>${player.kills}K/${player.deaths}D  与${Math.round(player.damageDealt || 0)}  被${Math.round(player.damageTaken || 0)}  命中${player.hits || 0}  回復${player.healsUsed || 0}  必殺${player.specialsUsed || 0}</small>
     </div>
   `).join("");
+  resultProgress.innerHTML = resultProgressHtml(reward);
+  resultProgress.classList.toggle("show", reward.gained > 0);
   resultPanel.classList.add("open");
   scheduleLobbyReturn();
 }

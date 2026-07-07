@@ -1516,6 +1516,33 @@ body.members-open .player-slots {
   font-weight: 800;
 }
 
+.result-progress {
+  display: none;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(147, 228, 60, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(147, 228, 60, 0.16), rgba(255, 210, 58, 0.1)),
+    rgba(255, 255, 255, 0.06);
+}
+
+.result-progress.show {
+  display: grid;
+}
+
+.result-progress strong {
+  color: #baff68;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.result-progress span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .join-card {
   width: min(430px, calc(100vw - 32px));
   display: grid;
@@ -1532,6 +1559,56 @@ body.members-open .player-slots {
 .join-card > strong {
   font-size: 30px;
   letter-spacing: 0;
+}
+
+.progress-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(147, 228, 60, 0.3);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 92% 18%, rgba(255, 210, 58, 0.22), transparent 28%),
+    linear-gradient(135deg, rgba(8, 28, 34, 0.9), rgba(21, 51, 45, 0.86));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.progress-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.progress-card span,
+.progress-card small,
+.progress-stats {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.progress-card strong {
+  color: #f6ffdd;
+  font-size: 17px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.progress-meter {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.progress-meter i {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #93e43c, #fff36b, #44d7ff);
+  transition: width 0.28s ease;
 }
 
 .join-card p,

@@ -268,6 +268,15 @@
               <strong>ハチ</strong>
             </button>
           </div>
+          <div class="progress-card" id="progressCard" aria-label="Donランク">
+            <header>
+              <span>Donランク</span>
+              <strong id="progressRank">読み込み中</strong>
+            </header>
+            <div class="progress-meter"><i id="progressMeter"></i></div>
+            <div class="progress-stats" id="progressStats">連続 0日 / 最高 0pt</div>
+            <small id="progressHint">次のランクまで</small>
+          </div>
           <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
             <button type="button" class="active" data-mode="oneLife">
               <strong>ワンライフ</strong>
@@ -433,6 +442,7 @@
             <button id="closeResult" class="icon-button" aria-label="閉じる"><i data-lucide="x"></i></button>
           </header>
           <div id="resultRows" class="result-rows"></div>
+          <div id="resultProgress" class="result-progress"></div>
         </div>
       </section>
 
