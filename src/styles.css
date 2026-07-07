@@ -1561,6 +1561,51 @@ body.members-open .player-slots {
   letter-spacing: 0;
 }
 
+.login-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(68, 215, 255, 0.28);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(9, 26, 39, 0.9), rgba(18, 45, 55, 0.84));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.login-card header,
+.login-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.login-card header span,
+.login-card small {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.login-card header strong {
+  color: #d9fbff;
+  font-size: 14px;
+}
+
+.login-actions button {
+  flex: 1;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.13);
+  color: #ffffff;
+  font-weight: 950;
+}
+
+.login-actions button:first-child {
+  background: linear-gradient(135deg, #93e43c, #44d7ff);
+  color: #071622;
+}
+
 .progress-card {
   display: grid;
   gap: 8px;

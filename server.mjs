@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
@@ -11,6 +12,7 @@ const port = Number(process.env.PORT || 5188);
 const maxPlayers = 20;
 const maxCpuPlayers = 19;
 const maxWsMessageBytes = 8192;
+const maxHttpJsonBytes = 12_288;
 const pokerStartingChips = 2000;
 const pokerTurnMs = 10_000;
 const pokerSmallBlind = 10;
@@ -238,8 +240,223 @@ function sanitizeChatText(value) {
   return cleanText(value, 80, "");
 }
 
+function normalizeLoginId(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9_-]/g, "")
+    .slice(0, 32);
+}
+
+function profileHash(loginId) {
+  return createHash("sha256").update(`donpachi-profile-v1:${loginId}`).digest("hex");
+}
+
+function emptyProgress() {
+  return {
+    xp: 0,
+    sessions: 0,
+    streakDays: 0,
+    lastPlayDate: "",
+    bestScore: 0,
+    bestKills: 0,
+    pokerWins: 0,
+    lastReward: ""
+  };
+}
+
+function sanitizeProgress(progress = {}) {
+  const base = emptyProgress();
+  return {
+    xp: clamp(Math.floor(Number(progress.xp) || base.xp), 0, 9_999_999),
+    sessions: clamp(Math.floor(Number(progress.sessions) || base.sessions), 0, 999_999),
+    streakDays: clamp(Math.floor(Number(progress.streakDays) || base.streakDays), 0, 3650),
+    lastPlayDate: /^\d{4}-\d{2}-\d{2}$/.test(String(progress.lastPlayDate || "")) ? String(progress.lastPlayDate) : base.lastPlayDate,
+    bestScore: clamp(Math.floor(Number(progress.bestScore) || base.bestScore), 0, 999_999),
+    bestKills: clamp(Math.floor(Number(progress.bestKills) || base.bestKills), 0, 99_999),
+    pokerWins: clamp(Math.floor(Number(progress.pokerWins) || base.pokerWins), 0, 99_999),
+    lastReward: cleanText(progress.lastReward, 48, base.lastReward)
+  };
+}
+
+function sanitizeInventory(inventory = {}) {
+  const healPacks = Number.isFinite(Number(inventory.healPacks)) ? Number(inventory.healPacks) : initialHealPacks;
+  const pokerDon = Number.isFinite(Number(inventory.pokerDon)) ? Number(inventory.pokerDon) : pokerStartingChips;
+  return {
+    healPacks: clamp(Math.floor(healPacks), 0, 12),
+    pokerDon: clamp(Math.floor(pokerDon), 0, 999_999),
+    barrierCharges: clamp(Math.floor(Number(inventory.barrierCharges) || 0), 0, 9),
+    boostTickets: clamp(Math.floor(Number(inventory.boostTickets) || 0), 0, 99)
+  };
+}
+
+function levelFromXp(xp = 0) {
+  return Math.floor(Math.sqrt(Math.max(0, Number(xp) || 0) / 120)) + 1;
+}
+
+function makeProfile() {
+  const now = Date.now();
+  return {
+    name: "プレイヤー",
+    skin: "rounded",
+    cosmeticColor: "#1598f0",
+    progress: emptyProgress(),
+    inventory: sanitizeInventory(),
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+async function loadProfileStore() {
+  try {
+    const parsed = JSON.parse(await readFile(profileStorePath, "utf8"));
+    return {
+      version: 1,
+      profiles: parsed && typeof parsed.profiles === "object" && parsed.profiles ? parsed.profiles : {}
+    };
+  } catch {
+    return { version: 1, profiles: {} };
+  }
+}
+
+async function saveProfileStore() {
+  await mkdir(resolve(profileStorePath, ".."), { recursive: true });
+  await writeFile(profileStorePath, JSON.stringify(profileStore, null, 2), "utf8");
+}
+
+function getProfile(loginId) {
+  const normalized = normalizeLoginId(loginId);
+  if (normalized.length < 6) return null;
+  return profileStore.profiles[profileHash(normalized)] || null;
+}
+
+function getOrCreateProfile(loginId) {
+  const normalized = normalizeLoginId(loginId);
+  if (normalized.length < 6) return null;
+  const key = profileHash(normalized);
+  profileStore.profiles[key] ||= makeProfile();
+  return { key, profile: profileStore.profiles[key] };
+}
+
+function mergeProfile(profile, payload = {}) {
+  if (!profile) return null;
+  if (payload.name !== undefined) profile.name = sanitizePlayerName(payload.name);
+  if (payload.skin !== undefined) profile.skin = normalizeSkin(payload.skin);
+  if (payload.cosmeticColor !== undefined) profile.cosmeticColor = safeColor(payload.cosmeticColor) || profile.cosmeticColor || "#1598f0";
+  if (payload.progress && typeof payload.progress === "object") {
+    const next = sanitizeProgress(payload.progress);
+    const current = sanitizeProgress(profile.progress);
+    profile.progress = {
+      ...current,
+      ...next,
+      xp: Math.max(current.xp, next.xp),
+      sessions: Math.max(current.sessions, next.sessions),
+      streakDays: Math.max(current.streakDays, next.streakDays),
+      bestScore: Math.max(current.bestScore, next.bestScore),
+      bestKills: Math.max(current.bestKills, next.bestKills),
+      pokerWins: Math.max(current.pokerWins, next.pokerWins),
+      lastReward: next.lastReward || current.lastReward
+    };
+  } else {
+    profile.progress = sanitizeProgress(profile.progress);
+  }
+  if (payload.inventory && typeof payload.inventory === "object") {
+    const next = sanitizeInventory(payload.inventory);
+    const current = sanitizeInventory(profile.inventory);
+    profile.inventory = {
+      healPacks: clamp(Math.floor(Number(next.healPacks)), 0, 12),
+      pokerDon: Math.max(current.pokerDon, next.pokerDon),
+      barrierCharges: Math.max(current.barrierCharges, next.barrierCharges),
+      boostTickets: Math.max(current.boostTickets, next.boostTickets)
+    };
+  } else {
+    profile.inventory = sanitizeInventory(profile.inventory);
+  }
+  profile.updatedAt = Date.now();
+  return profile;
+}
+
+function publicProfile(profile) {
+  const progress = sanitizeProgress(profile?.progress);
+  const inventory = sanitizeInventory(profile?.inventory);
+  return {
+    name: sanitizePlayerName(profile?.name),
+    skin: normalizeSkin(profile?.skin),
+    cosmeticColor: safeColor(profile?.cosmeticColor) || "#1598f0",
+    level: levelFromXp(progress.xp),
+    progress,
+    inventory
+  };
+}
+
+function profileForPlayer(player) {
+  return player?.profileKey ? profileStore.profiles[player.profileKey] : null;
+}
+
+function saveProfileSoon() {
+  saveProfileStore().catch(() => undefined);
+}
+
+function readJsonRequest(req, limit = maxHttpJsonBytes) {
+  return new Promise((resolveJson, rejectJson) => {
+    let size = 0;
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      size += Buffer.byteLength(chunk);
+      if (size > limit) {
+        rejectJson(Object.assign(new Error("too large"), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolveJson(body ? JSON.parse(body) : {});
+      } catch {
+        rejectJson(Object.assign(new Error("bad json"), { status: 400 }));
+      }
+    });
+    req.on("error", rejectJson);
+  });
+}
+
+async function handleProfileRequest(req, res) {
+  if (req.method !== "POST") {
+    res.writeHead(405, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: false, message: "method not allowed" }));
+    return;
+  }
+  try {
+    const payload = await readJsonRequest(req);
+    const loginId = normalizeLoginId(payload.loginId);
+    if (loginId.length < 6) {
+      res.writeHead(400, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "ログインIDは6文字以上の英数字で入力してください。" }));
+      return;
+    }
+    const mode = String(payload.mode || "login");
+    const existingProfile = getProfile(loginId);
+    if (mode === "login" && !existingProfile) {
+      res.writeHead(404, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "このログインIDはまだ作成されていません。" }));
+      return;
+    }
+    const record = getOrCreateProfile(loginId);
+    mergeProfile(record.profile, mode === "login" ? {} : payload);
+    if (mode !== "login") await saveProfileStore();
+    res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: true, profile: publicProfile(record.profile) }));
+  } catch (error) {
+    res.writeHead(error?.status || 500, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: false, message: "プロフィール処理に失敗しました。" }));
+  }
+}
+
 const rooms = new Map();
 const pokerRooms = new Map();
+const profileStorePath = resolve(process.env.DONPACHI_PROFILE_STORE || join(__dirname, "data", "profiles.json"));
+const profileStore = await loadProfileStore();
 let vite;
 
 if (!isProd) {
@@ -251,6 +468,11 @@ if (!isProd) {
 }
 
 const server = createServer(async (req, res) => {
+  if (String(req.url || "").split("?")[0] === "/api/profile") {
+    await handleProfileRequest(req, res);
+    return;
+  }
+
   if (req.url === "/health") {
     const now = Date.now();
     const players = [...rooms.values()].flatMap((room) => [...room.players.values()]
@@ -803,7 +1025,13 @@ function awardPokerPot(room, winner, reason) {
   for (const player of room.players.values()) {
     player.streak = winner && player.id === winner.id ? (player.streak || 0) + 1 : 0;
     if (player.isBot) player.mood = winner && player.id === winner.id ? "乗っている" : "立て直し中";
+    const profile = profileForPlayer(player);
+    if (profile) {
+      profile.inventory = sanitizeInventory({ ...profile.inventory, pokerDon: player.chips });
+      profile.updatedAt = Date.now();
+    }
   }
+  saveProfileSoon();
   room.showdown = {
     winners: winner ? [{ id: winner.id, name: winner.name, label: reason, amount: room.pot }] : [],
     revealed: [...room.players.values()].map((player) => ({ id: player.id, hand: player.hand.map(cardCode) }))
@@ -835,7 +1063,13 @@ function resolvePokerShowdown(room) {
   for (const player of room.players.values()) {
     player.streak = winnerIds.has(player.id) ? (player.streak || 0) + 1 : 0;
     if (player.isBot) player.mood = winnerIds.has(player.id) ? "読み勝ち" : "反省中";
+    const profile = profileForPlayer(player);
+    if (profile) {
+      profile.inventory = sanitizeInventory({ ...profile.inventory, pokerDon: player.chips });
+      profile.updatedAt = Date.now();
+    }
   }
+  saveProfileSoon();
   room.showdown = {
     winners: winners.map((winner) => ({ id: winner.id, name: winner.name, label: best?.label || "勝利", amount: share })),
     revealed: [...room.players.values()].map((player) => ({ id: player.id, hand: player.hand.map(cardCode) }))
@@ -1039,6 +1273,12 @@ function handlePokerJanken(room, player, choice) {
   const amount = win ? 2000 : draw ? 1000 : 500;
   const result = win ? "勝ち" : draw ? "あいこ" : "負け";
   player.chips += amount;
+  const profile = profileForPlayer(player);
+  if (profile) {
+    profile.inventory = sanitizeInventory({ ...profile.inventory, pokerDon: player.chips });
+    profile.updatedAt = Date.now();
+    saveProfileSoon();
+  }
   player.folded = false;
   player.acted = false;
   player.allIn = false;
@@ -1161,7 +1401,8 @@ function publicPlayer(player) {
     shieldUntil: player.shieldUntil || 0,
     speedBoostUntil: player.speedBoostUntil || 0,
     damageBoostUntil: player.damageBoostUntil || 0,
-    comebackUntil: player.comebackUntil || 0
+    comebackUntil: player.comebackUntil || 0,
+    level: levelFromXp(profileForPlayer(player)?.progress?.xp || 0)
   };
 }
 
@@ -1405,12 +1646,28 @@ wss.on("connection", (ws) => {
         send(ws, { type: "poker_error", message: "このポーカールームは満席です。" });
         return;
       }
+      const hadPokerProfile = Boolean(getProfile(message.loginId));
+      const pokerProfileRecord = getOrCreateProfile(message.loginId);
+      if (pokerProfileRecord) {
+        mergeProfile(pokerProfileRecord.profile, hadPokerProfile
+          ? { progress: message.progress }
+          : {
+            name: message.name,
+            skin: message.skin,
+            cosmeticColor: message.cosmeticColor,
+            progress: message.progress,
+            inventory: message.inventory
+          });
+        saveProfileSoon();
+      }
+      const pokerProfile = pokerProfileRecord?.profile || null;
       const id = crypto.randomUUID();
       const player = {
         id,
         ws,
-        name: sanitizePlayerName(message.name),
-        chips: pokerStartingChips,
+        profileKey: pokerProfileRecord?.key || "",
+        name: sanitizePlayerName(pokerProfile?.name || message.name),
+        chips: sanitizeInventory(pokerProfile?.inventory).pokerDon,
         hand: [],
         bet: 0,
         folded: false,
@@ -1435,7 +1692,7 @@ wss.on("connection", (ws) => {
       currentPokerPlayer = player;
       room.lastEvent = `${player.name} がポーカールームに参加`;
       maybeStartPokerHand(room);
-      send(ws, { type: "poker_welcome", id, room: room.code, startingChips: pokerStartingChips, turnMs: pokerTurnMs });
+      send(ws, { type: "poker_welcome", id, room: room.code, startingChips: pokerStartingChips, turnMs: pokerTurnMs, profile: pokerProfile ? publicProfile(pokerProfile) : null });
       broadcastPoker(room);
       return;
     }
@@ -1458,6 +1715,21 @@ wss.on("connection", (ws) => {
       const requestedPartySize = normalizePartySize(message.partySize);
       const requestedCpuFill = normalizeCpuFill(message.cpuFill);
       const requestedRelationMode = normalizeRelationMode(message.relationMode);
+      const hadProfile = Boolean(getProfile(message.loginId));
+      const profileRecord = getOrCreateProfile(message.loginId);
+      if (profileRecord) {
+        mergeProfile(profileRecord.profile, hadProfile
+          ? { progress: message.progress }
+          : {
+            name: message.name,
+            skin: message.skin,
+            cosmeticColor: message.cosmeticColor,
+            progress: message.progress,
+            inventory: message.inventory
+          });
+        saveProfileSoon();
+      }
+      const loginProfile = profileRecord?.profile || null;
       const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
       if (humanPlayers(room).length === 0) room.cpuFill = requestedCpuFill;
       if (humanPlayers(room).length === 0) room.relationMode = requestedRelationMode;
@@ -1485,10 +1757,11 @@ wss.on("connection", (ws) => {
       const player = {
         id,
         ws,
-        name: sanitizePlayerName(message.name),
+        profileKey: profileRecord?.key || "",
+        name: sanitizePlayerName(loginProfile?.name || message.name),
         color: team,
-        cosmeticColor: safeColor(message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
-        skin: normalizeSkin(message.skin),
+        cosmeticColor: safeColor(loginProfile?.cosmeticColor || message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
+        skin: normalizeSkin(loginProfile?.skin || message.skin),
         ready: false,
         health: maxHealth,
         score: 0,
@@ -1503,7 +1776,7 @@ wss.on("connection", (ws) => {
         lives: initialLivesForMode(room.mode),
         eliminated: false,
         creative: false,
-        healPacks: initialHealPacks,
+        healPacks: sanitizeInventory(loginProfile?.inventory).healPacks,
         donPunchCharge: 0,
         speedBoostUntil: 0,
         damageBoostUntil: 0,
@@ -1526,7 +1799,7 @@ wss.on("connection", (ws) => {
       syncMatchCpuFill(room);
       addFeed(room, `${player.name} が参加`, player.color);
       const welcomeSpawn = { x: player.x, y: player.y, z: player.z, yaw: player.yaw };
-      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, cpuFill: room.cpuFill, relationMode: room.relationMode, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn });
+      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, cpuFill: room.cpuFill, relationMode: room.relationMode, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn, profile: loginProfile ? publicProfile(loginProfile) : null });
       broadcast(room, { type: "feed", feed: room.feed });
       return;
     }
@@ -1585,6 +1858,30 @@ wss.on("connection", (ws) => {
     if (message.type === "customize") {
       currentPlayer.cosmeticColor = safeColor(message.cosmeticColor) || currentPlayer.cosmeticColor;
       currentPlayer.skin = normalizeSkin(message.skin || currentPlayer.skin);
+      const profile = profileForPlayer(currentPlayer);
+      if (profile) {
+        mergeProfile(profile, {
+          name: currentPlayer.name,
+          skin: currentPlayer.skin,
+          cosmeticColor: currentPlayer.cosmeticColor
+        });
+        saveProfileSoon();
+      }
+      return;
+    }
+
+    if (message.type === "profile_progress") {
+      const profile = profileForPlayer(currentPlayer);
+      if (profile) {
+        mergeProfile(profile, {
+          name: currentPlayer.name,
+          skin: currentPlayer.skin,
+          cosmeticColor: currentPlayer.cosmeticColor,
+          progress: message.progress,
+          inventory: message.inventory
+        });
+        saveProfileSoon();
+      }
       return;
     }
 
@@ -1639,6 +1936,12 @@ wss.on("connection", (ws) => {
       currentPlayer.healPacks -= 1;
       currentPlayer.healsUsed = (currentPlayer.healsUsed || 0) + 1;
       currentPlayer.health = Math.min(maxHealth, currentPlayer.health + healPackAmount);
+      const profile = profileForPlayer(currentPlayer);
+      if (profile) {
+        profile.inventory = sanitizeInventory({ ...profile.inventory, healPacks: currentPlayer.healPacks });
+        profile.updatedAt = Date.now();
+        saveProfileSoon();
+      }
       addFeed(currentRoom, `${currentPlayer.name} が回復アイテムを使用`, currentPlayer.color);
       send(currentPlayer.ws, { type: "sound", sound: "heal" });
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });

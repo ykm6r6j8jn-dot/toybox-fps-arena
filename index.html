@@ -246,6 +246,21 @@
         <div class="join-card">
           <strong>DonPaChi FPS</strong>
           <p>友達にリンクを送って、同じルームで軽く撃ち合えます。</p>
+          <div class="login-card" id="loginCard">
+            <header>
+              <span>ログインID</span>
+              <strong id="loginStatus">未ログイン</strong>
+            </header>
+            <label>
+              自分だけのID
+              <input id="loginIdInput" maxlength="32" placeholder="半角英数字6文字以上" autocomplete="off" autocapitalize="none" inputmode="latin" />
+            </label>
+            <div class="login-actions">
+              <button id="createLoginId" type="button">新規ID作成</button>
+              <button id="loginProfile" type="button">ログイン</button>
+            </div>
+            <small>同じIDで入ると名前、スキン、レベル、所持アイテムを復元します。</small>
+          </div>
           <label>
             ニックネーム
             <input id="nameInput" maxlength="14" placeholder="プレイヤー" autocomplete="nickname" />

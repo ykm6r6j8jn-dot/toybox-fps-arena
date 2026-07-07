@@ -73,6 +73,7 @@ type PlayerState = {
   lastSeen: number;
   isBot?: boolean;
   weapon?: string;
+  level?: number;
 };
 
 type FeedItem = {
@@ -188,6 +189,22 @@ type ProgressState = {
   lastReward: string;
 };
 
+type ProfileInventory = {
+  healPacks: number;
+  pokerDon: number;
+  barrierCharges: number;
+  boostTickets: number;
+};
+
+type LoginProfile = {
+  name?: string;
+  skin?: SkinId;
+  cosmeticColor?: string;
+  level?: number;
+  progress?: Partial<ProgressState>;
+  inventory?: Partial<ProfileInventory>;
+};
+
 const $ = <T extends HTMLElement>(selector: string) => {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`Missing element: ${selector}`);
@@ -233,6 +250,10 @@ const canvas = $("#game") as HTMLCanvasElement;
 const minimapCanvas = $("#minimap") as HTMLCanvasElement;
 const minimap = minimapCanvas.getContext("2d")!;
 const joinPanel = $("#joinPanel");
+const loginIdInput = $("#loginIdInput") as HTMLInputElement;
+const createLoginIdButton = $("#createLoginId") as HTMLButtonElement;
+const loginProfileButton = $("#loginProfile") as HTMLButtonElement;
+const loginStatus = $("#loginStatus");
 const nameInput = $("#nameInput") as HTMLInputElement;
 const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
@@ -345,13 +366,25 @@ const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
 const progressStorageKey = "donpachi-progress-v1";
+const inventoryStorageKey = "donpachi-inventory-v1";
+const loginStorageKey = "donpachi-login-id";
 let progressState = loadProgressState();
+let profileInventory = loadProfileInventory();
+let loggedInLoginId = sanitizeLoginId(localStorage.getItem(loginStorageKey) || "");
+let profileSyncTimer = 0;
+let applyingProfile = false;
 let lastPokerRewardKey = "";
 
 nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Player${Math.floor(Math.random() * 90 + 10)}`).replace(/[<>]/g, "");
 nameInput.addEventListener("input", () => {
   const name = sanitizeTextInput(nameInput.value, 14).replace(/[<>]/g, "");
   if (name) localStorage.setItem("toybox-name", name);
+  scheduleProfileSync();
+});
+loginIdInput.value = loggedInLoginId;
+loginIdInput.addEventListener("input", () => {
+  const nextId = sanitizeLoginId(loginIdInput.value);
+  if (loginIdInput.value !== nextId) loginIdInput.value = nextId;
 });
 const initialRoomCode = sanitizeRoomCode(new URLSearchParams(location.search).get("room") || "");
 if (initialRoomCode) roomInput.value = initialRoomCode;
@@ -643,6 +676,7 @@ function setSkin(skin: SkinId | string) {
     button.classList.toggle("active", button.dataset.skin === currentSkin);
   }
   send({ type: "customize", cosmeticColor: customColor, skin: currentSkin });
+  scheduleProfileSync();
 }
 
 function isHostPlayer() {
@@ -703,6 +737,133 @@ function saveProgressState() {
   localStorage.setItem(progressStorageKey, JSON.stringify(progressState));
 }
 
+function emptyProfileInventory(): ProfileInventory {
+  return {
+    healPacks: 5,
+    pokerDon: 2000,
+    barrierCharges: 0,
+    boostTickets: 0
+  };
+}
+
+function normalizeInventory(inventory?: Partial<ProfileInventory>): ProfileInventory {
+  const base = emptyProfileInventory();
+  return {
+    healPacks: THREE.MathUtils.clamp(Math.floor(Number(inventory?.healPacks ?? base.healPacks)), 0, 12),
+    pokerDon: THREE.MathUtils.clamp(Math.floor(Number(inventory?.pokerDon ?? base.pokerDon)), 0, 999999),
+    barrierCharges: THREE.MathUtils.clamp(Math.floor(Number(inventory?.barrierCharges ?? base.barrierCharges)), 0, 9),
+    boostTickets: THREE.MathUtils.clamp(Math.floor(Number(inventory?.boostTickets ?? base.boostTickets)), 0, 99)
+  };
+}
+
+function loadProfileInventory(): ProfileInventory {
+  try {
+    return normalizeInventory(JSON.parse(localStorage.getItem(inventoryStorageKey) || "{}"));
+  } catch {
+    return emptyProfileInventory();
+  }
+}
+
+function saveProfileInventory() {
+  localStorage.setItem(inventoryStorageKey, JSON.stringify(profileInventory));
+}
+
+function sanitizeLoginId(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9_-]/g, "")
+    .slice(0, 32);
+}
+
+function generateLoginId() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  let id = "";
+  for (const byte of bytes) id += alphabet[byte % alphabet.length];
+  return id;
+}
+
+function normalizeProgressState(progress?: Partial<ProgressState>): ProgressState {
+  const base = emptyProgressState();
+  return {
+    xp: Math.max(0, Math.floor(Number(progress?.xp) || base.xp)),
+    sessions: Math.max(0, Math.floor(Number(progress?.sessions) || base.sessions)),
+    streakDays: Math.max(0, Math.floor(Number(progress?.streakDays) || base.streakDays)),
+    lastPlayDate: typeof progress?.lastPlayDate === "string" ? progress.lastPlayDate : base.lastPlayDate,
+    bestScore: Math.max(0, Math.floor(Number(progress?.bestScore) || base.bestScore)),
+    bestKills: Math.max(0, Math.floor(Number(progress?.bestKills) || base.bestKills)),
+    pokerWins: Math.max(0, Math.floor(Number(progress?.pokerWins) || base.pokerWins)),
+    lastReward: typeof progress?.lastReward === "string" ? progress.lastReward.slice(0, 48) : base.lastReward
+  };
+}
+
+function currentProfilePayload() {
+  return {
+    loginId: loggedInLoginId,
+    name: sanitizePlayerNameInput(),
+    skin: currentSkin,
+    cosmeticColor: customColor,
+    progress: progressState,
+    inventory: profileInventory
+  };
+}
+
+function applyLoginProfile(profile: LoginProfile) {
+  applyingProfile = true;
+  const nextName = sanitizeTextInput(profile.name, 14, nameInput.value).replace(/[<>]/g, "");
+  if (nextName) {
+    nameInput.value = nextName;
+    localStorage.setItem("toybox-name", nextName);
+  }
+  if (profile.skin) setSkin(profile.skin);
+  if (profile.cosmeticColor && /^#[0-9a-f]{6}$/i.test(profile.cosmeticColor)) setCustomColor(profile.cosmeticColor);
+  if (profile.progress) {
+    progressState = normalizeProgressState(profile.progress);
+    saveProgressState();
+  }
+  if (profile.inventory) {
+    profileInventory = normalizeInventory(profile.inventory);
+    saveProfileInventory();
+  }
+  applyingProfile = false;
+  renderProgressCard(`ログイン済み / 回復${profileInventory.healPacks}個`);
+}
+
+async function requestProfile(mode: "create" | "login" | "save") {
+  const loginId = sanitizeLoginId(loginIdInput.value || loggedInLoginId);
+  loginIdInput.value = loginId;
+  if (loginId.length < 6) {
+    showToast("ログインIDは6文字以上の英数字で入力してください");
+    loginIdInput.focus();
+    return null;
+  }
+  const response = await fetch("/api/profile", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...currentProfilePayload(), loginId, mode })
+  });
+  const data = await response.json().catch(() => null) as { ok?: boolean; message?: string; profile?: LoginProfile } | null;
+  if (!response.ok || !data?.ok || !data.profile) {
+    showToast(data?.message || "ログインに失敗しました");
+    return null;
+  }
+  loggedInLoginId = loginId;
+  localStorage.setItem(loginStorageKey, loginId);
+  loginStatus.textContent = `ログイン中 Lv.${data.profile.level || 1}`;
+  applyLoginProfile(data.profile);
+  return data.profile;
+}
+
+function scheduleProfileSync(delay = 650) {
+  if (!loggedInLoginId || applyingProfile) return;
+  window.clearTimeout(profileSyncTimer);
+  profileSyncTimer = window.setTimeout(() => {
+    void requestProfile("save").catch(() => undefined);
+    send({ type: "profile_progress", progress: progressState, inventory: profileInventory });
+  }, delay);
+}
+
 function todayInJapan() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
 }
@@ -727,8 +888,9 @@ function renderProgressCard(note = "") {
   const remaining = Math.max(0, info.next - progressState.xp);
   progressRank.textContent = `${info.title} Lv.${info.level}`;
   progressMeter.style.width = `${Math.round(info.progress * 100)}%`;
-  progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / Poker ${progressState.pokerWins}勝`;
+  progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / 回復${profileInventory.healPacks} / ${profileInventory.pokerDon}Don`;
   progressHint.textContent = note || (progressState.lastReward ? `${progressState.lastReward} / 次まで ${remaining}XP` : `次のランクまで ${remaining}XP`);
+  if (loggedInLoginId) loginStatus.textContent = `ログイン中 Lv.${info.level}`;
 }
 
 function touchProgressSession(kind: "fps" | "poker") {
@@ -742,6 +904,7 @@ function touchProgressSession(kind: "fps" | "poker") {
   progressState.lastReward = kind === "poker" ? "ポーカー卓に着席" : "アリーナ出撃";
   saveProgressState();
   renderProgressCard();
+  scheduleProfileSync();
 }
 
 function awardProgressXp(amount: number, reason: string) {
@@ -753,6 +916,7 @@ function awardProgressXp(amount: number, reason: string) {
   saveProgressState();
   const after = progressInfo().level;
   renderProgressCard();
+  scheduleProfileSync();
   return { gained, leveled: after > before, level: after };
 }
 
@@ -2286,6 +2450,7 @@ function makeNameTagTexture(player: PlayerState) {
   canvasTag.height = nameTagCanvasHeight;
   const ctx = canvasTag.getContext("2d")!;
   const label = clampNameTagText(player.name);
+  const levelLabel = player.level && player.level > 1 ? `Lv.${player.level}` : "";
   const accent = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757);
   const accentCss = `#${accent.toString(16).padStart(6, "0")}`;
 
@@ -2303,14 +2468,19 @@ function makeNameTagTexture(player: PlayerState) {
   ctx.fillStyle = accentCss;
   ctx.fill();
 
-  ctx.font = "700 24px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.font = "700 23px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = 4;
   ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
-  ctx.strokeText(label, nameTagCanvasWidth / 2 + 5, 32);
+  ctx.strokeText(label, nameTagCanvasWidth / 2 + 5, levelLabel ? 27 : 32);
   ctx.fillStyle = "#ffffff";
-  ctx.fillText(label, nameTagCanvasWidth / 2 + 5, 32);
+  ctx.fillText(label, nameTagCanvasWidth / 2 + 5, levelLabel ? 27 : 32);
+  if (levelLabel) {
+    ctx.font = "800 12px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.fillStyle = "#d9fbff";
+    ctx.fillText(levelLabel, nameTagCanvasWidth / 2 + 5, 44);
+  }
 
   const texture = new THREE.CanvasTexture(canvasTag);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -2328,7 +2498,7 @@ function disposeNameTagSprite(sprite?: THREE.Sprite) {
 
 function updatePlayerNameTag(group: THREE.Group, player: PlayerState) {
   const colorKey = player.cosmeticColor || player.color;
-  const nextKey = `${player.name}|${colorKey}`;
+  const nextKey = `${player.name}|${colorKey}|${player.level || 1}`;
   if (group.userData.nameTagKey === nextKey && group.userData.nameTagSprite) return;
   disposeNameTagSprite(group.userData.nameTagSprite as THREE.Sprite | undefined);
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -2494,6 +2664,21 @@ document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 createRoomButton.addEventListener("click", () => join(""));
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
 joinPokerRoomButton.addEventListener("click", () => joinTypedPokerRoom());
+createLoginIdButton.addEventListener("click", () => {
+  if (sanitizeLoginId(loginIdInput.value).length < 6) loginIdInput.value = generateLoginId();
+  void requestProfile("create")
+    .then((profile) => {
+      if (profile) showToast("ログインIDを作成しました。");
+    })
+    .catch(() => showToast("ログインIDを作成できませんでした。"));
+});
+loginProfileButton.addEventListener("click", () => {
+  void requestProfile("login")
+    .then((profile) => {
+      if (profile) showToast("プロフィールを読み込みました。");
+    })
+    .catch(() => showToast("ログインできませんでした。"));
+});
 roomInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
@@ -2930,6 +3115,12 @@ setPartySize(partySize);
 setCpuFill(cpuFillEnabled);
 setRelationMode(relationMode);
 setSkin(currentSkin);
+if (loggedInLoginId) {
+  loginStatus.textContent = "自動ログイン中";
+  void requestProfile("login").catch(() => {
+    loginStatus.textContent = "未ログイン";
+  });
+}
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -3007,7 +3198,7 @@ function joinPoker(room: string) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("open", () => {
-    send({ type: "poker_join", name, room: code, cpuCount: pokerCpuCount });
+    send({ type: "poker_join", name, room: code, cpuCount: pokerCpuCount, loginId: loggedInLoginId, cosmeticColor: customColor, skin: currentSkin, progress: progressState, inventory: profileInventory });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -3056,7 +3247,7 @@ function join(room: string) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("open", () => {
-    send({ type: "join", name, room: sanitizeRoomCode(room), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin });
+    send({ type: "join", name, room: sanitizeRoomCode(room), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin, loginId: loggedInLoginId, progress: progressState, inventory: profileInventory });
   });
   socket.addEventListener("message", handleMessage);
   socket.addEventListener("close", () => {
@@ -3085,12 +3276,19 @@ function handleMessage(event: MessageEvent<string>) {
     document.body.classList.add("poker-open");
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${pokerRoomCode}`);
+    if (message.profile) applyLoginProfile(message.profile as LoginProfile);
     touchProgressSession("poker");
     showToast("テキサスポーカーに参加しました。");
     return;
   }
   if (message.type === "poker_snapshot") {
     latestPokerSnapshot = message as PokerSnapshot;
+    const pokerMe = latestPokerSnapshot.players.find((player) => player.id === latestPokerSnapshot?.selfId);
+    if (loggedInLoginId && pokerMe && pokerMe.chips !== profileInventory.pokerDon) {
+      profileInventory.pokerDon = THREE.MathUtils.clamp(Math.floor(pokerMe.chips), 0, 999999);
+      saveProfileInventory();
+      renderProgressCard();
+    }
     renderPoker(latestPokerSnapshot);
     awardPokerProgress(latestPokerSnapshot);
     return;
@@ -3135,6 +3333,7 @@ function handleMessage(event: MessageEvent<string>) {
     setArenaChoice(arenaChoice);
     switchArena(arenaChoice);
     setTeamChoice((message.team as TeamChoice) || teamChoice);
+    if (message.profile) applyLoginProfile(message.profile as LoginProfile);
     roomCodeEl.textContent = self.room;
     roomInput.value = self.room;
     joinPanel.classList.add("hidden");
@@ -3171,6 +3370,11 @@ function handleMessage(event: MessageEvent<string>) {
     if (me) {
       self.health = me.health;
       setTeamChoice(me.color);
+      if (loggedInLoginId && typeof me.healPacks === "number" && me.healPacks !== profileInventory.healPacks) {
+        profileInventory.healPacks = THREE.MathUtils.clamp(Math.floor(me.healPacks), 0, 12);
+        saveProfileInventory();
+        renderProgressCard();
+      }
     }
     const snapshotCores = message.castleCores as Record<PlayerColor, CastleCoreSnapshot> | undefined;
     blueScoreEl.textContent = gameMode === "castle" && snapshotCores?.blue ? String(Math.ceil(snapshotCores.blue.health)) : String(message.blueScore);
@@ -3276,6 +3480,7 @@ function setCustomColor(color: string) {
     button.classList.toggle("active", button.dataset.color === color);
   }
   send({ type: "customize", cosmeticColor: color, skin: currentSkin });
+  scheduleProfileSync();
 }
 
 function setSoundEnabled(enabled: boolean) {
