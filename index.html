@@ -80,7 +80,7 @@
         </div>
         <div class="ammo-card">
           <strong><span id="ammo">30</span><small>/120</small></strong>
-          <span>ammo</span>
+          <span id="weaponRange">飛距離 --m</span>
         </div>
         <div class="movement-card">
           <strong id="movementStatus">WALK  高度 0.0m</strong>
@@ -90,6 +90,7 @@
       </section>
 
       <section class="hit-marker" id="hitMarker">HIT</section>
+      <section class="damage-feed" id="damageFeed" aria-live="polite"></section>
       <section class="flow-card" id="flowCard" aria-live="polite">
         <span id="flowLabel">FLOW</span>
         <strong id="flowText">初動</strong>
@@ -252,14 +253,14 @@
               <strong id="loginStatus">未ログイン</strong>
             </header>
             <label>
-              自分だけのID
-              <input id="loginIdInput" maxlength="32" placeholder="半角英数字6文字以上" autocomplete="off" autocapitalize="none" inputmode="latin" />
+              好きなログインID
+              <input id="loginIdInput" maxlength="32" placeholder="6-32文字 / 英数字・_・-" autocomplete="off" autocapitalize="none" inputmode="latin" />
             </label>
             <div class="login-actions">
-              <button id="createLoginId" type="button">新規ID作成</button>
-              <button id="loginProfile" type="button">ログイン</button>
+              <button id="createLoginId" type="button">このIDで作成</button>
+              <button id="loginProfile" type="button">IDでログイン</button>
             </div>
-            <small>同じIDで入ると名前、スキン、レベル、所持アイテムを復元します。</small>
+            <small>自分で決めたIDを作成できます。未入力で作成すると自動IDになります。</small>
           </div>
           <label>
             ニックネーム

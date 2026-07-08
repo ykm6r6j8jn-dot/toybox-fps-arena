@@ -432,7 +432,7 @@ async function handleProfileRequest(req, res) {
     const loginId = normalizeLoginId(payload.loginId);
     if (loginId.length < 6) {
       res.writeHead(400, securityHeaders("application/json; charset=utf-8"));
-      res.end(JSON.stringify({ ok: false, message: "ログインIDは6文字以上の英数字で入力してください。" }));
+      res.end(JSON.stringify({ ok: false, message: "ログインIDは6文字以上で、英数字・_・-だけ使えます。" }));
       return;
     }
     const mode = String(payload.mode || "login");

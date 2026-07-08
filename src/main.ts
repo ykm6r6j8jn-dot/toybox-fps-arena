@@ -324,6 +324,7 @@ const mobileReload = $("#mobileReload") as HTMLButtonElement;
 const mobileScope = $("#mobileScope") as HTMLButtonElement;
 const mobileSkill = $("#mobileSkill") as HTMLButtonElement;
 const hitMarker = $("#hitMarker");
+const damageFeed = $("#damageFeed");
 const killcamCard = $("#killcamCard");
 const killcamTitle = $("#killcamTitle");
 const killcamDetail = $("#killcamDetail");
@@ -337,6 +338,7 @@ const spectatorNext = $("#spectatorNext") as HTMLButtonElement;
 const healthEl = $("#health");
 const healthBar = $("#healthBar");
 const ammoEl = $("#ammo");
+const weaponRangeEl = $("#weaponRange");
 const movementStatusEl = $("#movementStatus");
 const latencyEl = $("#latency");
 const blueScoreEl = $("#blueScore");
@@ -441,17 +443,20 @@ type Gun = {
   pelletCount: number;
   spread: number;
   range: number;
+  recoilPitch: number;
+  recoilYaw: number;
+  kick: number;
   tracerColor: number;
 };
 const guns: Gun[] = [
-  { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, tracerColor: 0xfff36b },
-  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, tracerColor: 0xffb347 },
-  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, tracerColor: 0x78f5ff },
-  { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, tracerColor: 0x44d7ff },
-  { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, tracerColor: 0xff8a3d },
-  { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, tracerColor: 0xdfff7a },
-  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, tracerColor: 0xffffff },
-  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, tracerColor: 0xff4dff }
+  { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, recoilPitch: 0.008, recoilYaw: 0.007, kick: 0.2, tracerColor: 0xfff36b },
+  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, recoilPitch: 0.014, recoilYaw: 0.013, kick: 0.28, tracerColor: 0xffb347 },
+  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, recoilPitch: 0.006, recoilYaw: 0.005, kick: 0.18, tracerColor: 0x78f5ff },
+  { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, recoilPitch: 0.005, recoilYaw: 0.009, kick: 0.16, tracerColor: 0x44d7ff },
+  { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, recoilPitch: 0.036, recoilYaw: 0.022, kick: 0.44, tracerColor: 0xff8a3d },
+  { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, recoilPitch: 0.022, recoilYaw: 0.008, kick: 0.34, tracerColor: 0xdfff7a },
+  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, recoilPitch: 0.052, recoilYaw: 0.016, kick: 0.58, tracerColor: 0xffffff },
+  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, recoilPitch: 0.011, recoilYaw: 0.01, kick: 0.24, tracerColor: 0xff4dff }
 ];
 let currentGunIndex = 0;
 const currentGun = () => guns[currentGunIndex];
@@ -834,7 +839,7 @@ async function requestProfile(mode: "create" | "login" | "save") {
   const loginId = sanitizeLoginId(loginIdInput.value || loggedInLoginId);
   loginIdInput.value = loginId;
   if (loginId.length < 6) {
-    showToast("ログインIDは6文字以上の英数字で入力してください");
+    showToast("ログインIDは6文字以上で、英数字・_・-だけ使えます");
     loginIdInput.focus();
     return null;
   }
@@ -2665,10 +2670,10 @@ createRoomButton.addEventListener("click", () => join(""));
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
 joinPokerRoomButton.addEventListener("click", () => joinTypedPokerRoom());
 createLoginIdButton.addEventListener("click", () => {
-  if (sanitizeLoginId(loginIdInput.value).length < 6) loginIdInput.value = generateLoginId();
+  if (!sanitizeLoginId(loginIdInput.value)) loginIdInput.value = generateLoginId();
   void requestProfile("create")
     .then((profile) => {
-      if (profile) showToast("ログインIDを作成しました。");
+      if (profile) showToast("このログインIDを作成しました。");
     })
     .catch(() => showToast("ログインIDを作成できませんでした。"));
 });
@@ -3417,7 +3422,9 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "hit" && (message.target === self.id || message.shooter === self.id)) {
     const damagedSelf = message.target === self.id;
     const damage = Number(message.damage) || 0;
-    showHitIndicator(damagedSelf, damage);
+    const blocked = Boolean(message.blocked);
+    showHitIndicator(damagedSelf, damage, blocked);
+    pushDamageNotice(damagedSelf ? "taken" : "dealt", damage, message.weapon, damagedSelf ? message.shooter : message.target, blocked);
     if (damagedSelf && damage > 0) playDamageSound();
   }
   if (message.type === "death_info") showKillcam(message);
@@ -3981,7 +3988,7 @@ function shoot() {
   }
   self.lastShot = now;
   self.ammo -= 1;
-  weaponKick = Math.min(1, weaponKick + (gun.kind === "shotgun" ? 0.42 : isScopedGun(gun) ? 0.32 : 0.22));
+  applyShotRecoil(gun);
   flashMuzzle();
   for (let i = 0; i < gun.pelletCount; i += 1) {
     const direction = getLookDirection();
@@ -3997,6 +4004,15 @@ function shoot() {
       direction: { x: direction.x, y: direction.y, z: direction.z }
     });
   }
+}
+
+function applyShotRecoil(gun: Gun) {
+  const scopeScale = scoped && isScopedGun(gun) ? 0.62 : 1;
+  const pitchKick = gun.recoilPitch * scopeScale;
+  const yawKick = (Math.random() - 0.5) * gun.recoilYaw * scopeScale;
+  self.pitch = THREE.MathUtils.clamp(self.pitch + pitchKick, -1.15, 1.1);
+  self.yaw += yawKick;
+  weaponKick = Math.min(1, weaponKick + gun.kick);
 }
 
 function flashMuzzle() {
@@ -4034,7 +4050,7 @@ function switchGun(index: number) {
   self.ammo = currentGun().magSize;
   reloadTimer = 0;
   addWeapon();
-  showToast(`${currentGun().name} に変更`);
+  showToast(`${currentGun().name} / 飛距離 ${currentGun().range}m`);
 }
 
 function updateWeaponMotion(delta: number) {
@@ -4735,6 +4751,7 @@ function updateHud(feed: FeedItem[]) {
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
   ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
+  weaponRangeEl.textContent = reloadTimer > 0 ? "リロード中" : `飛距離 ${currentGun().range}m`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
   const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
@@ -4783,9 +4800,41 @@ function updateHud(feed: FeedItem[]) {
   }
 }
 
-function showHitIndicator(damagedSelf: boolean, damage: number) {
-  hitMarker.textContent = damagedSelf ? `DAMAGE -${damage}` : damage ? `HIT +${damage}` : "HIT";
+function weaponDisplayName(weapon: unknown) {
+  const key = String(weapon || "");
+  return guns.find((gun) => gun.kind === key)?.name || sanitizeTextInput(key, 12, "銃");
+}
+
+function combatTargetName(targetId: unknown) {
+  const id = String(targetId || "");
+  if (id.includes("castle-core")) return "城コア";
+  const player = players.get(id);
+  return sanitizeTextInput(player?.name, 14, "相手").replace(/[<>]/g, "") || "相手";
+}
+
+function pushDamageNotice(kind: "dealt" | "taken", damage: number, weapon: unknown, targetId: unknown, blocked = false) {
+  const roundedDamage = Math.max(0, Math.round(damage));
+  const card = document.createElement("div");
+  card.className = `damage-card ${kind}${blocked ? " blocked" : ""}`;
+
+  const value = document.createElement("strong");
+  value.textContent = blocked ? "防御" : `${kind === "taken" ? "-" : "+"}${roundedDamage}`;
+
+  const detail = document.createElement("span");
+  const title = document.createElement("b");
+  title.textContent = kind === "taken" ? "被ダメージ" : "与ダメージ";
+  detail.append(title, document.createTextNode(`${weaponDisplayName(weapon)} / ${combatTargetName(targetId)}`));
+
+  card.append(value, detail);
+  damageFeed.prepend(card);
+  while (damageFeed.childElementCount > 4) damageFeed.lastElementChild?.remove();
+  window.setTimeout(() => card.remove(), 2200);
+}
+
+function showHitIndicator(damagedSelf: boolean, damage: number, blocked = false) {
+  hitMarker.textContent = blocked ? (damagedSelf ? "BARRIER" : "BLOCK") : damagedSelf ? `DAMAGE -${damage}` : damage ? `HIT +${damage}` : "HIT";
   hitMarker.classList.toggle("danger", damagedSelf);
+  hitMarker.classList.toggle("blocked", blocked);
   hitMarker.classList.remove("show");
   void hitMarker.offsetWidth;
   hitMarker.classList.add("show");
