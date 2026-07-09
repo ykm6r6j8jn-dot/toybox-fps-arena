@@ -10,6 +10,7 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 5188);
 const maxPlayers = 20;
+const globalFpsRoomCode = "DONPCH";
 const maxCpuPlayers = 19;
 const maxWsMessageBytes = 8192;
 const maxHttpJsonBytes = 12_288;
@@ -1758,7 +1759,7 @@ wss.on("connection", (ws) => {
         saveProfileSoon();
       }
       const loginProfile = profileRecord?.profile || null;
-      const room = getRoom(message.room, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
+      const room = getRoom(globalFpsRoomCode, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
       if (humanPlayers(room).length === 0) room.cpuFill = requestedCpuFill;
       if (humanPlayers(room).length === 0) room.relationMode = requestedRelationMode;
       if (room.matchmaking) {

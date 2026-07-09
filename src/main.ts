@@ -258,6 +258,7 @@ if ("serviceWorker" in navigator) {
 }
 
 const canvas = $("#game") as HTMLCanvasElement;
+const pwaSplash = $("#pwaSplash");
 const minimapCanvas = $("#minimap") as HTMLCanvasElement;
 const minimap = minimapCanvas.getContext("2d")!;
 const joinPanel = $("#joinPanel");
@@ -381,6 +382,9 @@ const progressRank = $("#progressRank");
 const progressMeter = $("#progressMeter") as HTMLElement;
 const progressStats = $("#progressStats");
 const progressHint = $("#progressHint");
+const updateLogButton = $("#updateLogButton") as HTMLButtonElement;
+const updateLogPanel = $("#updateLogPanel");
+const closeUpdateLog = $("#closeUpdateLog") as HTMLButtonElement;
 const toast = $("#toast");
 const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
@@ -390,7 +394,10 @@ const progressStorageKey = "donpachi-progress-v1";
 const inventoryStorageKey = "donpachi-inventory-v1";
 const loginStorageKey = "donpachi-login-id";
 const inviteRoomStorageKey = "donpachi-last-invite-room";
+const globalFpsRoomCode = "DONPCH";
 const installInviteRequested = launchParams.get("install") === "1";
+const invitePlayMode = launchParams.get("play") === "poker" ? "poker" : "fps";
+const autoJoinInviteRequested = launchParams.get("join") === "1" || (installInviteRequested && Boolean(launchParams.get("room")));
 let progressState = loadProgressState();
 let profileInventory = loadProfileInventory();
 let loggedInLoginId = sanitizeLoginId(localStorage.getItem(loginStorageKey) || "");
@@ -411,8 +418,8 @@ loginIdInput.addEventListener("input", () => {
 });
 const urlRoomCode = sanitizeRoomCode(launchParams.get("room") || "");
 if (urlRoomCode) localStorage.setItem(inviteRoomStorageKey, urlRoomCode);
-const initialRoomCode = urlRoomCode || sanitizeRoomCode(localStorage.getItem(inviteRoomStorageKey) || "");
-if (initialRoomCode) roomInput.value = initialRoomCode;
+const initialRoomCode = urlRoomCode || (invitePlayMode === "poker" ? sanitizeRoomCode(localStorage.getItem(inviteRoomStorageKey) || "") : globalFpsRoomCode);
+roomInput.value = initialRoomCode || globalFpsRoomCode;
 roomInput.addEventListener("input", () => {
   const nextCode = sanitizeRoomCode(roomInput.value);
   if (roomInput.value !== nextCode) roomInput.value = nextCode;
@@ -439,20 +446,24 @@ function appWebSocketUrl() {
   return base.toString();
 }
 
-function publicShareUrl(room: string) {
+function publicShareUrl(room: string, play: "fps" | "poker" = "fps") {
   const url = new URL("/", publicBaseUrl);
-  url.searchParams.set("room", room);
+  url.searchParams.set("room", play === "fps" ? globalFpsRoomCode : room);
   url.searchParams.set("install", "1");
+  url.searchParams.set("join", "1");
+  if (play === "poker") url.searchParams.set("play", "poker");
   return url.toString();
 }
 
-function inviteShareUrl(room: string) {
-  if (runningInNativeShell()) return publicShareUrl(room);
+function inviteShareUrl(room: string, play: "fps" | "poker" = "fps") {
+  if (runningInNativeShell()) return publicShareUrl(room, play);
   const url = new URL(location.href);
   url.search = "";
   url.hash = "";
-  url.searchParams.set("room", room);
+  url.searchParams.set("room", play === "fps" ? globalFpsRoomCode : room);
   url.searchParams.set("install", "1");
+  url.searchParams.set("join", "1");
+  if (play === "poker") url.searchParams.set("play", "poker");
   return url.toString();
 }
 
@@ -670,6 +681,7 @@ let killcamUntil = 0;
 let spectatorTargetId = "";
 let resultWinnerSeen = "";
 let lobbyReturnTimer = 0;
+let inviteAutoJoinStarted = false;
 const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
 let lastStableViewportHeight = window.innerHeight;
@@ -2833,7 +2845,7 @@ loginProfileButton.addEventListener("click", () => {
 roomInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
-  joinTypedPokerRoom();
+  joinTypedRoom();
 });
 for (const button of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button")) {
   button.classList.toggle("active", Number(button.dataset.pokerCpu) === pokerCpuCount);
@@ -2877,6 +2889,11 @@ readyButton.addEventListener("click", () => {
 });
 copyInviteButton.addEventListener("click", copyInvite);
 inviteButton.addEventListener("click", copyInvite);
+updateLogButton.addEventListener("click", () => updateLogPanel.classList.add("open"));
+closeUpdateLog.addEventListener("click", () => updateLogPanel.classList.remove("open"));
+updateLogPanel.addEventListener("click", (event) => {
+  if (event.target === updateLogPanel) updateLogPanel.classList.remove("open");
+});
 scoreboardToggle.addEventListener("click", () => scoreboard.classList.toggle("open"));
 closeScoreboard.addEventListener("click", () => scoreboard.classList.remove("open"));
 settingsButton.addEventListener("click", () => settingsPanel.classList.toggle("open"));
@@ -2989,6 +3006,12 @@ function isStandaloneDisplay() {
     || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 }
 
+function showPwaSplashIfNeeded() {
+  if (!(isStandaloneDisplay() || launchParams.get("source") === "pwa" || installInviteRequested)) return;
+  pwaSplash.classList.add("show");
+  window.setTimeout(() => pwaSplash.classList.remove("show"), autoJoinInviteRequested ? 1450 : 1150);
+}
+
 function isCoarseLandscape() {
   return window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(orientation: landscape)").matches;
 }
@@ -3004,14 +3027,15 @@ function showMobileFullscreenGuide(force = false) {
     return;
   }
   const isAppleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  mobileGuideInstall.textContent = isAppleMobile ? "追加手順" : "アプリ化";
   if (installInviteRequested) {
     mobileFullscreenGuideText.textContent = isAppleMobile
-      ? "このリンクはアプリ招待です。今すぐ遊ぶか、Safariの共有から「ホーム画面に追加」でアプリ化できます。"
-      : "このリンクはアプリ招待です。今すぐ遊ぶか、「アプリ化」からホーム画面に追加できます。";
+      ? "このリンクはアプリ招待です。今すぐ遊ぶか、共有ボタンから「ホーム画面に追加」で次回はアプリ風に起動できます。"
+      : "このリンクはアプリ招待です。今すぐ遊ぶか、「アプリ化」でホーム画面に追加できます。";
   } else {
     mobileFullscreenGuideText.textContent = isAppleMobile
-      ? "Safariの共有から「ホーム画面に追加」して起動すると、上下のブラウザバーをほぼ消せます。"
-      : "全画面ボタン、またはホーム画面に追加して起動すると、上下のブラウザバーを減らせます。";
+      ? "Safariの共有ボタンから「ホーム画面に追加」して起動すると、上下のブラウザバーをほぼ消せます。"
+      : "全画面ボタン、または「アプリ化」でホーム画面に追加すると、上下のブラウザバーを減らせます。";
   }
   mobileFullscreenGuide.classList.add("show");
   setTimeout(() => {
@@ -3380,12 +3404,14 @@ setPartySize(partySize);
 setCpuFill(cpuFillEnabled);
 setRelationMode(relationMode);
 setSkin(currentSkin);
+showPwaSplashIfNeeded();
 if (loggedInLoginId) {
   loginStatus.textContent = "自動ログイン中";
   void requestProfile("login").catch(() => {
     loginStatus.textContent = "未ログイン";
   });
 }
+window.setTimeout(maybeStartInviteAutoJoin, autoJoinInviteRequested ? 650 : 0);
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -3429,13 +3455,9 @@ function sanitizePlayerNameInput() {
 
 function joinTypedRoom() {
   const code = sanitizeRoomCode(roomInput.value);
-  roomInput.value = code;
-  if (code.length !== 6) {
-    showToast("6文字のルームコードを入力してください");
-    roomInput.focus();
-    return;
-  }
-  join(code);
+  roomInput.value = globalFpsRoomCode;
+  if (code && code !== globalFpsRoomCode) showToast(`FPSは共通ルーム ${globalFpsRoomCode} に入室します`);
+  join(globalFpsRoomCode);
 }
 
 function joinTypedPokerRoom() {
@@ -3465,6 +3487,9 @@ function joinPoker(room: string) {
     send({ type: "poker_join", name, room: code, cpuCount: pokerCpuCount, loginId: loggedInLoginId, cosmeticColor: customColor, skin: currentSkin, progress: progressState, inventory: profileInventory });
   });
   socket.addEventListener("message", handleMessage);
+  socket.addEventListener("error", () => {
+    if (!pokerJoined) showToast("オンライン接続に失敗しました。通信を確認してください。");
+  });
   socket.addEventListener("close", () => {
     if (pokerJoined) showToast("ポーカールームから切断されました。");
   });
@@ -3509,14 +3534,35 @@ function join(room: string) {
   localStorage.setItem("toybox-skin", currentSkin);
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
 
+  const fpsRoom = globalFpsRoomCode;
+  roomInput.value = fpsRoom;
+  localStorage.setItem(inviteRoomStorageKey, fpsRoom);
   socket = new WebSocket(appWebSocketUrl());
   socket.addEventListener("open", () => {
-    send({ type: "join", name, room: sanitizeRoomCode(room), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin, loginId: loggedInLoginId, progress: progressState, inventory: profileInventory });
+    send({ type: "join", name, room: fpsRoom, gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin, loginId: loggedInLoginId, progress: progressState, inventory: profileInventory });
   });
   socket.addEventListener("message", handleMessage);
+  socket.addEventListener("error", () => {
+    if (!self.joined) showToast("オンライン接続に失敗しました。通信を確認してください。");
+  });
   socket.addEventListener("close", () => {
     if (self.joined) showToast("接続が切れました。再参加してください。");
   });
+}
+
+function maybeStartInviteAutoJoin() {
+  if (!autoJoinInviteRequested || inviteAutoJoinStarted || self.joined || pokerJoined) return;
+  inviteAutoJoinStarted = true;
+  if (invitePlayMode === "poker") {
+    const code = sanitizeRoomCode(roomInput.value || initialRoomCode);
+    if (code.length === 6) {
+      roomInput.value = code;
+      joinPoker(code);
+      return;
+    }
+  }
+  roomInput.value = globalFpsRoomCode;
+  join(globalFpsRoomCode);
 }
 
 function handleMessage(event: MessageEvent<string>) {
@@ -5427,16 +5473,17 @@ async function writeClipboardText(text: string) {
 }
 
 async function copyInvite() {
-  const room = pokerJoined && pokerRoomCode ? pokerRoomCode : self.room;
+  const play = pokerJoined && pokerRoomCode ? "poker" : "fps";
+  const room = play === "poker" ? pokerRoomCode : (self.room || globalFpsRoomCode);
   if (!room) {
     showToast("先にルームを作成してください。");
     return;
   }
-  const url = inviteShareUrl(room);
+  const url = inviteShareUrl(room, play);
   const copied = await writeClipboardText(url);
   if (copied) {
     flashPokerInviteButton("コピー済み");
-    showToast(pokerJoined ? "ポーカー招待リンクをコピーしました" : "招待リンクをコピーしました");
+    showToast(play === "poker" ? "ポーカー招待リンクをコピーしました" : "共通ルーム招待リンクをコピーしました");
     return;
   }
   roomInput.value = room;

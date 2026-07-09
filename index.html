@@ -15,6 +15,13 @@
   </head>
   <body>
     <canvas id="game"></canvas>
+    <section class="pwa-splash" id="pwaSplash" aria-hidden="true">
+      <div>
+        <b class="pwa-splash-mark">DP</b>
+        <strong>DonPaChi FPS</strong>
+        <span>アプリモード起動中</span>
+      </div>
+    </section>
 
     <main class="hud" id="hud">
       <section class="top-left">
@@ -375,6 +382,7 @@
               <button id="joinRoom" type="button">FPS入室</button>
               <button id="joinPokerRoom" type="button">ポーカー入室</button>
             </div>
+            <small class="global-room-note">FPSは全員が共通ルーム DONPCH に入ります。招待リンクを開くと自動参加できます。</small>
             <div class="poker-lobby-card">
               <header>
                 <strong>テキサスポーカー</strong>
@@ -394,7 +402,47 @@
             <strong>現在オンライン</strong>
             <div id="onlinePlayers">確認中...</div>
           </div>
+          <button id="updateLogButton" class="update-log-button" type="button">アップデート内容を見る</button>
           <small>クリックで視点操作、WASDで移動、左クリックで射撃、Qで必殺技。</small>
+        </div>
+      </section>
+
+      <section class="update-log-panel" id="updateLogPanel" aria-label="アップデート内容">
+        <div class="update-log-card">
+          <header>
+            <div>
+              <span>DonPaChi FPS</span>
+              <strong>アップデート履歴</strong>
+            </div>
+            <button id="closeUpdateLog" type="button" aria-label="閉じる"><i data-lucide="x"></i></button>
+          </header>
+          <div class="update-log-list">
+            <article>
+              <b>最新</b>
+              <strong>PWA招待と共通ルームを強化</strong>
+              <p>リンクを開くだけで共通ルームへ参加しやすくし、スマホのホーム画面追加ガイド、アプリ風起動画面、オフライン時のロビーキャッシュを追加。</p>
+            </article>
+            <article>
+              <b>スマホ改善</b>
+              <strong>横画面HUDと操作性を調整</strong>
+              <p>SafariやChromeの上下バーに邪魔されにくい配置、全画面ボタン、誤タップ抑制、スマホ専用射撃補助を改善。</p>
+            </article>
+            <article>
+              <b>ゲーム性</b>
+              <strong>武器・CP・アイテムを追加</strong>
+              <p>AK47、AUG、AWM、95式、銃痕、回復、バリア、パワーアップ、CPの射撃と壁回避、試合後リザルトを追加。</p>
+            </article>
+            <article>
+              <b>オンライン</b>
+              <strong>チャット・招待・ポーカー対応</strong>
+              <p>リアルタイムチャット、友達招待リンク、ルームコード参加、テキサスポーカー、公開URL向けの安定化を追加。</p>
+            </article>
+            <article>
+              <b>継続要素</b>
+              <strong>ログインIDとDonランク</strong>
+              <p>名前、スキン、所持アイテム、レベル、Don、回復アイテムをログインIDとローカル保存で復元できるように調整。</p>
+            </article>
+          </div>
         </div>
       </section>
 

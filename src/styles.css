@@ -102,6 +102,7 @@ body.keyboard-open .chat-panel:not(:focus-within) {
 .scoreboard,
 .settings-panel,
 .result-panel,
+.update-log-panel,
 .poker-panel {
   pointer-events: auto;
 }
@@ -120,9 +121,62 @@ body.keyboard-open .chat-panel:not(:focus-within) {
 .settings-panel,
 .toast,
 .mobile-fullscreen-guide,
+.update-log-panel,
 .result-panel {
   position: absolute;
   z-index: 4;
+}
+
+.pwa-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 50% 22%, rgba(255, 216, 77, 0.28), transparent 32%),
+    linear-gradient(145deg, #0a2534, #107d91 48%, #7fe76d);
+  color: #f7fbff;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.22s ease, visibility 0.22s ease;
+}
+
+.pwa-splash.show {
+  opacity: 1;
+  visibility: visible;
+}
+
+.pwa-splash div {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.pwa-splash-mark {
+  width: 70px;
+  height: 70px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #ffd84d, #86e86a);
+  color: #102a23;
+  font-size: 24px;
+  font-weight: 950;
+  box-shadow: 0 18px 48px rgba(3, 16, 24, 0.28);
+}
+
+.pwa-splash strong {
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.pwa-splash span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+  font-weight: 850;
 }
 
 body.poker-open .top-left,
@@ -2146,6 +2200,16 @@ body.keyboard-open .join-card {
   font-size: 13px;
 }
 
+.global-room-note {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid rgba(134, 232, 106, 0.24);
+  border-radius: 7px;
+  background: rgba(134, 232, 106, 0.09);
+  color: rgba(238, 255, 232, 0.84) !important;
+  font-weight: 850;
+}
+
 .poker-lobby-card {
   display: grid;
   gap: 9px;
@@ -2240,6 +2304,120 @@ body.keyboard-open .join-card {
 
 #onlinePlayers em {
   font-style: normal;
+}
+
+.update-log-button {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 216, 77, 0.36);
+  border-radius: 7px;
+  background: linear-gradient(135deg, rgba(255, 216, 77, 0.22), rgba(66, 227, 209, 0.12));
+  color: #fff;
+  font-weight: 950;
+}
+
+.update-log-panel {
+  inset: 0;
+  z-index: 13;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(3, 11, 18, 0.48);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0.18s ease;
+}
+
+.update-log-panel.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.update-log-card {
+  width: min(620px, calc(100vw - 28px));
+  max-height: min(720px, calc(var(--app-height) - 36px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid rgba(214, 248, 255, 0.22);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(255, 216, 77, 0.16), transparent 28%),
+    linear-gradient(180deg, rgba(12, 31, 43, 0.96), rgba(6, 18, 28, 0.96));
+  box-shadow: 0 24px 74px rgba(0, 0, 0, 0.36);
+}
+
+.update-log-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.update-log-card header div {
+  display: grid;
+  gap: 2px;
+}
+
+.update-log-card header span,
+.update-log-list b {
+  color: rgba(255, 216, 77, 0.9);
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.update-log-card header strong {
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.update-log-card header button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.update-log-list {
+  display: grid;
+  gap: 9px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+}
+
+.update-log-list article {
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+  border-left: 4px solid var(--cyan);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.update-log-list article:first-child {
+  border-left-color: var(--yellow);
+  background:
+    linear-gradient(135deg, rgba(255, 216, 77, 0.15), rgba(66, 227, 209, 0.08)),
+    rgba(255, 255, 255, 0.08);
+}
+
+.update-log-list strong {
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.update-log-list p {
+  margin: 0;
+  color: rgba(247, 251, 255, 0.74);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.48;
 }
 
 .toast {
@@ -3865,6 +4043,31 @@ body.celebrating::after {
 
   .room-join-row {
     grid-template-columns: minmax(0, 1fr) 74px 96px;
+  }
+
+  .global-room-note {
+    padding: 7px 9px;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+  }
+
+  .update-log-panel {
+    place-items: start center;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .update-log-card {
+    width: min(720px, calc(100vw - 20px));
+    max-height: calc(var(--app-height) - 20px);
+    padding: 12px;
+  }
+
+  .update-log-list {
+    gap: 8px;
+  }
+
+  .update-log-list article {
+    padding: 9px;
   }
 
   .poker-lobby-card {
