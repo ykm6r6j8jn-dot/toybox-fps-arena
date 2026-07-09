@@ -3102,15 +3102,15 @@ body.celebrating::after {
   }
 
   .flow-card {
-    top: 262px;
-    left: 10px;
+    top: 150px;
+    left: 172px;
     width: 132px;
     padding: 8px;
   }
 
   .focus-task-card {
-    top: 326px;
-    left: 10px;
+    top: 214px;
+    left: 172px;
     width: 132px;
     padding: 8px;
   }

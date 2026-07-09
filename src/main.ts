@@ -3026,6 +3026,14 @@ function isGameplayTouchTarget(target: EventTarget | null) {
   ));
 }
 
+function capturePointer(element: HTMLElement, pointerId: number) {
+  try {
+    element.setPointerCapture?.(pointerId);
+  } catch {
+    // Some mobile browsers only allow capture on the original pointerdown target.
+  }
+}
+
 function beginFloatingMobileStick(event: PointerEvent) {
   const { width } = viewportSize();
   if (!self.joined || mobileStickPointer !== null || event.pointerType !== "touch") return;
@@ -3040,17 +3048,17 @@ function beginFloatingMobileStick(event: PointerEvent) {
   mobileStick.style.left = `${event.clientX - mobileStick.clientWidth / 2}px`;
   mobileStick.style.top = `${event.clientY - mobileStick.clientHeight / 2}px`;
   mobileStick.style.bottom = "auto";
-  mobileStick.setPointerCapture?.(event.pointerId);
+  capturePointer(mobileStick, event.pointerId);
   updateMobileStick(event);
 }
 
 mobileAimZone.addEventListener("pointerdown", (event) => {
-  if (!self.joined) return;
+  if (!self.joined || mobileAimPointer !== null) return;
   event.preventDefault();
   mobileAimPointer = event.pointerId;
   mobileAimLastX = event.clientX;
   mobileAimLastY = event.clientY;
-  mobileAimZone.setPointerCapture?.(event.pointerId);
+  capturePointer(mobileAimZone, event.pointerId);
 });
 mobileAimZone.addEventListener("pointermove", (event) => {
   if (mobileAimPointer !== event.pointerId || !self.joined) return;
@@ -3070,8 +3078,8 @@ const releaseMobileAim = (event: PointerEvent) => {
 };
 mobileAimZone.addEventListener("pointerup", releaseMobileAim);
 mobileAimZone.addEventListener("pointercancel", releaseMobileAim);
-mobileAimZone.addEventListener("lostpointercapture", () => {
-  mobileAimPointer = null;
+mobileAimZone.addEventListener("lostpointercapture", (event) => {
+  releaseMobileAim(event);
 });
 
 function clearMobileMoveKeys() {
@@ -3126,7 +3134,7 @@ mobileStick.addEventListener("pointerdown", (event) => {
   const rect = mobileStick.getBoundingClientRect();
   mobileStickOriginX = rect.left + rect.width / 2;
   mobileStickOriginY = rect.top + rect.height / 2;
-  mobileStick.setPointerCapture?.(event.pointerId);
+  capturePointer(mobileStick, event.pointerId);
   updateMobileStick(event);
 });
 mobileStick.addEventListener("pointermove", (event) => {
@@ -3142,16 +3150,28 @@ mobileStick.addEventListener("pointercancel", (event) => {
   if (mobileStickPointer === event.pointerId) releaseMobileStick();
 });
 mobileStick.addEventListener("lostpointercapture", releaseMobileStick);
+document.addEventListener("pointermove", (event) => {
+  if (mobileStickPointer !== event.pointerId || !mobileStick.classList.contains("floating")) return;
+  event.preventDefault();
+  updateMobileStick(event);
+}, { passive: false });
+document.addEventListener("pointerup", (event) => {
+  if (mobileStickPointer === event.pointerId) releaseMobileStick();
+});
+document.addEventListener("pointercancel", (event) => {
+  if (mobileStickPointer === event.pointerId) releaseMobileStick();
+});
 document.addEventListener("pointerdown", beginFloatingMobileStick, { passive: false });
 
 mobileFire.addEventListener("pointerdown", (event) => {
+  if (mobileFirePointer !== null) return;
   event.preventDefault();
   event.stopPropagation();
   mobileFiring = true;
   mobileFirePointer = event.pointerId;
   mobileFireLastX = event.clientX;
   mobileFireLastY = event.clientY;
-  mobileFire.setPointerCapture?.(event.pointerId);
+  capturePointer(mobileFire, event.pointerId);
   shoot();
 });
 mobileFire.addEventListener("pointermove", (event) => {
