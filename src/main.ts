@@ -630,11 +630,13 @@ const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
 let lastStableViewportHeight = window.innerHeight;
 let viewportRecoveryTimers: number[] = [];
+let viewportRecoveryUntil = 0;
+const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
 
 function viewportSize() {
   const visualViewport = window.visualViewport;
-  const width = Math.round(visualViewport?.width || window.innerWidth);
-  const height = Math.round(visualViewport?.height || window.innerHeight);
+  const width = Math.round(window.innerWidth || visualViewport?.width || 1);
+  const height = effectiveViewportHeight();
   return { width, height };
 }
 
@@ -643,9 +645,29 @@ function textInputActive() {
 }
 
 function mobileKeyboardOpen() {
+  return textInputActive() && viewportLooksKeyboardShrunk();
+}
+
+function viewportLooksKeyboardShrunk() {
   const visualViewport = window.visualViewport;
-  if (!visualViewport || !textInputActive()) return false;
-  return visualViewport.height < window.innerHeight - 120;
+  if (!visualViewport) return false;
+  const visualHeight = Math.round(visualViewport.height);
+  return visualHeight < Math.round(lastStableViewportHeight) - 120 || visualHeight < Math.round(window.innerHeight) - 120;
+}
+
+function holdingStableViewportAfterKeyboard() {
+  return !textInputActive() && performance.now() < viewportRecoveryUntil && viewportLooksKeyboardShrunk();
+}
+
+function effectiveViewportHeight() {
+  const visualHeight = Math.round(window.visualViewport?.height || window.innerHeight || lastStableViewportHeight);
+  if (mobileKeyboardOpen()) return visualHeight;
+  if (holdingStableViewportAfterKeyboard()) return Math.max(1, Math.round(lastStableViewportHeight));
+  return Math.max(1, Math.round(window.innerHeight || visualHeight || lastStableViewportHeight));
+}
+
+function isCoarsePointer() {
+  return coarsePointerQuery.matches || navigator.maxTouchPoints > 0;
 }
 
 const maxPixelRatio = () => Math.min(window.devicePixelRatio, viewportSize().width < 860 ? 1.26 : 1.72);
@@ -2588,9 +2610,10 @@ function applyViewportSizeVars() {
   const { width } = viewportSize();
   const keyboardOpen = mobileKeyboardOpen();
   const visualHeight = Math.round(window.visualViewport?.height || window.innerHeight);
-  if (!keyboardOpen && window.innerHeight > 0) lastStableViewportHeight = Math.max(lastStableViewportHeight, Math.round(window.innerHeight));
-  const height = keyboardOpen ? visualHeight : Math.round(window.innerHeight || lastStableViewportHeight);
-  const keyboardOffset = keyboardOpen ? Math.max(0, Math.round(window.innerHeight - visualHeight - (window.visualViewport?.offsetTop || 0))) : 0;
+  const holdingStableHeight = holdingStableViewportAfterKeyboard();
+  if (!keyboardOpen && !holdingStableHeight && window.innerHeight > 0) lastStableViewportHeight = Math.round(window.innerHeight);
+  const height = effectiveViewportHeight();
+  const keyboardOffset = keyboardOpen ? Math.max(0, Math.round(lastStableViewportHeight - visualHeight - (window.visualViewport?.offsetTop || 0))) : 0;
   document.documentElement.style.setProperty("--app-width", `${width}px`);
   document.documentElement.style.setProperty("--app-height", `${height}px`);
   document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
@@ -2611,9 +2634,10 @@ window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("scroll", resize);
 function recoverViewportAfterTextInput() {
+  viewportRecoveryUntil = performance.now() + 1350;
   viewportRecoveryTimers.forEach((timer) => window.clearTimeout(timer));
   viewportRecoveryTimers = [];
-  for (const delay of [0, 90, 240, 520]) {
+  for (const delay of [0, 90, 240, 520, 900, 1320]) {
     const timer = window.setTimeout(() => {
       applyViewportSizeVars();
       resize();
@@ -2625,6 +2649,7 @@ function recoverViewportAfterTextInput() {
 
 document.addEventListener("focusin", (event) => {
   if (!isTextEntryTarget(event.target)) return;
+  if (!viewportLooksKeyboardShrunk() && window.innerHeight > 0) lastStableViewportHeight = Math.round(window.innerHeight);
   window.setTimeout(resize, 40);
 });
 document.addEventListener("focusout", (event) => {
@@ -2639,6 +2664,7 @@ document.addEventListener("keydown", (event) => {
 });
 window.addEventListener("orientationchange", () => {
   lastStableViewportHeight = Math.round(window.innerHeight || lastStableViewportHeight);
+  viewportRecoveryUntil = 0;
   setTimeout(resize, 250);
   setTimeout(resize, 700);
 });
@@ -3223,7 +3249,7 @@ mobileFire.addEventListener("pointerdown", (event) => {
   mobileFireLastX = event.clientX;
   mobileFireLastY = event.clientY;
   capturePointer(mobileFire, event.pointerId);
-  shoot();
+  if (findMobileAimTarget()) shoot();
 });
 mobileFire.addEventListener("pointermove", (event) => {
   if (mobileFirePointer !== event.pointerId || !mobileFiring) return;
@@ -3378,6 +3404,7 @@ function leavePokerRoom() {
   pokerSelfId = "";
   pokerRoomCode = "";
   latestPokerSnapshot = null;
+  setFpsActive(false);
   pokerPanel.classList.remove("open");
   document.body.classList.remove("poker-open");
   joinPanel.classList.remove("hidden");
@@ -3432,6 +3459,7 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (!message || typeof message !== "object") return;
   if (message.type === "poker_welcome") {
+    setFpsActive(false);
     pokerJoined = true;
     pokerSelfId = String(message.id || "");
     pokerRoomCode = String(message.room || "");
@@ -3504,6 +3532,7 @@ function handleMessage(event: MessageEvent<string>) {
     roomCodeEl.textContent = self.room;
     roomInput.value = self.room;
     joinPanel.classList.add("hidden");
+    setFpsActive(true);
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${self.room}`);
     touchProgressSession("fps");
@@ -3758,6 +3787,15 @@ function updateLobbyBgm() {
   void unlockAudio();
 }
 
+function setFpsActive(active: boolean) {
+  document.body.classList.toggle("game-active", active);
+  if (!active) {
+    document.body.classList.remove("members-open");
+    scoreboard.classList.remove("open");
+    settingsPanel.classList.remove("open");
+  }
+}
+
 (window as Window &
   typeof globalThis & {
     __toyboxAudioState?: () => {
@@ -3950,8 +3988,10 @@ function move(delta: number) {
   const sneaking = keys.has("ShiftLeft");
   const sprinting = now < sprintUntil && keys.has("KeyW") && !sneaking;
   const boosted = Date.now() < ((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0));
-  const touchScale = mobileMoveIntensity > 0 ? 0.62 + mobileMoveIntensity * 0.46 : 1;
-  const speed = (sneaking ? 2.8 : sprinting ? 10.2 : 5.5) * (boosted ? 1.18 : 1) * touchScale;
+  const touchMoving = mobileMoveIntensity > 0;
+  const touchScale = touchMoving ? 0.46 + mobileMoveIntensity * 0.36 : 1;
+  const baseSpeed = sneaking ? 2.8 : sprinting ? (touchMoving ? 8.0 : 10.2) : 5.5;
+  const speed = baseSpeed * (boosted ? 1.18 : 1) * touchScale;
   const forward = getLookDirection();
   forward.y = 0;
   forward.normalize();
@@ -4335,6 +4375,7 @@ function returnToLobbyAfterRound() {
   lobbyReturnTimer = 0;
   self.joined = false;
   self.ready = false;
+  setFpsActive(false);
   desktopFiring = false;
   mobileFiring = false;
   roomCodeEl.textContent = "----";
@@ -5390,14 +5431,15 @@ function shortestAngleDelta(from: number, to: number) {
   return THREE.MathUtils.euclideanModulo(to - from + Math.PI, Math.PI * 2) - Math.PI;
 }
 
-function applyMobileAimAssist(delta: number) {
-  if (!mobileFiring && !scoped) return;
-  if (!window.matchMedia("(pointer: coarse)").matches) return;
+function findMobileAimTarget() {
+  if (!isCoarsePointer()) return null;
   const me = players.get(self.id);
-  if (!me || me.eliminated || me.health <= 0) return;
-  const maxDistance = scoped ? 76 : 52;
-  let best: PlayerState | null = null;
-  let bestScore = 999;
+  if (!me || me.eliminated || me.health <= 0) return null;
+  const gun = currentGun();
+  const maxDistance = Math.min(gun.range, scoped ? 96 : 62);
+  const yawLimit = scoped ? 0.18 : 0.16;
+  const pitchLimit = scoped ? 0.15 : 0.13;
+  let best: { target: PlayerState; yawDelta: number; pitchDelta: number; distance: number; score: number } | null = null;
   for (const target of players.values()) {
     if (target.id === self.id || target.color === me.color || target.eliminated || target.health <= 0 || target.creative) continue;
     const dx = target.x - self.position.x;
@@ -5409,22 +5451,25 @@ function applyMobileAimAssist(delta: number) {
     const targetPitch = Math.asin(THREE.MathUtils.clamp(dy / distance, -0.98, 0.98));
     const yawDelta = shortestAngleDelta(self.yaw, targetYaw);
     const pitchDelta = targetPitch - self.pitch;
+    if (Math.abs(yawDelta) > yawLimit || Math.abs(pitchDelta) > pitchLimit) continue;
+    const direction = new THREE.Vector3(dx, dy, dz).normalize();
+    if (firstObstacleDistance(self.position, direction, distance) < distance - 0.38) continue;
     const score = Math.hypot(yawDelta * 1.25, pitchDelta);
-    if (score < bestScore && Math.abs(yawDelta) < 0.16 && Math.abs(pitchDelta) < 0.13) {
-      best = target;
-      bestScore = score;
-    }
+    if (!best || score < best.score) best = { target, yawDelta, pitchDelta, distance, score };
   }
-  if (!best) return;
-  const dx = best.x - self.position.x;
-  const dy = best.y + 0.65 - self.position.y;
-  const dz = best.z - self.position.z;
-  const distance = Math.hypot(dx, dy, dz) || 1;
-  const targetYaw = Math.atan2(-dx, -dz);
-  const targetPitch = Math.asin(THREE.MathUtils.clamp(dy / distance, -0.98, 0.98));
-  const strength = THREE.MathUtils.clamp(delta * (mobileFiring ? 2.4 : 1.25), 0, mobileFiring ? 0.075 : 0.045);
-  self.yaw += shortestAngleDelta(self.yaw, targetYaw) * strength;
-  self.pitch = THREE.MathUtils.clamp(self.pitch + (targetPitch - self.pitch) * strength, -1.15, 1.1);
+  return best;
+}
+
+function applyMobileAimAssist(delta: number) {
+  const target = findMobileAimTarget();
+  if (!target) return;
+  const strength = THREE.MathUtils.clamp(delta * (mobileFiring ? 2.4 : scoped ? 1.25 : 1.05), 0, mobileFiring ? 0.075 : scoped ? 0.045 : 0.034);
+  self.yaw += target.yawDelta * strength;
+  self.pitch = THREE.MathUtils.clamp(self.pitch + target.pitchDelta * strength, -1.15, 1.1);
+  const autoFireCone = scoped ? 0.064 : 0.082;
+  if (!mobileFiring && target.score <= autoFireCone && Math.abs(target.yawDelta) <= 0.075 && Math.abs(target.pitchDelta) <= 0.07) {
+    shoot();
+  }
 }
 
 function animate() {
@@ -5451,7 +5496,8 @@ function animate() {
 
   if (self.joined) move(delta);
   if (self.joined) applyMobileAimAssist(delta);
-  if (self.joined && (desktopFiring || mobileFiring)) shoot();
+  if (self.joined && desktopFiring) shoot();
+  if (self.joined && mobileFiring && findMobileAimTarget()) shoot();
   updateKillcam();
   updateCamera();
   updateWeaponMotion(delta);

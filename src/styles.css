@@ -4029,6 +4029,250 @@ body.celebrating::after {
   }
 }
 
+@media (pointer: coarse), (max-width: 560px), (max-height: 520px) and (orientation: landscape) {
+  .join-actions {
+    position: static;
+    bottom: auto;
+    z-index: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  body.keyboard-open .join-actions {
+    bottom: auto;
+  }
+}
+
+@media (pointer: coarse), (max-height: 520px) and (orientation: landscape) {
+  body.game-active .top-left,
+  body.game-active #resetButton,
+  body.game-active #scoreboardToggle,
+  body.game-active .latency,
+  body.game-active .chat-panel,
+  body.game-active .feed,
+  body.game-active .flow-card,
+  body.game-active .focus-task-card,
+  body.game-active .lobby-strip,
+  body.game-active .player-slots,
+  body.game-active .movement-card,
+  body.game-active .mobile-install {
+    display: none !important;
+  }
+
+  body.game-active .top-right {
+    top: max(8px, env(safe-area-inset-top));
+    right: max(8px, env(safe-area-inset-right));
+    gap: 0;
+    background: transparent;
+  }
+
+  body.game-active #settingsButton {
+    width: 42px;
+    min-height: 42px;
+    background: rgba(8, 21, 30, 0.7);
+    border: 1px solid rgba(214, 248, 255, 0.2);
+  }
+
+  body.game-active #inviteButton {
+    display: none !important;
+  }
+
+  body.game-active #muteButton {
+    display: none !important;
+  }
+
+  body.game-active .audio-unlock-button {
+    width: 42px;
+    min-height: 42px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  body.game-active .audio-unlock-button span {
+    display: none;
+  }
+
+  body.game-active .top-center {
+    top: max(7px, env(safe-area-inset-top));
+    gap: 6px;
+    background: transparent;
+  }
+
+  body.game-active .top-center > strong {
+    min-width: 30px;
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: rgba(8, 21, 30, 0.66);
+    font-size: 20px;
+    text-align: center;
+  }
+
+  body.game-active .score-orb {
+    width: 50px;
+    height: 50px;
+    border-width: 3px;
+    background: rgba(8, 21, 30, 0.68);
+    box-shadow: 0 8px 20px rgba(5, 14, 22, 0.18);
+  }
+
+  body.game-active .score-orb span,
+  body.game-active .score-orb strong {
+    display: none;
+  }
+
+  body.game-active .score-orb small {
+    font-size: 10px;
+    color: #fff;
+  }
+
+  body.game-active .minimap {
+    top: max(56px, calc(env(safe-area-inset-top) + 54px));
+    left: max(8px, env(safe-area-inset-left));
+    width: 92px;
+    height: 92px;
+    opacity: 0.82;
+  }
+
+  body.game-active .minimap canvas {
+    width: 92px;
+    height: 92px;
+  }
+
+  body.game-active .damage-feed {
+    top: max(54px, calc(env(safe-area-inset-top) + 54px));
+    right: max(8px, env(safe-area-inset-right));
+    width: 132px;
+    gap: 4px;
+    pointer-events: none;
+  }
+
+  body.game-active .damage-card {
+    grid-template-columns: 34px 1fr;
+    min-height: 30px;
+    padding: 5px 6px;
+  }
+
+  body.game-active .damage-card strong {
+    font-size: 13px;
+  }
+
+  body.game-active .damage-card span,
+  body.game-active .damage-card b {
+    font-size: 9px;
+  }
+
+  body.game-active .status-strip {
+    left: max(8px, env(safe-area-inset-left));
+    bottom: max(124px, calc(env(safe-area-inset-bottom) + 124px));
+    gap: 6px;
+    background: transparent;
+  }
+
+  body.game-active .face,
+  body.game-active .health-card::after,
+  body.game-active .ammo-card::after,
+  body.game-active .ammo-card > span {
+    display: none;
+  }
+
+  body.game-active .health-card {
+    min-width: 94px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: rgba(8, 21, 30, 0.58);
+  }
+
+  body.game-active .health-card strong,
+  body.game-active .ammo-card strong {
+    font-size: 19px;
+  }
+
+  body.game-active .health-card small,
+  body.game-active .ammo-card small {
+    font-size: 11px;
+  }
+
+  body.game-active .health-bar {
+    width: 86px;
+    height: 8px;
+    margin-top: 4px;
+  }
+
+  body.game-active .ammo-card {
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(116px, calc(env(safe-area-inset-bottom) + 116px));
+    padding: 5px 8px;
+    border-radius: 7px;
+    background: rgba(8, 21, 30, 0.58);
+  }
+
+  body.game-active .donpunch-button,
+  body.game-active:not(.celebrating) .donpunch-button {
+    right: max(86px, calc(env(safe-area-inset-right) + 86px));
+    bottom: max(76px, calc(env(safe-area-inset-bottom) + 76px));
+    min-height: 32px;
+    max-width: 148px;
+    padding: 0 8px;
+    font-size: 11px;
+    opacity: 0.86;
+  }
+
+  body.game-active .mobile-controls {
+    display: block;
+  }
+
+  body.game-active .mobile-fullscreen {
+    left: max(8px, env(safe-area-inset-left));
+    top: max(8px, env(safe-area-inset-top));
+    width: 38px;
+    height: 38px;
+  }
+
+  body.game-active .move-stick {
+    width: 118px;
+    height: 118px;
+    opacity: 0.8;
+  }
+
+  body.game-active .move-stick div {
+    width: 54px;
+    height: 54px;
+  }
+
+  body.game-active .mobile-action {
+    width: 44px;
+    height: 44px;
+    opacity: 0.86;
+  }
+
+  body.game-active .fire-button {
+    width: 62px;
+    height: 62px;
+    opacity: 0.42;
+    background: rgba(255, 90, 82, 0.58);
+  }
+
+  body.game-active .fire-button::after {
+    content: "AUTO";
+    position: absolute;
+    left: 50%;
+    bottom: -15px;
+    translate: -50% 0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(8, 21, 30, 0.62);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
