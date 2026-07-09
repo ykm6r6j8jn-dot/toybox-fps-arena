@@ -1355,8 +1355,8 @@ function broadcastPoker(room) {
 
 function spawnPoint(index = 0) {
   const points = [
-    [-32, 1.6, -16],
-    [32, 1.6, 16],
+    [-36, 1.6, 16],
+    [36, 1.6, -16],
     [-42, 1.6, -18],
     [42, 1.6, 30],
     [-14, 1.6, -42],
@@ -1377,7 +1377,7 @@ function spawnPoint(index = 0) {
     [6, 1.6, -72]
   ];
   const point = points[index % points.length];
-  const yaw = Math.atan2(-point[0], -point[2]);
+  const yaw = Math.atan2(point[0], point[2]);
   return { x: point[0], y: point[1], z: point[2], yaw };
 }
 

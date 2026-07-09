@@ -467,6 +467,13 @@ function inviteShareUrl(room: string, play: "fps" | "poker" = "fps") {
   return url.toString();
 }
 
+const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
+const dynamicShadowsAllowed = new URLSearchParams(location.search).get("ultra") === "1"
+  && !coarsePointerQuery.matches
+  && navigator.maxTouchPoints === 0
+  && window.innerWidth >= 900
+  && (navigator.hardwareConcurrency || 4) >= 12;
+
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
@@ -475,11 +482,13 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setClearColor(0x77c7ff);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
+renderer.toneMappingExposure = 0.96;
+renderer.shadowMap.enabled = dynamicShadowsAllowed;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x8bd6ff);
-scene.fog = new THREE.Fog(0xb9e3fb, 82, 205);
+scene.background = new THREE.Color(0x6fc7f7);
+scene.fog = new THREE.Fog(0x9ed9f5, 116, 228);
 
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 220);
 camera.position.set(0, 1.6, 8);
@@ -587,13 +596,19 @@ let weaponView: THREE.Group | null = null;
 let scoped = false;
 let weaponKick = 0;
 let weaponSwayClock = 0;
+let muzzleFlashMesh: THREE.Group | null = null;
+let muzzleFlashLight: THREE.PointLight | null = null;
+let muzzleFlashUntil = 0;
+let sunLight: THREE.DirectionalLight | null = null;
+let dynamicShadowsEnabled = dynamicShadowsAllowed;
+let shadowPerformanceDrops = 0;
 
 const palette = {
-  concrete: 0xe9edf0,
-  white: 0xf7fafc,
-  blue: 0x2186d9,
-  green: 0x78bf42,
-  yellow: 0xf2c94c,
+  concrete: 0xe2e3df,
+  white: 0xf3f4f1,
+  blue: 0x177fd2,
+  green: 0x78c943,
+  yellow: 0xf3c83e,
   red: 0xe95d4c,
   orange: 0xe79a46,
   purple: 0x7568d8,
@@ -687,7 +702,6 @@ const donPunchPositionScratch = new THREE.Vector3();
 let lastStableViewportHeight = window.innerHeight;
 let viewportRecoveryTimers: number[] = [];
 let viewportRecoveryUntil = 0;
-const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
 
 function viewportSize() {
   const visualViewport = window.visualViewport;
@@ -1217,33 +1231,51 @@ function makeTexturedMaterial(color: number, texture: THREE.Texture, roughness =
 }
 
 const blockGrainTexture = createGrainTexture(7403);
-const floorTexture = createConcreteTexture(3111, "#d8dfe2", 24, 24);
-const wallTexture = createConcreteTexture(5119, "#eef2f3", 3.4, 3.4);
+const floorTexture = createConcreteTexture(3111, "#d4d6d3", 24, 24);
+const wallTexture = createConcreteTexture(5119, "#e3e4e1", 3.4, 3.4);
 
 const materials = {
-  floor: makeTexturedMaterial(0xf2f5f5, floorTexture, 0.95, 0.028),
-  wall: makeTexturedMaterial(0xf9fbfb, wallTexture, 0.9, 0.04),
-  blue: makeTexturedMaterial(palette.blue, blockGrainTexture, 0.78, 0.018),
-  green: makeTexturedMaterial(palette.green, blockGrainTexture, 0.78, 0.018),
-  yellow: makeTexturedMaterial(palette.yellow, blockGrainTexture, 0.78, 0.018),
+  floor: makeTexturedMaterial(0xe8e9e6, floorTexture, 0.92, 0.036),
+  wall: makeTexturedMaterial(0xf3f4f1, wallTexture, 0.84, 0.058),
+  blue: makeTexturedMaterial(palette.blue, blockGrainTexture, 0.72, 0.024),
+  green: makeTexturedMaterial(palette.green, blockGrainTexture, 0.72, 0.024),
+  yellow: makeTexturedMaterial(palette.yellow, blockGrainTexture, 0.72, 0.024),
   red: makeTexturedMaterial(palette.red, blockGrainTexture, 0.78, 0.018),
   orange: makeTexturedMaterial(palette.orange, blockGrainTexture, 0.78, 0.018),
   purple: makeTexturedMaterial(palette.purple, blockGrainTexture, 0.78, 0.018),
   cyan: makeTexturedMaterial(palette.cyan, blockGrainTexture, 0.78, 0.018),
-  dark: makeMaterial(palette.dark, 0.65),
-  metal: makeMaterial(0x5e6971, 0.42),
-  rubber: makeMaterial(0x12181d, 0.78),
+  dark: makeMaterial(0x1b252d, 0.58),
+  metal: makeMaterial(0x46515a, 0.34),
+  rubber: makeMaterial(0x10161b, 0.72),
   light: new THREE.MeshBasicMaterial({ color: 0xfff0a8 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x8bd7ff, roughness: 0.2, metalness: 0.02, transparent: true, opacity: 0.34 })
 };
-const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x07121d, transparent: true, opacity: 0.17, depthWrite: false });
+const shadowMaterial = new THREE.MeshBasicMaterial({
+  color: 0x07121d,
+  transparent: true,
+  opacity: dynamicShadowsEnabled ? 0.08 : 0.2,
+  depthWrite: false
+});
 
 function addLights() {
-  scene.add(new THREE.HemisphereLight(0xf6fbff, 0x7b8f76, 2.18));
-  const sun = new THREE.DirectionalLight(0xfff0cb, 2.08);
-  sun.position.set(22, 34, 16);
+  scene.add(new THREE.HemisphereLight(0xdff3ff, 0x61705d, 1.22));
+  const sun = new THREE.DirectionalLight(0xfff1d0, 3.15);
+  sun.position.set(42, 72, 36);
+  sun.castShadow = dynamicShadowsEnabled;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.left = -72;
+  sun.shadow.camera.right = 72;
+  sun.shadow.camera.top = 72;
+  sun.shadow.camera.bottom = -72;
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 180;
+  sun.shadow.bias = -0.0007;
+  sun.shadow.normalBias = 0.035;
+  sun.target.position.set(0, 0, 0);
+  scene.add(sun.target);
   scene.add(sun);
-  const rim = new THREE.DirectionalLight(0x92d7ff, 0.42);
+  sunLight = sun;
+  const rim = new THREE.DirectionalLight(0x7cc9ff, 0.32);
   rim.position.set(-28, 18, -32);
   scene.add(rim);
 }
@@ -1266,7 +1298,12 @@ function addBox(
   const box = new THREE.Mesh(new THREE.BoxGeometry(scale[0], scale[1], scale[2]), material);
   box.name = name;
   box.position.set(position[0], position[1], position[2]);
-  box.castShadow = false;
+  box.castShadow = dynamicShadowsEnabled
+    && !material.transparent
+    && Math.abs(position[0]) <= 62
+    && Math.abs(position[2]) <= 62
+    && scale[1] >= 2.2
+    && scale[0] * scale[2] >= 14;
   box.receiveShadow = true;
   trackArenaObject(box);
   if (collidable && scale[1] > 1.2 && scale[0] * scale[2] > 10) addSoftShadow(name, position, scale);
@@ -2456,13 +2493,39 @@ function addWeapon() {
   }
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.42), accentMaterial), [0.42, -0.2, -0.48]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.16), tracerMaterial), [0.24, -0.19, -0.55]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.055, 0.42), materials.metal), [0.63, -0.16, -0.86]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.13, 0.26), materials.dark), [0.64, -0.21, -0.82]);
+  addPart(new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.016, 8, 18, Math.PI * 1.45), materials.metal), [0.42, -0.47, -0.42], [Math.PI / 2, 0, 0.2]);
+  for (let rail = 0; rail < 5; rail += 1) {
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.035, 0.055), materials.metal), [0.42, -0.025, -0.56 - rail * 0.16]);
+  }
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), materials.rubber), [0.25, -0.68, -0.6], [0.08, 0.05, 0.18]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.24, 0.34), accentMaterial), [0.17, -0.84, -0.34], [0.12, -0.16, 0.1]);
   addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.15, 0.78, 10), accentMaterial), [0.12, -0.95, -0.28], [Math.PI / 2, 0.08, -0.16]);
   addPart(new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8), materials.rubber), [0.26, -0.68, -0.64], [0, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 0.28), skinMaterial), [0.36, -0.62, -0.84], [0.12, 0.05, -0.08]);
   addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 0.92, 10), accentMaterial), [-0.08, -1.08, 0.02], [Math.PI / 2, -0.18, -0.1]);
-  weapon.scale.setScalar(0.66);
+
+  const muzzleFlash = new THREE.Group();
+  const flashCore = new THREE.Mesh(
+    new THREE.SphereGeometry(gun.kind === "shotgun" ? 0.15 : 0.1, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfff6b8, transparent: true, opacity: 0.96, depthWrite: false })
+  );
+  const flashCone = new THREE.Mesh(
+    new THREE.ConeGeometry(gun.kind === "shotgun" ? 0.18 : 0.12, gun.kind === "shotgun" ? 0.52 : 0.38, 6),
+    new THREE.MeshBasicMaterial({ color: gun.tracerColor, transparent: true, opacity: 0.78, depthWrite: false })
+  );
+  flashCone.rotation.x = -Math.PI / 2;
+  flashCone.position.z = -0.2;
+  const flashLight = new THREE.PointLight(0xffd76b, 0, 4.5, 2);
+  muzzleFlash.add(flashCore, flashCone, flashLight);
+  muzzleFlash.position.set(0.42, -0.29, -1.19 - barrelLength);
+  muzzleFlash.visible = false;
+  weapon.add(muzzleFlash);
+  muzzleFlashMesh = muzzleFlash;
+  muzzleFlashLight = flashLight;
+
+  weapon.scale.setScalar(0.61);
   camera.add(weapon);
   weaponView = weapon;
   scene.add(camera);
@@ -2539,6 +2602,13 @@ function createPlayerMesh(player: PlayerState) {
     stripeA.position.y = 0.99;
     stripeB.position.y = 0.78;
     group.add(stripeA, stripeB);
+  }
+  if (dynamicShadowsEnabled) {
+    group.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+    });
   }
   updatePlayerNameTag(group, player);
   scene.add(group);
@@ -2628,8 +2698,8 @@ function updatePlayerNameTag(group: THREE.Group, player: PlayerState) {
     depthTest: true,
     depthWrite: false
   }));
-  sprite.position.set(0, 2.68, 0);
-  sprite.scale.set(1.8, 0.45, 1);
+  sprite.position.set(0, 2.48, 0);
+  sprite.scale.set(1.34, 0.335, 1);
   sprite.renderOrder = 3;
   group.userData.nameTagSprite = sprite;
   group.userData.nameTagKey = nextKey;
@@ -4341,21 +4411,11 @@ function applyShotRecoil(gun: Gun) {
 
 function flashMuzzle() {
   playGunSound(currentGun());
-  const flash = new THREE.PointLight(0xfff066, 4, 7);
-  flash.position.copy(self.position).add(getLookDirection().multiplyScalar(1.5));
-  scene.add(flash);
-  setTimeout(() => scene.remove(flash), 55);
-  const spark = new THREE.Mesh(
-    new THREE.SphereGeometry(currentGun().kind === "shotgun" ? 0.2 : 0.13, 8, 6),
-    new THREE.MeshBasicMaterial({ color: currentGun().tracerColor, transparent: true, opacity: 0.85 })
-  );
-  spark.position.copy(self.position).add(getLookDirection().multiplyScalar(1.2));
-  scene.add(spark);
-  setTimeout(() => {
-    scene.remove(spark);
-    spark.geometry.dispose();
-    (spark.material as THREE.Material).dispose();
-  }, 80);
+  muzzleFlashUntil = performance.now() + (currentGun().kind === "shotgun" ? 92 : 64);
+  if (!muzzleFlashMesh) return;
+  muzzleFlashMesh.visible = true;
+  muzzleFlashMesh.rotation.z = Math.random() * Math.PI;
+  if (muzzleFlashLight) muzzleFlashLight.intensity = currentGun().kind === "shotgun" ? 5.4 : 3.8;
 }
 
 function reload() {
@@ -4383,15 +4443,20 @@ function updateWeaponMotion(delta: number) {
   weaponKick = Math.max(0, weaponKick - delta * 5.8);
   const walkSway = keys.size > 0 ? 1 : 0.32;
   weaponView.position.set(
-    0.28 + Math.sin(weaponSwayClock) * 0.012 * walkSway,
-    -0.25 + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.01 * walkSway - weaponKick * 0.035,
-    -0.22 + weaponKick * 0.16
+    0.34 + Math.sin(weaponSwayClock) * 0.011 * walkSway,
+    -0.31 + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.009 * walkSway - weaponKick * 0.032,
+    -0.26 + weaponKick * 0.14
   );
   weaponView.rotation.set(
     -weaponKick * 0.22 + Math.sin(weaponSwayClock * 0.8) * 0.006 * walkSway,
     Math.sin(weaponSwayClock * 0.55) * 0.006 * walkSway,
     Math.sin(weaponSwayClock) * 0.012 * walkSway
   );
+  if (muzzleFlashMesh) {
+    const firing = performance.now() < muzzleFlashUntil;
+    muzzleFlashMesh.visible = firing;
+    if (muzzleFlashLight && !firing) muzzleFlashLight.intensity = 0;
+  }
 }
 
 function getLookDirection() {
@@ -5076,10 +5141,12 @@ function updateHud(feed: FeedItem[]) {
   updateFocusTaskHud(me?.focusTask);
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
-  ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
+  ammoEl.textContent = reloadTimer > 0 ? "--" : String(self.ammo);
   const gearTier = Math.max(0, Math.floor(Number(me?.equipmentTier) || 0));
   const gearText = gearTier > 0 ? ` / 装備Lv.${gearTier}` : "";
-  weaponRangeEl.textContent = reloadTimer > 0 ? `リロード中${gearText}` : `飛距離 ${currentGun().range}m${gearText}`;
+  weaponRangeEl.textContent = reloadTimer > 0
+    ? `リロード中 / MED ${me?.healPacks ?? 0}${gearText}`
+    : `${currentGun().name} · ${currentGun().range}m · MED ${me?.healPacks ?? 0}${gearText}`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
   const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
@@ -5515,12 +5582,23 @@ function updateAdaptiveQuality(delta: number, now: number) {
   if (now - lastQualityCheckAt < 1400) return;
   lastQualityCheckAt = now;
 
+  if (dynamicShadowsEnabled) {
+    shadowPerformanceDrops = frameAverageMs > 20.5 ? shadowPerformanceDrops + 1 : Math.max(0, shadowPerformanceDrops - 1);
+    if (shadowPerformanceDrops >= 2) {
+      dynamicShadowsEnabled = false;
+      renderer.shadowMap.enabled = false;
+      if (sunLight) sunLight.castShadow = false;
+      shadowMaterial.opacity = 0.2;
+      shadowMaterial.needsUpdate = true;
+    }
+  }
+
   const cap = maxPixelRatio();
   const floor = minPixelRatio();
-  const nextPixelRatio = frameAverageMs > 31
+  const nextPixelRatio = frameAverageMs > 21.2
     ? Math.max(floor, activePixelRatio - 0.08)
-    : frameAverageMs < 18.2
-      ? Math.min(cap, activePixelRatio + 0.04)
+    : frameAverageMs < 17.4
+      ? Math.min(cap, activePixelRatio + 0.03)
       : activePixelRatio;
 
   if (Math.abs(nextPixelRatio - activePixelRatio) > 0.02) {
