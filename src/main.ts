@@ -326,6 +326,8 @@ const mobileFullscreen = $("#mobileFullscreen") as HTMLButtonElement;
 const mobileInstall = $("#mobileInstall") as HTMLButtonElement;
 const mobileFullscreenGuide = $("#mobileFullscreenGuide");
 const mobileFullscreenGuideText = $("#mobileFullscreenGuideText");
+const mobileGuidePlay = $("#mobileGuidePlay") as HTMLButtonElement;
+const mobileGuideInstall = $("#mobileGuideInstall") as HTMLButtonElement;
 const mobileGuideClose = $("#mobileGuideClose") as HTMLButtonElement;
 const mobileStick = $("#mobileStick");
 const mobileStickKnob = $("#mobileStickKnob");
@@ -383,9 +385,12 @@ const toast = $("#toast");
 const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
+const launchParams = new URLSearchParams(location.search);
 const progressStorageKey = "donpachi-progress-v1";
 const inventoryStorageKey = "donpachi-inventory-v1";
 const loginStorageKey = "donpachi-login-id";
+const inviteRoomStorageKey = "donpachi-last-invite-room";
+const installInviteRequested = launchParams.get("install") === "1";
 let progressState = loadProgressState();
 let profileInventory = loadProfileInventory();
 let loggedInLoginId = sanitizeLoginId(localStorage.getItem(loginStorageKey) || "");
@@ -404,7 +409,9 @@ loginIdInput.addEventListener("input", () => {
   const nextId = sanitizeLoginId(loginIdInput.value);
   if (loginIdInput.value !== nextId) loginIdInput.value = nextId;
 });
-const initialRoomCode = sanitizeRoomCode(new URLSearchParams(location.search).get("room") || "");
+const urlRoomCode = sanitizeRoomCode(launchParams.get("room") || "");
+if (urlRoomCode) localStorage.setItem(inviteRoomStorageKey, urlRoomCode);
+const initialRoomCode = urlRoomCode || sanitizeRoomCode(localStorage.getItem(inviteRoomStorageKey) || "");
 if (initialRoomCode) roomInput.value = initialRoomCode;
 roomInput.addEventListener("input", () => {
   const nextCode = sanitizeRoomCode(roomInput.value);
@@ -435,6 +442,17 @@ function appWebSocketUrl() {
 function publicShareUrl(room: string) {
   const url = new URL("/", publicBaseUrl);
   url.searchParams.set("room", room);
+  url.searchParams.set("install", "1");
+  return url.toString();
+}
+
+function inviteShareUrl(room: string) {
+  if (runningInNativeShell()) return publicShareUrl(room);
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("room", room);
+  url.searchParams.set("install", "1");
   return url.toString();
 }
 
@@ -2975,20 +2993,30 @@ function isCoarseLandscape() {
   return window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(orientation: landscape)").matches;
 }
 
+function isMobileLikeDevice() {
+  return window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 function showMobileFullscreenGuide(force = false) {
   if (!force && mobileGuideDismissed) return;
-  if (!isCoarseLandscape() || isStandaloneDisplay() || isFullscreenActive()) {
+  if ((!force && !isCoarseLandscape()) || !isMobileLikeDevice() || isStandaloneDisplay() || isFullscreenActive()) {
     mobileFullscreenGuide.classList.remove("show");
     return;
   }
   const isAppleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  mobileFullscreenGuideText.textContent = isAppleMobile
-    ? "Safariの共有から「ホーム画面に追加」して起動すると、上下のブラウザバーをほぼ消せます。"
-    : "全画面ボタン、またはホーム画面に追加して起動すると、上下のブラウザバーを減らせます。";
+  if (installInviteRequested) {
+    mobileFullscreenGuideText.textContent = isAppleMobile
+      ? "このリンクはアプリ招待です。今すぐ遊ぶか、Safariの共有から「ホーム画面に追加」でアプリ化できます。"
+      : "このリンクはアプリ招待です。今すぐ遊ぶか、「アプリ化」からホーム画面に追加できます。";
+  } else {
+    mobileFullscreenGuideText.textContent = isAppleMobile
+      ? "Safariの共有から「ホーム画面に追加」して起動すると、上下のブラウザバーをほぼ消せます。"
+      : "全画面ボタン、またはホーム画面に追加して起動すると、上下のブラウザバーを減らせます。";
+  }
   mobileFullscreenGuide.classList.add("show");
   setTimeout(() => {
     if (!mobileGuideDismissed) mobileFullscreenGuide.classList.remove("show");
-  }, force ? 5200 : 4200);
+  }, force ? 9000 : 4200);
 }
 
 function updateFullscreenButton() {
@@ -3023,6 +3051,18 @@ async function toggleMobileFullscreen() {
   }
 }
 
+async function requestMobileInstall() {
+  if (deferredInstallPrompt) {
+    await deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice.catch(() => null);
+    deferredInstallPrompt = null;
+    updateFullscreenButton();
+    return;
+  }
+  showMobileFullscreenGuide(true);
+  showToast("iPhoneは共有から「ホーム画面に追加」でアプリ化できます。");
+}
+
 mobileFullscreen.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
@@ -3044,14 +3084,20 @@ window.addEventListener("appinstalled", () => {
 mobileInstall.addEventListener("pointerdown", async (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (deferredInstallPrompt) {
-    await deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice.catch(() => null);
-    deferredInstallPrompt = null;
-    updateFullscreenButton();
+  await requestMobileInstall();
+});
+mobileGuidePlay.addEventListener("click", () => {
+  mobileGuideDismissed = true;
+  localStorage.setItem("toybox-mobile-fullscreen-guide", "off");
+  mobileFullscreenGuide.classList.remove("show");
+  if (roomInput.value.trim()) {
+    joinTypedRoom();
     return;
   }
-  showMobileFullscreenGuide(true);
+  createRoomButton.click();
+});
+mobileGuideInstall.addEventListener("click", () => {
+  void requestMobileInstall();
 });
 mobileGuideClose.addEventListener("click", () => {
   mobileGuideDismissed = true;
@@ -3087,8 +3133,8 @@ document.addEventListener("touchend", (event) => {
 document.addEventListener("selectstart", (event) => {
   if (!isTextEntryTarget(event.target)) event.preventDefault();
 });
-window.addEventListener("orientationchange", () => setTimeout(() => showMobileFullscreenGuide(), 700));
-setTimeout(() => showMobileFullscreenGuide(), 1000);
+window.addEventListener("orientationchange", () => setTimeout(() => showMobileFullscreenGuide(installInviteRequested), 700));
+setTimeout(() => showMobileFullscreenGuide(installInviteRequested), 1000);
 updateFullscreenButton();
 
 function applyMobileTuning() {
@@ -5386,7 +5432,7 @@ async function copyInvite() {
     showToast("先にルームを作成してください。");
     return;
   }
-  const url = runningInNativeShell() ? publicShareUrl(room) : `${location.origin}${location.pathname}?room=${room}`;
+  const url = inviteShareUrl(room);
   const copied = await writeClipboardText(url);
   if (copied) {
     flashPokerInviteButton("コピー済み");
