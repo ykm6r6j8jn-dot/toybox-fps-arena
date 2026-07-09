@@ -208,6 +208,9 @@ function securityHeaders(contentType = "text/plain; charset=utf-8") {
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type",
     "content-security-policy": "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
   };
 }
@@ -473,6 +476,12 @@ if (!isProd) {
 }
 
 const server = createServer(async (req, res) => {
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, securityHeaders());
+    res.end();
+    return;
+  }
+
   if (String(req.url || "").split("?")[0] === "/api/profile") {
     await handleProfileRequest(req, res);
     return;

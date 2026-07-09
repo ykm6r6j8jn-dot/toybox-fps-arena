@@ -12,17 +12,23 @@
     "start": "NODE_ENV=production node server.mjs",
     "preview": "NODE_ENV=production node server.mjs",
     "check": "tsc --noEmit",
+    "ios:add": "npm run build && npx cap add ios",
+    "ios:sync": "npm run build && npx cap sync ios",
+    "ios:open": "npx cap open ios",
     "test:smoke": "node scripts/smoke-multiplayer.mjs",
     "test:controls": "node scripts/control-physics-test.mjs",
     "verify:public": "node scripts/verify-public-url.mjs"
   },
   "dependencies": {
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
     "lucide": "^0.468.0",
     "three": "^0.166.1",
     "vite": "^5.3.3",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
     "@types/node": "^20.14.9",
     "@types/three": "^0.185.0",
     "@types/ws": "^8.5.10",

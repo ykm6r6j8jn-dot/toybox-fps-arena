@@ -412,6 +412,32 @@ roomInput.addEventListener("input", () => {
 });
 renderProgressCard();
 
+const publicBaseUrl = "https://toybox-fps-arena.onrender.com";
+
+function runningInNativeShell() {
+  const maybeCapacitor = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return Boolean(maybeCapacitor?.isNativePlatform?.()) || location.protocol === "capacitor:" || location.protocol === "ionic:";
+}
+
+function appHttpUrl(path: string) {
+  return runningInNativeShell() ? new URL(path, publicBaseUrl).toString() : path;
+}
+
+function appWebSocketUrl() {
+  const base = new URL(runningInNativeShell() ? publicBaseUrl : location.origin);
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  base.pathname = "/ws";
+  base.search = "";
+  base.hash = "";
+  return base.toString();
+}
+
+function publicShareUrl(room: string) {
+  const url = new URL("/", publicBaseUrl);
+  url.searchParams.set("room", room);
+  return url.toString();
+}
+
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
@@ -903,7 +929,7 @@ async function requestProfile(mode: "create" | "login" | "save") {
     loginIdInput.focus();
     return null;
   }
-  const response = await fetch("/api/profile", {
+  const response = await fetch(appHttpUrl("/api/profile"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...currentProfilePayload(), loginId, mode })
@@ -3388,8 +3414,7 @@ function joinPoker(room: string) {
   latestPokerSnapshot = null;
   const code = sanitizeRoomCode(room);
   if (code) roomInput.value = code;
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${protocol}://${location.host}/ws`);
+  socket = new WebSocket(appWebSocketUrl());
   socket.addEventListener("open", () => {
     send({ type: "poker_join", name, room: code, cpuCount: pokerCpuCount, loginId: loggedInLoginId, cosmeticColor: customColor, skin: currentSkin, progress: progressState, inventory: profileInventory });
   });
@@ -3438,8 +3463,7 @@ function join(room: string) {
   localStorage.setItem("toybox-skin", currentSkin);
   if (socket && socket.readyState === WebSocket.OPEN) socket.close();
 
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${protocol}://${location.host}/ws`);
+  socket = new WebSocket(appWebSocketUrl());
   socket.addEventListener("open", () => {
     send({ type: "join", name, room: sanitizeRoomCode(room), gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin, loginId: loggedInLoginId, progress: progressState, inventory: profileInventory });
   });
@@ -3660,7 +3684,7 @@ function send(payload: Record<string, unknown>) {
 
 async function refreshOnlinePlayers() {
   try {
-    const response = await fetch("/health", { cache: "no-store" });
+    const response = await fetch(appHttpUrl("/health"), { cache: "no-store" });
     const data = await response.json();
     const onlinePlayers = Array.isArray(data.players) ? data.players.slice(0, 10) : [];
     onlinePlayersEl.innerHTML = onlinePlayers.length
@@ -5362,7 +5386,7 @@ async function copyInvite() {
     showToast("先にルームを作成してください。");
     return;
   }
-  const url = `${location.origin}${location.pathname}?room=${room}`;
+  const url = runningInNativeShell() ? publicShareUrl(room) : `${location.origin}${location.pathname}?room=${room}`;
   const copied = await writeClipboardText(url);
   if (copied) {
     flashPokerInviteButton("コピー済み");
