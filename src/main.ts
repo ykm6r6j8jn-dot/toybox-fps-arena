@@ -60,6 +60,7 @@ type PlayerState = {
   eliminated?: boolean;
   creative?: boolean;
   healPacks?: number;
+  equipmentTier?: number;
   donPunchCharge?: number;
   shieldUntil?: number;
   speedBoostUntil?: number;
@@ -445,18 +446,19 @@ type Gun = {
   range: number;
   recoilPitch: number;
   recoilYaw: number;
+  recoilDrift: number;
   kick: number;
   tracerColor: number;
 };
 const guns: Gun[] = [
-  { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, recoilPitch: 0.008, recoilYaw: 0.007, kick: 0.2, tracerColor: 0xfff36b },
-  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, recoilPitch: 0.014, recoilYaw: 0.013, kick: 0.28, tracerColor: 0xffb347 },
-  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, recoilPitch: 0.006, recoilYaw: 0.005, kick: 0.18, tracerColor: 0x78f5ff },
-  { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, recoilPitch: 0.005, recoilYaw: 0.009, kick: 0.16, tracerColor: 0x44d7ff },
-  { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, recoilPitch: 0.036, recoilYaw: 0.022, kick: 0.44, tracerColor: 0xff8a3d },
-  { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, recoilPitch: 0.022, recoilYaw: 0.008, kick: 0.34, tracerColor: 0xdfff7a },
-  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, recoilPitch: 0.052, recoilYaw: 0.016, kick: 0.58, tracerColor: 0xffffff },
-  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, recoilPitch: 0.011, recoilYaw: 0.01, kick: 0.24, tracerColor: 0xff4dff }
+  { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, recoilPitch: 0.008, recoilYaw: 0.007, recoilDrift: 0.0008, kick: 0.2, tracerColor: 0xfff36b },
+  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, recoilPitch: 0.016, recoilYaw: 0.015, recoilDrift: 0.0032, kick: 0.31, tracerColor: 0xffb347 },
+  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, recoilPitch: 0.005, recoilYaw: 0.004, recoilDrift: -0.0006, kick: 0.17, tracerColor: 0x78f5ff },
+  { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, recoilPitch: 0.0045, recoilYaw: 0.014, recoilDrift: -0.0015, kick: 0.16, tracerColor: 0x44d7ff },
+  { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, recoilPitch: 0.042, recoilYaw: 0.026, recoilDrift: 0.004, kick: 0.48, tracerColor: 0xff8a3d },
+  { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, recoilPitch: 0.024, recoilYaw: 0.007, recoilDrift: -0.001, kick: 0.36, tracerColor: 0xdfff7a },
+  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, recoilPitch: 0.058, recoilYaw: 0.019, recoilDrift: 0.0024, kick: 0.64, tracerColor: 0xffffff },
+  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, recoilPitch: 0.012, recoilYaw: 0.011, recoilDrift: 0.002, kick: 0.26, tracerColor: 0xff4dff }
 ];
 let currentGunIndex = 0;
 const currentGun = () => guns[currentGunIndex];
@@ -4009,7 +4011,7 @@ function shoot() {
 function applyShotRecoil(gun: Gun) {
   const scopeScale = scoped && isScopedGun(gun) ? 0.62 : 1;
   const pitchKick = gun.recoilPitch * scopeScale;
-  const yawKick = (Math.random() - 0.5) * gun.recoilYaw * scopeScale;
+  const yawKick = ((Math.random() - 0.5) * gun.recoilYaw + gun.recoilDrift * (0.75 + Math.random() * 0.5)) * scopeScale;
   self.pitch = THREE.MathUtils.clamp(self.pitch + pitchKick, -1.15, 1.1);
   self.yaw += yawKick;
   weaponKick = Math.min(1, weaponKick + gun.kick);
@@ -4751,13 +4753,15 @@ function updateHud(feed: FeedItem[]) {
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
   ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
-  weaponRangeEl.textContent = reloadTimer > 0 ? "リロード中" : `飛距離 ${currentGun().range}m`;
+  const gearTier = Math.max(0, Math.floor(Number(me?.equipmentTier) || 0));
+  const gearText = gearTier > 0 ? ` / 装備Lv.${gearTier}` : "";
+  weaponRangeEl.textContent = reloadTimer > 0 ? `リロード中${gearText}` : `飛距離 ${currentGun().range}m${gearText}`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
   const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
   const damageLeft = Math.max(0, ((me?.damageBoostUntil || 0) - Date.now()) / 1000);
   const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "oneLife" ? "  1 LIFE" : gameMode === "practice" ? "  PRACTICE" : gameMode === "castle" ? "  CASTLE" : "";
-  const powerText = speedLeft > 0 ? `  SPD ${speedLeft.toFixed(0)}s` : damageLeft > 0 ? `  DMG ${damageLeft.toFixed(0)}s` : "";
+  const powerText = speedLeft > 0 ? `  SPD ${speedLeft.toFixed(0)}s` : damageLeft > 0 ? `  DMG ${damageLeft.toFixed(0)}s` : gearTier > 0 ? `  GEAR ${gearTier}` : "";
   movementStatusEl.textContent = shieldLeft > 0
     ? `BARRIER ${shieldLeft.toFixed(1)}s`
     : me?.eliminated
@@ -4877,7 +4881,7 @@ function updateFlowHud(now = performance.now()) {
 
 function updateSlots() {
   const list = [...players.values()].sort((a, b) => b.score - a.score);
-  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.cosmeticColor}:${player.skin}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}`).join("|")}`;
+  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.cosmeticColor}:${player.skin}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}:${player.equipmentTier}`).join("|")}`;
   if (signature === slotsSignature) return;
   slotsSignature = signature;
   playerSlots.innerHTML = "";

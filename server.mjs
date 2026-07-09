@@ -81,16 +81,19 @@ const weaponRange = new Map([
   ["cpu", 34]
 ]);
 const cpuWeaponMaxRange = new Map([
-  ["rifle", 56],
-  ["ak47", 58],
-  ["aug", 64],
-  ["smg", 34],
-  ["shotgun", 18],
-  ["marksman", 76],
-  ["awm", 88],
-  ["type95", 58],
-  ["cpu", 30]
+  ["rifle", 50],
+  ["ak47", 52],
+  ["aug", 56],
+  ["smg", 28],
+  ["shotgun", 16],
+  ["marksman", 64],
+  ["awm", 72],
+  ["type95", 50],
+  ["cpu", 26]
 ]);
+const cpuDamageMultiplier = 0.54;
+const cpuCastleDamageMultiplier = 0.52;
+const maxEquipmentTier = 5;
 const allowedWeapons = new Set(weaponDamage.keys());
 const solidObstacles = [];
 const okakoSolidObstacles = [];
@@ -1389,6 +1392,7 @@ function publicPlayer(player) {
     eliminated: Boolean(player.eliminated),
     creative: Boolean(player.creative),
     healPacks: player.healPacks || 0,
+    equipmentTier: player.equipmentTier || 0,
     donPunchCharge: player.donPunchCharge || 0,
     x: player.x,
     y: player.y,
@@ -1777,6 +1781,7 @@ wss.on("connection", (ws) => {
         eliminated: false,
         creative: false,
         healPacks: sanitizeInventory(loginProfile?.inventory).healPacks,
+        equipmentTier: 0,
         donPunchCharge: 0,
         speedBoostUntil: 0,
         damageBoostUntil: 0,
@@ -2158,11 +2163,41 @@ function safeColor(value) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : null;
 }
 
+function equipmentTier(player) {
+  return clamp(Math.floor(Number(player?.equipmentTier) || 0), 0, maxEquipmentTier);
+}
+
+function equipmentDamageMultiplier(player) {
+  return 1 + equipmentTier(player) * 0.035;
+}
+
+function combatGrowthTargetTier(player) {
+  if (!player || player.isBot) return 0;
+  const damageTier = Math.floor((player.damageDealt || 0) / 180);
+  const hitTier = Math.floor((player.hits || 0) / 4);
+  const killTier = player.kills || 0;
+  return clamp(Math.max(damageTier, hitTier, killTier), 0, maxEquipmentTier);
+}
+
+function awardCombatGrowth(room, player) {
+  if (!player || player.isBot || player.eliminated || player.health <= 0) return;
+  const currentTier = equipmentTier(player);
+  const nextTier = combatGrowthTargetTier(player);
+  if (nextTier <= currentTier) return;
+  const gained = nextTier - currentTier;
+  const now = Date.now();
+  player.equipmentTier = nextTier;
+  player.healPacks = clamp((player.healPacks || 0) + gained, 0, 12);
+  player.speedBoostUntil = Math.max(player.speedBoostUntil || 0, now + 2600 + nextTier * 420);
+  addFeed(room, `${player.name} の装備Lv.${nextTier} 強化`, player.color);
+  send(player.ws, { type: "sound", sound: "reload" });
+}
+
 function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   const baseDamage = weaponDamage.get(weapon) || 25;
   const boosted = !shooter.isBot && Date.now() < (shooter.damageBoostUntil || 0);
-  const damageMultiplier = boosted ? 1.18 : 1;
-  const damage = shooter.isBot ? Math.max(8, Math.ceil(baseDamage * 0.68)) : Math.ceil(baseDamage * damageMultiplier);
+  const damageMultiplier = (boosted ? 1.18 : 1) * equipmentDamageMultiplier(shooter);
+  const damage = shooter.isBot ? Math.max(6, Math.ceil(baseDamage * cpuDamageMultiplier)) : Math.ceil(baseDamage * damageMultiplier);
   const range = weaponRange.get(weapon) || 70;
   let best;
   let bestDistance = Infinity;
@@ -2211,6 +2246,7 @@ function applyCastleCoreDamage(room, shooter, core, damage) {
   shooter.score += 1;
   shooter.hits = (shooter.hits || 0) + 1;
   shooter.damageDealt = (shooter.damageDealt || 0) + appliedDamage;
+  awardCombatGrowth(room, shooter);
   addFeed(room, `${shooter.name} が敵の白を攻撃`, shooter.color);
   broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: `${core.team}-castle-core`, damage: scaledDamage, weapon: "白攻撃" });
 }
@@ -2263,6 +2299,7 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
     shooter.score += 1;
     shooter.kills += 1;
     shooter.donPunchCharge = Math.min(8, (shooter.donPunchCharge || 0) + 1);
+    awardCombatGrowth(room, shooter);
     target.deaths += 1;
     addFeed(room, `${shooter.name} が ${target.name} をヒット`, shooter.color);
     if (!target.isBot) {
@@ -2275,6 +2312,7 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
     }
     handleDeath(room, shooter, target);
   } else {
+    awardCombatGrowth(room, shooter);
     addFeed(room, `${shooter.name} -> ${target.name}`, shooter.color);
   }
   broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage, weapon });
@@ -2399,6 +2437,7 @@ function setCpuCount(room, count) {
       eliminated: false,
       creative: false,
       healPacks: initialHealPacks,
+      equipmentTier: 0,
       donPunchCharge: 0,
       speedBoostUntil: 0,
       damageBoostUntil: 0,
@@ -2443,6 +2482,7 @@ function createCpuPlayer(room, id, index, team) {
     eliminated: false,
     creative: false,
     healPacks: initialHealPacks,
+    equipmentTier: 0,
     donPunchCharge: 0,
     speedBoostUntil: 0,
     damageBoostUntil: 0,
@@ -2584,6 +2624,7 @@ function resetRoomScores(room) {
     player.eliminated = false;
     player.creative = false;
     player.healPacks = initialHealPacks;
+    player.equipmentTier = 0;
     player.donPunchCharge = 0;
     player.health = maxHealth;
     player.shieldUntil = 0;
@@ -2752,6 +2793,29 @@ function updateDonPunchProjectiles(room, now) {
   }
 }
 
+function cpuAimSpread(weapon, distance, index = 0) {
+  const base = {
+    rifle: 0.028,
+    ak47: 0.04,
+    aug: 0.024,
+    smg: 0.046,
+    shotgun: 0.07,
+    marksman: 0.02,
+    awm: 0.026,
+    type95: 0.036
+  }[weapon] || 0.04;
+  return base + Math.min(0.045, Math.max(0, distance) * 0.00072) + (index % 3) * 0.005;
+}
+
+function applyCpuAimError(direction, weapon, distance, index = 0) {
+  const spread = cpuAimSpread(weapon, distance, index);
+  return normalize({
+    x: direction.x + (Math.random() - 0.5) * spread,
+    y: direction.y + (Math.random() - 0.5) * spread * 0.72,
+    z: direction.z + (Math.random() - 0.5) * spread
+  });
+}
+
 function updateCpuPlayers(room, now) {
   const samples = room.movementStats.samples || 0;
   const movingRatio = samples ? room.movementStats.moving / samples : 0;
@@ -2789,13 +2853,15 @@ function updateCpuPlayers(room, now) {
         const weapon = bot.botWeapon || "rifle";
         const weaponRangeLimit = cpuWeaponMaxRange.get(weapon) || 34;
         const origin = { x: bot.x, y: bot.y, z: bot.z };
-        const direction = normalize({ x: attackCore.x - bot.x, y: attackCore.y - bot.y, z: attackCore.z - bot.z });
+        const idealDirection = normalize({ x: attackCore.x - bot.x, y: attackCore.y - bot.y, z: attackCore.z - bot.z });
+        const direction = applyCpuAimError(idealDirection, weapon, distance, bot.botIndex);
         const targetDistance = projectionToRay(attackCore, origin, direction);
+        const coreMissDistance = distanceToRay(attackCore, origin, direction, weaponRangeLimit);
         bot.yaw = Math.atan2(direction.x, direction.z);
         bot.pitch = Math.asin(clamp(direction.y, -1, 1));
-        if (targetDistance > 0 && targetDistance <= weaponRangeLimit && !lineBlocked(origin, direction, targetDistance, room.arena)) {
+        if (targetDistance > 0 && targetDistance <= weaponRangeLimit && coreMissDistance <= castleCoreRadius * 0.82 && !lineBlocked(origin, direction, targetDistance, room.arena)) {
           const baseDamage = weaponDamage.get(weapon) || 25;
-          const damage = Math.max(8, Math.ceil(baseDamage * 0.68));
+          const damage = Math.max(6, Math.ceil(baseDamage * cpuCastleDamageMultiplier));
           applyCastleCoreDamage(room, bot, attackCore, damage);
           broadcast(room, { type: "shot", shooter: bot.id, origin, direction, range: weaponRangeLimit, weapon });
           bot.nextShotAt = now + cpuFireDelay(bot.botWeapon || "rifle") + bot.botIndex * 110;
@@ -2830,7 +2896,8 @@ function updateCpuPlayers(room, now) {
       const weapon = bot.botWeapon || "rifle";
       const weaponRangeLimit = cpuWeaponMaxRange.get(weapon) || 34;
       const origin = { x: bot.x, y: bot.y, z: bot.z };
-      const direction = normalize({ x: target.x - bot.x, y: target.y - bot.y, z: target.z - bot.z });
+      const idealDirection = normalize({ x: target.x - bot.x, y: target.y - bot.y, z: target.z - bot.z });
+      const direction = applyCpuAimError(idealDirection, weapon, distance, bot.botIndex);
       bot.yaw = Math.atan2(direction.x, direction.z);
       bot.pitch = Math.asin(clamp(direction.y, -1, 1));
       const targetDistance = projectionToRay(target, origin, direction);
@@ -2838,7 +2905,7 @@ function updateCpuPlayers(room, now) {
       if (
         targetDistance > 0 &&
         targetDistance <= weaponRangeLimit &&
-        aimMissDistance < 0.9 &&
+        aimMissDistance < 0.62 &&
         !lineBlocked(origin, direction, targetDistance, room.arena)
       ) {
         applyShot(room, bot, origin, direction, weapon);
@@ -2881,15 +2948,15 @@ function chooseCpuWeapon(room, distance, index = 0) {
 
 function cpuFireDelay(weapon) {
   return {
-    rifle: 980,
-    ak47: 1080,
-    aug: 940,
-    smg: 780,
-    shotgun: 1500,
-    marksman: 1650,
-    awm: 2100,
-    type95: 1120
-  }[weapon] || 1050;
+    rifle: 1180,
+    ak47: 1260,
+    aug: 1160,
+    smg: 980,
+    shotgun: 1800,
+    marksman: 1950,
+    awm: 2600,
+    type95: 1320
+  }[weapon] || 1240;
 }
 
 server.listen(port, "0.0.0.0", () => {
