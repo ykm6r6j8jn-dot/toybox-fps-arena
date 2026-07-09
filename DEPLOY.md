@@ -16,6 +16,23 @@ Static-only hosts are not enough.
 
 The resulting Render HTTPS URL is the URL to share.
 
+## Keep Render on the Latest Commit
+
+Render should be set to Auto-Deploy `On Commit` for the `main` branch. The
+`render.yaml` file also sets `autoDeployTrigger: commit`, which tells Blueprint
+services to deploy every commit pushed to the linked branch.
+
+For an extra automatic deploy path, add the service deploy hook URL to GitHub:
+
+1. In Render, open the `toybox-fps-arena` service.
+2. Go to Settings and copy the secret Deploy Hook URL.
+3. In GitHub, open Settings > Secrets and variables > Actions.
+4. Create a repository secret named `RENDER_DEPLOY_HOOK_URL`.
+
+After that, every push to `main` runs the `Deploy Render latest` workflow. If
+the build and smoke tests pass, GitHub Actions triggers Render to deploy the
+latest commit.
+
 After deployment, verify the live game:
 
 ```bash
