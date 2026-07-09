@@ -628,11 +628,24 @@ let resultWinnerSeen = "";
 let lobbyReturnTimer = 0;
 const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
+let lastStableViewportHeight = window.innerHeight;
+let viewportRecoveryTimers: number[] = [];
+
 function viewportSize() {
   const visualViewport = window.visualViewport;
   const width = Math.round(visualViewport?.width || window.innerWidth);
   const height = Math.round(visualViewport?.height || window.innerHeight);
   return { width, height };
+}
+
+function textInputActive() {
+  return document.activeElement instanceof HTMLElement && Boolean(document.activeElement.closest("input, textarea, [contenteditable='true']"));
+}
+
+function mobileKeyboardOpen() {
+  const visualViewport = window.visualViewport;
+  if (!visualViewport || !textInputActive()) return false;
+  return visualViewport.height < window.innerHeight - 120;
 }
 
 const maxPixelRatio = () => Math.min(window.devicePixelRatio, viewportSize().width < 860 ? 1.26 : 1.72);
@@ -2572,9 +2585,16 @@ function colorToNumber(color?: string) {
 }
 
 function applyViewportSizeVars() {
-  const { width, height } = viewportSize();
+  const { width } = viewportSize();
+  const keyboardOpen = mobileKeyboardOpen();
+  const visualHeight = Math.round(window.visualViewport?.height || window.innerHeight);
+  if (!keyboardOpen && window.innerHeight > 0) lastStableViewportHeight = Math.max(lastStableViewportHeight, Math.round(window.innerHeight));
+  const height = keyboardOpen ? visualHeight : Math.round(window.innerHeight || lastStableViewportHeight);
+  const keyboardOffset = keyboardOpen ? Math.max(0, Math.round(window.innerHeight - visualHeight - (window.visualViewport?.offsetTop || 0))) : 0;
   document.documentElement.style.setProperty("--app-width", `${width}px`);
   document.documentElement.style.setProperty("--app-height", `${height}px`);
+  document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+  document.body.classList.toggle("keyboard-open", keyboardOpen);
 }
 
 function resize() {
@@ -2590,7 +2610,38 @@ function resize() {
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("scroll", resize);
-window.addEventListener("orientationchange", () => setTimeout(resize, 250));
+function recoverViewportAfterTextInput() {
+  viewportRecoveryTimers.forEach((timer) => window.clearTimeout(timer));
+  viewportRecoveryTimers = [];
+  for (const delay of [0, 90, 240, 520]) {
+    const timer = window.setTimeout(() => {
+      applyViewportSizeVars();
+      resize();
+      window.scrollTo(0, 0);
+    }, delay);
+    viewportRecoveryTimers.push(timer);
+  }
+}
+
+document.addEventListener("focusin", (event) => {
+  if (!isTextEntryTarget(event.target)) return;
+  window.setTimeout(resize, 40);
+});
+document.addEventListener("focusout", (event) => {
+  if (!isTextEntryTarget(event.target)) return;
+  recoverViewportAfterTextInput();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || !isTextEntryTarget(event.target)) return;
+  const target = event.target as HTMLElement;
+  target.blur();
+  recoverViewportAfterTextInput();
+});
+window.addEventListener("orientationchange", () => {
+  lastStableViewportHeight = Math.round(window.innerHeight || lastStableViewportHeight);
+  setTimeout(resize, 250);
+  setTimeout(resize, 700);
+});
 resize();
 addLights();
 switchArena(arenaChoice);
