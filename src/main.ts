@@ -61,6 +61,7 @@ type PlayerState = {
   creative?: boolean;
   healPacks?: number;
   equipmentTier?: number;
+  focusTask?: FocusTask | null;
   donPunchCharge?: number;
   shieldUntil?: number;
   speedBoostUntil?: number;
@@ -75,6 +76,15 @@ type PlayerState = {
   isBot?: boolean;
   weapon?: string;
   level?: number;
+};
+
+type FocusTask = {
+  kind: string;
+  label: string;
+  progress: number;
+  target: number;
+  expiresAt: number;
+  reward?: string;
 };
 
 type FeedItem = {
@@ -333,6 +343,11 @@ const flowCard = $("#flowCard");
 const flowLabel = $("#flowLabel");
 const flowText = $("#flowText");
 const flowBar = $("#flowBar") as HTMLElement;
+const focusTaskCard = $("#focusTaskCard");
+const focusTaskLabel = $("#focusTaskLabel");
+const focusTaskText = $("#focusTaskText");
+const focusTaskMeta = $("#focusTaskMeta");
+const focusTaskBar = $("#focusTaskBar") as HTMLElement;
 const spectatorCard = $("#spectatorCard");
 const spectatorLabel = $("#spectatorLabel");
 const spectatorNext = $("#spectatorNext") as HTMLButtonElement;
@@ -593,7 +608,15 @@ let mobileFiring = false;
 let mobileAimPointer: number | null = null;
 let mobileAimLastX = 0;
 let mobileAimLastY = 0;
+let mobileAimVelocityX = 0;
+let mobileAimVelocityY = 0;
 let mobileStickPointer: number | null = null;
+let mobileStickOriginX = 0;
+let mobileStickOriginY = 0;
+let mobileMoveIntensity = 0;
+let mobileFirePointer: number | null = null;
+let mobileFireLastX = 0;
+let mobileFireLastY = 0;
 let mobileAimSensitivityValue = Number(localStorage.getItem("toybox-mobile-sensitivity") || "1");
 let mobileFireSizeValue = Number(localStorage.getItem("toybox-mobile-fire-size") || "88");
 let mobileJumpOffsetValue = Number(localStorage.getItem("toybox-mobile-jump-offset") || "128");
@@ -2984,6 +3007,43 @@ for (const input of [mobileSensitivity, mobileFireSize, mobileJumpOffset]) {
 }
 applyMobileTuning();
 
+function applyMobileAimDelta(dx: number, dy: number, scale = 1) {
+  const filteredX = Math.abs(dx) < 0.35 ? 0 : dx;
+  const filteredY = Math.abs(dy) < 0.35 ? 0 : dy;
+  const magnitude = Math.hypot(filteredX, filteredY);
+  const accel = 1 + Math.min(0.55, magnitude / 84);
+  const scopeScale = scoped ? 0.7 : 1;
+  mobileAimVelocityX = THREE.MathUtils.lerp(mobileAimVelocityX, filteredX, 0.38);
+  mobileAimVelocityY = THREE.MathUtils.lerp(mobileAimVelocityY, filteredY, 0.38);
+  self.yaw -= mobileAimVelocityX * 0.0038 * mobileAimSensitivityValue * accel * scopeScale * scale;
+  self.pitch -= mobileAimVelocityY * 0.0033 * mobileAimSensitivityValue * accel * scopeScale * scale;
+  self.pitch = THREE.MathUtils.clamp(self.pitch, -1.15, 1.1);
+}
+
+function isGameplayTouchTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest(
+    "button, input, textarea, select, [contenteditable='true'], .join-panel, .settings-panel, .scoreboard, .chat-panel, .poker-panel, .lobby-strip"
+  ));
+}
+
+function beginFloatingMobileStick(event: PointerEvent) {
+  const { width } = viewportSize();
+  if (!self.joined || mobileStickPointer !== null || event.pointerType !== "touch") return;
+  if (mobileAimPointer === event.pointerId || mobileFirePointer === event.pointerId) return;
+  if (isGameplayTouchTarget(event.target)) return;
+  if (event.clientX > width * 0.44 || event.clientY < 54) return;
+  event.preventDefault();
+  mobileStickPointer = event.pointerId;
+  mobileStickOriginX = event.clientX;
+  mobileStickOriginY = event.clientY;
+  mobileStick.classList.add("floating");
+  mobileStick.style.left = `${event.clientX - mobileStick.clientWidth / 2}px`;
+  mobileStick.style.top = `${event.clientY - mobileStick.clientHeight / 2}px`;
+  mobileStick.style.bottom = "auto";
+  mobileStick.setPointerCapture?.(event.pointerId);
+  updateMobileStick(event);
+}
+
 mobileAimZone.addEventListener("pointerdown", (event) => {
   if (!self.joined) return;
   event.preventDefault();
@@ -2999,12 +3059,14 @@ mobileAimZone.addEventListener("pointermove", (event) => {
   const dy = event.clientY - mobileAimLastY;
   mobileAimLastX = event.clientX;
   mobileAimLastY = event.clientY;
-  self.yaw -= dx * 0.0042 * mobileAimSensitivityValue;
-  self.pitch -= dy * 0.0036 * mobileAimSensitivityValue;
-  self.pitch = THREE.MathUtils.clamp(self.pitch, -1.15, 1.1);
+  applyMobileAimDelta(dx, dy);
 });
 const releaseMobileAim = (event: PointerEvent) => {
-  if (mobileAimPointer === event.pointerId) mobileAimPointer = null;
+  if (mobileAimPointer === event.pointerId) {
+    mobileAimPointer = null;
+    mobileAimVelocityX = 0;
+    mobileAimVelocityY = 0;
+  }
 };
 mobileAimZone.addEventListener("pointerup", releaseMobileAim);
 mobileAimZone.addEventListener("pointercancel", releaseMobileAim);
@@ -3021,8 +3083,8 @@ function clearMobileMoveKeys() {
 
 function updateMobileStick(event: PointerEvent) {
   const rect = mobileStick.getBoundingClientRect();
-  const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
+  const centerX = mobileStickOriginX || rect.left + rect.width / 2;
+  const centerY = mobileStickOriginY || rect.top + rect.height / 2;
   const max = rect.width * 0.36;
   const rawX = event.clientX - centerX;
   const rawY = event.clientY - centerY;
@@ -3033,19 +3095,27 @@ function updateMobileStick(event: PointerEvent) {
   const nx = x / max;
   const ny = y / max;
 
+  mobileMoveIntensity = THREE.MathUtils.clamp(distance / max, 0, 1);
   mobileStickKnob.style.transform = `translate(${x}px, ${y}px)`;
   clearMobileMoveKeys();
-  if (ny < -0.22) keys.add("KeyW");
+  if (ny < -0.18) keys.add("KeyW");
   if (ny > 0.25) keys.add("KeyS");
   if (nx < -0.22) keys.add("KeyA");
   if (nx > 0.22) keys.add("KeyD");
-  if (ny < -0.82) sprintUntil = performance.now() + 260;
+  if (ny < -0.76 && mobileMoveIntensity > 0.82) sprintUntil = performance.now() + 420;
 }
 
 function releaseMobileStick() {
   mobileStickPointer = null;
+  mobileStickOriginX = 0;
+  mobileStickOriginY = 0;
+  mobileMoveIntensity = 0;
   clearMobileMoveKeys();
   mobileStickKnob.style.transform = "translate(0, 0)";
+  mobileStick.classList.remove("floating");
+  mobileStick.style.left = "";
+  mobileStick.style.top = "";
+  mobileStick.style.bottom = "";
 }
 
 mobileStick.addEventListener("pointerdown", (event) => {
@@ -3053,6 +3123,9 @@ mobileStick.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   mobileStickPointer = event.pointerId;
+  const rect = mobileStick.getBoundingClientRect();
+  mobileStickOriginX = rect.left + rect.width / 2;
+  mobileStickOriginY = rect.top + rect.height / 2;
   mobileStick.setPointerCapture?.(event.pointerId);
   updateMobileStick(event);
 });
@@ -3069,16 +3142,32 @@ mobileStick.addEventListener("pointercancel", (event) => {
   if (mobileStickPointer === event.pointerId) releaseMobileStick();
 });
 mobileStick.addEventListener("lostpointercapture", releaseMobileStick);
+document.addEventListener("pointerdown", beginFloatingMobileStick, { passive: false });
 
 mobileFire.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   mobileFiring = true;
+  mobileFirePointer = event.pointerId;
+  mobileFireLastX = event.clientX;
+  mobileFireLastY = event.clientY;
   mobileFire.setPointerCapture?.(event.pointerId);
   shoot();
 });
-const releaseMobileFire = () => {
+mobileFire.addEventListener("pointermove", (event) => {
+  if (mobileFirePointer !== event.pointerId || !mobileFiring) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const dx = event.clientX - mobileFireLastX;
+  const dy = event.clientY - mobileFireLastY;
+  mobileFireLastX = event.clientX;
+  mobileFireLastY = event.clientY;
+  applyMobileAimDelta(dx, dy, 0.58);
+});
+const releaseMobileFire = (event?: PointerEvent) => {
+  if (event && mobileFirePointer !== event.pointerId) return;
   mobileFiring = false;
+  mobileFirePointer = null;
 };
 mobileFire.addEventListener("pointerup", releaseMobileFire);
 mobileFire.addEventListener("pointercancel", releaseMobileFire);
@@ -3431,6 +3520,11 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (message.type === "death_info") showKillcam(message);
   if (message.type === "sound") playGameSound(message.sound);
+  if (message.type === "focus_task") {
+    const text = String(message.text || "フォーカス達成");
+    showToast(text);
+    addFlowReward(18, text);
+  }
   if (message.type === "powerup") applyPowerupPickup(message.kind as PowerupKind);
   if (message.type === "impact") addBulletDecal(message.point, message.normal, message.shooter === self.id);
   if (message.type === "ashinaga") addAshinagaBurst(message.origin, message.target, message.shooter === self.id);
@@ -3785,7 +3879,8 @@ function move(delta: number) {
   const sneaking = keys.has("ShiftLeft");
   const sprinting = now < sprintUntil && keys.has("KeyW") && !sneaking;
   const boosted = Date.now() < ((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0));
-  const speed = (sneaking ? 2.8 : sprinting ? 10.2 : 5.5) * (boosted ? 1.18 : 1);
+  const touchScale = mobileMoveIntensity > 0 ? 0.62 + mobileMoveIntensity * 0.46 : 1;
+  const speed = (sneaking ? 2.8 : sprinting ? 10.2 : 5.5) * (boosted ? 1.18 : 1) * touchScale;
   const forward = getLookDirection();
   forward.y = 0;
   forward.normalize();
@@ -4750,6 +4845,7 @@ function updateHud(feed: FeedItem[]) {
     lastSelfScore = me.score;
     lastSelfHealth = me.health;
   }
+  updateFocusTaskHud(me?.focusTask);
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
   ammoEl.textContent = reloadTimer > 0 ? `--  MED ${me?.healPacks ?? 0}` : `${currentGun().name} ${self.ammo}  MED ${me?.healPacks ?? 0}`;
@@ -4877,6 +4973,19 @@ function updateFlowHud(now = performance.now()) {
   flowCard.classList.toggle("active", active);
   flowCard.classList.toggle("hot", hot);
   document.body.classList.toggle("flowing", hot);
+}
+
+function updateFocusTaskHud(task?: FocusTask | null) {
+  const active = Boolean(task && task.target > 0 && Date.now() < task.expiresAt);
+  focusTaskCard.classList.toggle("show", active);
+  if (!active || !task) return;
+  const progress = Math.min(task.target, Math.max(0, Math.floor(task.progress || 0)));
+  const target = Math.max(1, Math.floor(task.target));
+  const secondsLeft = Math.max(0, Math.ceil((task.expiresAt - Date.now()) / 1000));
+  focusTaskLabel.textContent = secondsLeft <= 12 ? "FOCUS !" : "FOCUS";
+  focusTaskText.textContent = task.label || "任意目標";
+  focusTaskMeta.textContent = `${progress}/${target}  残り${secondsLeft}s`;
+  focusTaskBar.style.width = `${THREE.MathUtils.clamp((progress / target) * 100, 0, 100)}%`;
 }
 
 function updateSlots() {
@@ -5206,6 +5315,47 @@ function updateMeasuredFps(now: number) {
   }
 }
 
+function shortestAngleDelta(from: number, to: number) {
+  return THREE.MathUtils.euclideanModulo(to - from + Math.PI, Math.PI * 2) - Math.PI;
+}
+
+function applyMobileAimAssist(delta: number) {
+  if (!mobileFiring && !scoped) return;
+  if (!window.matchMedia("(pointer: coarse)").matches) return;
+  const me = players.get(self.id);
+  if (!me || me.eliminated || me.health <= 0) return;
+  const maxDistance = scoped ? 76 : 52;
+  let best: PlayerState | null = null;
+  let bestScore = 999;
+  for (const target of players.values()) {
+    if (target.id === self.id || target.color === me.color || target.eliminated || target.health <= 0 || target.creative) continue;
+    const dx = target.x - self.position.x;
+    const dy = target.y + 0.65 - self.position.y;
+    const dz = target.z - self.position.z;
+    const distance = Math.hypot(dx, dy, dz);
+    if (distance <= 0.1 || distance > maxDistance) continue;
+    const targetYaw = Math.atan2(-dx, -dz);
+    const targetPitch = Math.asin(THREE.MathUtils.clamp(dy / distance, -0.98, 0.98));
+    const yawDelta = shortestAngleDelta(self.yaw, targetYaw);
+    const pitchDelta = targetPitch - self.pitch;
+    const score = Math.hypot(yawDelta * 1.25, pitchDelta);
+    if (score < bestScore && Math.abs(yawDelta) < 0.16 && Math.abs(pitchDelta) < 0.13) {
+      best = target;
+      bestScore = score;
+    }
+  }
+  if (!best) return;
+  const dx = best.x - self.position.x;
+  const dy = best.y + 0.65 - self.position.y;
+  const dz = best.z - self.position.z;
+  const distance = Math.hypot(dx, dy, dz) || 1;
+  const targetYaw = Math.atan2(-dx, -dz);
+  const targetPitch = Math.asin(THREE.MathUtils.clamp(dy / distance, -0.98, 0.98));
+  const strength = THREE.MathUtils.clamp(delta * (mobileFiring ? 2.4 : 1.25), 0, mobileFiring ? 0.075 : 0.045);
+  self.yaw += shortestAngleDelta(self.yaw, targetYaw) * strength;
+  self.pitch = THREE.MathUtils.clamp(self.pitch + (targetPitch - self.pitch) * strength, -1.15, 1.1);
+}
+
 function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
   const now = performance.now();
@@ -5229,6 +5379,7 @@ function animate() {
   }
 
   if (self.joined) move(delta);
+  if (self.joined) applyMobileAimAssist(delta);
   if (self.joined && (desktopFiring || mobileFiring)) shoot();
   updateKillcam();
   updateCamera();

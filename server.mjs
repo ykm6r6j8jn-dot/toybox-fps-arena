@@ -33,6 +33,8 @@ const barrierRespawnMs = 15000;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
 const powerupRespawnMs = 18_000;
 const powerupDurationMs = 10_000;
+const focusTaskDurationMs = 52_000;
+const focusTaskCooldownMs = 8_000;
 const powerupKinds = ["speed", "ammo", "damage", "comeback"];
 const powerupSpawns = [
   { x: -58, y: 1.6, z: -24 },
@@ -1393,6 +1395,7 @@ function publicPlayer(player) {
     creative: Boolean(player.creative),
     healPacks: player.healPacks || 0,
     equipmentTier: player.equipmentTier || 0,
+    focusTask: publicFocusTask(player.focusTask),
     donPunchCharge: player.donPunchCharge || 0,
     x: player.x,
     y: player.y,
@@ -1407,6 +1410,18 @@ function publicPlayer(player) {
     damageBoostUntil: player.damageBoostUntil || 0,
     comebackUntil: player.comebackUntil || 0,
     level: levelFromXp(profileForPlayer(player)?.progress?.xp || 0)
+  };
+}
+
+function publicFocusTask(task) {
+  if (!task) return null;
+  return {
+    kind: task.kind,
+    label: task.label,
+    progress: Math.max(0, Math.floor(Number(task.progress) || 0)),
+    target: Math.max(1, Math.floor(Number(task.target) || 1)),
+    expiresAt: Number(task.expiresAt) || 0,
+    reward: task.reward || ""
   };
 }
 
@@ -1782,6 +1797,8 @@ wss.on("connection", (ws) => {
         creative: false,
         healPacks: sanitizeInventory(loginProfile?.inventory).healPacks,
         equipmentTier: 0,
+        focusTask: null,
+        nextFocusTaskAt: Date.now() + 2400,
         donPunchCharge: 0,
         speedBoostUntil: 0,
         damageBoostUntil: 0,
@@ -1947,6 +1964,7 @@ wss.on("connection", (ws) => {
         profile.updatedAt = Date.now();
         saveProfileSoon();
       }
+      progressFocusTask(currentRoom, currentPlayer, "recover", 1);
       addFeed(currentRoom, `${currentPlayer.name} が回復アイテムを使用`, currentPlayer.color);
       send(currentPlayer.ws, { type: "sound", sound: "heal" });
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
@@ -2092,6 +2110,7 @@ setInterval(() => {
     updatePowerups(room, now);
     updateDonPunchProjectiles(room, now);
     updateCpuPlayers(room, now);
+    updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
     const players = [...room.players.values()].map(publicPlayer);
     const blueScore = players.filter((p) => p.color === "blue").reduce((sum, p) => sum + p.score, 0);
@@ -2193,6 +2212,72 @@ function awardCombatGrowth(room, player) {
   send(player.ws, { type: "sound", sound: "reload" });
 }
 
+function focusTaskOptions(room, player) {
+  const behind = teamScore(room, oppositeTeam(player.color)) - teamScore(room, player.color);
+  const needsRecovery = player.health < maxHealth * 0.58 || (player.deaths || 0) > (player.kills || 0);
+  const options = [];
+  if (needsRecovery) {
+    options.push({ kind: "recover", label: "回復かバリアを1回取る", target: 1, reward: "MED+1" });
+  }
+  if (room.mode === "castle") {
+    options.push({ kind: "objectiveDamage", label: "白へ250ダメージ", target: 250, reward: "装備強化" });
+  }
+  options.push(
+    { kind: "hit", label: "2回命中させる", target: 2, reward: "MED+1" },
+    { kind: "damage", label: behind >= 2 ? "逆転へ160ダメージ" : "180ダメージ与える", target: behind >= 2 ? 160 : 180, reward: "短時間ブースト" },
+    { kind: "item", label: "アイテムを1つ拾う", target: 1, reward: "FLOW加速" }
+  );
+  return options;
+}
+
+function assignFocusTask(room, player, now) {
+  if (!player || player.isBot || player.eliminated || player.health <= 0 || room.winner) return;
+  if (player.focusTask && now < player.focusTask.expiresAt) return;
+  if (now < (player.nextFocusTaskAt || 0)) return;
+  const options = focusTaskOptions(room, player);
+  if (!options.length) return;
+  const seed = (player.kills || 0) * 7 + (player.deaths || 0) * 5 + (player.hits || 0) + Math.floor(now / focusTaskDurationMs);
+  const selected = options[Math.abs(seed) % options.length];
+  player.focusTask = {
+    ...selected,
+    progress: 0,
+    expiresAt: now + focusTaskDurationMs
+  };
+  player.nextFocusTaskAt = player.focusTask.expiresAt + focusTaskCooldownMs;
+}
+
+function updateFocusTasks(room, now) {
+  for (const player of room.players.values()) {
+    if (player.focusTask && now >= player.focusTask.expiresAt) {
+      player.focusTask = null;
+      player.nextFocusTaskAt = now + focusTaskCooldownMs;
+    }
+    assignFocusTask(room, player, now);
+  }
+}
+
+function progressFocusTask(room, player, kind, amount = 1) {
+  if (!player || player.isBot || !player.focusTask || player.eliminated || player.health <= 0) return;
+  const task = player.focusTask;
+  if (task.kind !== kind) return;
+  task.progress = Math.min(task.target, (task.progress || 0) + Math.max(1, Math.floor(amount)));
+  if (task.progress < task.target) return;
+  player.focusTask = null;
+  player.nextFocusTaskAt = Date.now() + focusTaskCooldownMs;
+  player.healPacks = clamp((player.healPacks || 0) + 1, 0, 12);
+  const now = Date.now();
+  if (kind === "damage" || kind === "objectiveDamage") {
+    player.equipmentTier = Math.min(maxEquipmentTier, equipmentTier(player) + 1);
+    player.damageBoostUntil = Math.max(player.damageBoostUntil || 0, now + 4200);
+  } else if (kind === "hit") {
+    player.speedBoostUntil = Math.max(player.speedBoostUntil || 0, now + 3200);
+  }
+  const text = `${player.name} がFOCUS達成`;
+  addFeed(room, text, player.color);
+  send(player.ws, { type: "focus_task", text: "FOCUS達成" });
+  send(player.ws, { type: "sound", sound: "reload" });
+}
+
 function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   const baseDamage = weaponDamage.get(weapon) || 25;
   const boosted = !shooter.isBot && Date.now() < (shooter.damageBoostUntil || 0);
@@ -2247,6 +2332,7 @@ function applyCastleCoreDamage(room, shooter, core, damage) {
   shooter.hits = (shooter.hits || 0) + 1;
   shooter.damageDealt = (shooter.damageDealt || 0) + appliedDamage;
   awardCombatGrowth(room, shooter);
+  progressFocusTask(room, shooter, "objectiveDamage", appliedDamage);
   addFeed(room, `${shooter.name} が敵の白を攻撃`, shooter.color);
   broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: `${core.team}-castle-core`, damage: scaledDamage, weapon: "白攻撃" });
 }
@@ -2295,6 +2381,8 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
   shooter.hits = (shooter.hits || 0) + 1;
   shooter.damageDealt = (shooter.damageDealt || 0) + appliedDamage;
   target.damageTaken = (target.damageTaken || 0) + appliedDamage;
+  progressFocusTask(room, shooter, "hit", 1);
+  progressFocusTask(room, shooter, "damage", appliedDamage);
   if (target.health === 0) {
     shooter.score += 1;
     shooter.kills += 1;
@@ -2438,6 +2526,8 @@ function setCpuCount(room, count) {
       creative: false,
       healPacks: initialHealPacks,
       equipmentTier: 0,
+      focusTask: null,
+      nextFocusTaskAt: 0,
       donPunchCharge: 0,
       speedBoostUntil: 0,
       damageBoostUntil: 0,
@@ -2483,6 +2573,8 @@ function createCpuPlayer(room, id, index, team) {
     creative: false,
     healPacks: initialHealPacks,
     equipmentTier: 0,
+    focusTask: null,
+    nextFocusTaskAt: 0,
     donPunchCharge: 0,
     speedBoostUntil: 0,
     damageBoostUntil: 0,
@@ -2625,6 +2717,8 @@ function resetRoomScores(room) {
     player.creative = false;
     player.healPacks = initialHealPacks;
     player.equipmentTier = 0;
+    player.focusTask = null;
+    player.nextFocusTaskAt = Date.now() + 2400;
     player.donPunchCharge = 0;
     player.health = maxHealth;
     player.shieldUntil = 0;
@@ -2655,6 +2749,8 @@ function tryPickupBarrier(room, player) {
   room.barrier.respawnAt = Date.now() + barrierRespawnMs;
   player.shieldUntil = Date.now() + barrierDurationMs;
   player.barrierPickups = (player.barrierPickups || 0) + 1;
+  progressFocusTask(room, player, "recover", 1);
+  progressFocusTask(room, player, "item", 1);
   addFeed(room, `${player.name} が隠しバリアを拾った`, player.color);
   send(player.ws, { type: "sound", sound: "barrier" });
   broadcast(room, { type: "feed", feed: room.feed });
@@ -2676,6 +2772,8 @@ function tryPickupHealth(room, player) {
   player.healsUsed = (player.healsUsed || 0) + 1;
   room.healthPickup.available = false;
   room.healthPickup.respawnAt = nextHealthPickupAt();
+  progressFocusTask(room, player, "recover", 1);
+  progressFocusTask(room, player, "item", 1);
   addFeed(room, `${player.name} が全回復アイテムを取得`, player.color);
   send(player.ws, { type: "sound", sound: "heal" });
   broadcast(room, { type: "feed", feed: room.feed });
@@ -2731,6 +2829,7 @@ function tryPickupPowerups(room, player) {
       player.donPunchCharge = Math.min(8, (player.donPunchCharge || 0) + (eligible ? 2 : 1));
       addFeed(room, eligible ? `${player.name} が逆転ブーストを取得` : `${player.name} が小型ブーストを取得`, player.color);
     }
+    progressFocusTask(room, player, "item", 1);
     send(player.ws, { type: "powerup", kind: powerup.kind });
     send(player.ws, { type: "sound", sound: powerup.kind === "ammo" ? "reload" : powerup.kind === "speed" ? "jump" : "barrier" });
     broadcast(room, { type: "feed", feed: room.feed });

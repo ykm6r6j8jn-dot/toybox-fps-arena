@@ -99,6 +99,7 @@ button {
 .feed,
 .damage-feed,
 .flow-card,
+.focus-task-card,
 .status-strip,
 .lobby-strip,
 .scoreboard,
@@ -117,6 +118,7 @@ body.poker-open .minimap,
 body.poker-open .feed,
 body.poker-open .damage-feed,
 body.poker-open .flow-card,
+body.poker-open .focus-task-card,
 body.poker-open .status-strip,
 body.poker-open .lobby-strip,
 body.poker-open .chat-panel,
@@ -601,7 +603,8 @@ body.audio-needs-unlock .audio-unlock-button {
   white-space: nowrap;
 }
 
-.flow-card {
+.flow-card,
+.focus-task-card {
   left: 24px;
   top: 324px;
   width: 220px;
@@ -617,7 +620,14 @@ body.audio-needs-unlock .audio-unlock-button {
   pointer-events: none;
 }
 
-.flow-card span {
+.focus-task-card {
+  top: 414px;
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.flow-card span,
+.focus-task-card span {
   display: block;
   color: rgba(211, 231, 243, 0.82);
   font-size: 10px;
@@ -625,7 +635,8 @@ body.audio-needs-unlock .audio-unlock-button {
   letter-spacing: 0.08em;
 }
 
-.flow-card strong {
+.flow-card strong,
+.focus-task-card strong {
   display: block;
   margin-top: 2px;
   font-size: 15px;
@@ -633,7 +644,16 @@ body.audio-needs-unlock .audio-unlock-button {
   white-space: nowrap;
 }
 
-.flow-card div {
+.focus-task-card small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.flow-card div,
+.focus-task-card div {
   height: 6px;
   margin-top: 8px;
   border-radius: 999px;
@@ -641,7 +661,8 @@ body.audio-needs-unlock .audio-unlock-button {
   overflow: hidden;
 }
 
-.flow-card i {
+.flow-card i,
+.focus-task-card i {
   display: block;
   width: 0%;
   height: 100%;
@@ -650,10 +671,19 @@ body.audio-needs-unlock .audio-unlock-button {
   transition: width 0.2s ease;
 }
 
-.flow-card.active {
+.flow-card.active,
+.focus-task-card.show {
   opacity: 0.92;
   border-color: rgba(147, 228, 60, 0.48);
   transform: translateY(-2px);
+}
+
+.focus-task-card.show {
+  border-color: rgba(68, 215, 255, 0.5);
+}
+
+.focus-task-card i {
+  background: linear-gradient(90deg, #44d7ff, #fff36b);
 }
 
 .flow-card.hot {
@@ -867,7 +897,7 @@ body.scoped .center-reticle::after {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 62vw;
+  width: 70vw;
   touch-action: none;
   pointer-events: auto;
 }
@@ -885,6 +915,13 @@ body.scoped .center-reticle::after {
     rgba(16, 30, 42, 0.42);
   touch-action: none;
   pointer-events: auto;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.move-stick.floating {
+  opacity: 0.96;
+  transform: scale(0.98);
+  box-shadow: 0 12px 26px rgba(8, 18, 28, 0.28);
 }
 
 .move-stick div {
@@ -3071,8 +3108,23 @@ body.celebrating::after {
     padding: 8px;
   }
 
+  .focus-task-card {
+    top: 326px;
+    left: 10px;
+    width: 132px;
+    padding: 8px;
+  }
+
   .flow-card strong {
     font-size: 12px;
+  }
+
+  .focus-task-card strong {
+    font-size: 11px;
+  }
+
+  .focus-task-card small {
+    font-size: 10px;
   }
 
   .feed {
@@ -3613,7 +3665,7 @@ body.celebrating::after {
   .mobile-aim-zone {
     top: max(56px, calc(env(safe-area-inset-top) + 52px));
     bottom: 0;
-    width: 58vw;
+    width: 66vw;
   }
 
   .move-stick {
