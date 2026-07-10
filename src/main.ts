@@ -1,30 +1,28 @@
 import "./styles.css";
 import * as THREE from "three";
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  ChevronsUp,
-  Check,
-  Copy,
-  Crosshair,
-  Maximize2,
-  MicOff,
-  Minimize2,
-  Repeat2,
-  RotateCcw,
-  Scan,
-  Send,
-  Settings,
-  Signal,
-  Smartphone,
-  Users,
-  Volume2,
-  X,
-  Zap,
-  createIcons
-} from "lucide";
+import ArrowDown from "lucide/dist/esm/icons/arrow-down.js";
+import ArrowLeft from "lucide/dist/esm/icons/arrow-left.js";
+import ArrowRight from "lucide/dist/esm/icons/arrow-right.js";
+import ArrowUp from "lucide/dist/esm/icons/arrow-up.js";
+import CarFront from "lucide/dist/esm/icons/car-front.js";
+import Check from "lucide/dist/esm/icons/check.js";
+import ChevronsUp from "lucide/dist/esm/icons/chevrons-up.js";
+import Copy from "lucide/dist/esm/icons/copy.js";
+import Crosshair from "lucide/dist/esm/icons/crosshair.js";
+import Maximize2 from "lucide/dist/esm/icons/maximize-2.js";
+import MicOff from "lucide/dist/esm/icons/mic-off.js";
+import Minimize2 from "lucide/dist/esm/icons/minimize-2.js";
+import Repeat2 from "lucide/dist/esm/icons/repeat-2.js";
+import RotateCcw from "lucide/dist/esm/icons/rotate-ccw.js";
+import Scan from "lucide/dist/esm/icons/scan.js";
+import Send from "lucide/dist/esm/icons/send.js";
+import Settings from "lucide/dist/esm/icons/settings.js";
+import Signal from "lucide/dist/esm/icons/signal.js";
+import Smartphone from "lucide/dist/esm/icons/smartphone.js";
+import Users from "lucide/dist/esm/icons/users.js";
+import Volume2 from "lucide/dist/esm/icons/volume-2.js";
+import X from "lucide/dist/esm/icons/x.js";
+import Zap from "lucide/dist/esm/icons/zap.js";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -76,6 +74,8 @@ type PlayerState = {
   isBot?: boolean;
   weapon?: string;
   level?: number;
+  spawnProtectedUntil?: number;
+  vehicleId?: string;
 };
 
 type FocusTask = {
@@ -111,6 +111,16 @@ type DonPunchSnapshot = {
   y: number;
   z: number;
   expiresAt: number;
+};
+
+type VehicleSnapshot = {
+  id: string;
+  x: number;
+  z: number;
+  yaw: number;
+  speed: number;
+  driverId?: string;
+  color?: "green" | "blue" | "yellow" | "red";
 };
 
 type BarrierSnapshot = {
@@ -224,12 +234,38 @@ const $ = <T extends HTMLElement>(selector: string) => {
 
 const maxHealth = 200;
 
+type LucideNode = [string, Record<string, string | number>, LucideNode[]];
+
+function createLucideElement(node: LucideNode): SVGElement {
+  const [tag, attributes, children] = node;
+  const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+  for (const child of children || []) element.append(createLucideElement(child));
+  return element;
+}
+
+function createIcons({ icons }: { icons: Record<string, LucideNode> }) {
+  for (const placeholder of document.querySelectorAll<HTMLElement>("[data-lucide]")) {
+    if (placeholder instanceof SVGElement) continue;
+    const iconName = placeholder.dataset.lucide || "";
+    const componentName = iconName.replace(/(^|-)([a-z0-9])/g, (_match, _dash, letter: string) => letter.toUpperCase());
+    const icon = icons[componentName];
+    if (!icon) continue;
+    const svg = createLucideElement(icon);
+    for (const attribute of placeholder.attributes) svg.setAttribute(attribute.name, attribute.value);
+    const existingClass = svg.getAttribute("class") || "";
+    svg.setAttribute("class", ["lucide", `lucide-${iconName}`, existingClass].filter(Boolean).join(" "));
+    placeholder.replaceWith(svg);
+  }
+}
+
 const lucideIcons = {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
   ChevronsUp,
+  CarFront,
   Check,
   Copy,
   Crosshair,
@@ -337,6 +373,9 @@ const mobileWeapon = $("#mobileWeapon") as HTMLButtonElement;
 const mobileReload = $("#mobileReload") as HTMLButtonElement;
 const mobileScope = $("#mobileScope") as HTMLButtonElement;
 const mobileSkill = $("#mobileSkill") as HTMLButtonElement;
+const mobileInteract = $("#mobileInteract") as HTMLButtonElement;
+const interactionHint = $("#interactionHint");
+const interactionHintText = $("#interactionHintText");
 const hitMarker = $("#hitMarker");
 const damageFeed = $("#damageFeed");
 const killcamCard = $("#killcamCard");
@@ -666,6 +705,9 @@ let shotNoiseBuffer: AudioBuffer | null = null;
 let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
+const vehicleSnapshots = new Map<string, VehicleSnapshot>();
+const vehicleMeshes = new Map<string, { group: THREE.Group; wheels: THREE.Mesh[]; wheelSpin: number }>();
+const automaticDoors: { left: THREE.Mesh; right: THREE.Mesh; center: THREE.Vector3; closedLeftX: number; closedRightX: number; openness: number }[] = [];
 let bulletHoleTexture: THREE.CanvasTexture | null = null;
 let bulletHoleOwnMaterial: THREE.MeshBasicMaterial | null = null;
 let bulletHoleOtherMaterial: THREE.MeshBasicMaterial | null = null;
@@ -684,6 +726,9 @@ let mobileStickPointer: number | null = null;
 let mobileStickOriginX = 0;
 let mobileStickOriginY = 0;
 let mobileMoveIntensity = 0;
+let mobileMoveX = 0;
+let mobileMoveY = 0;
+let mobileBraking = false;
 let mobileFirePointer: number | null = null;
 let mobileFireLastX = 0;
 let mobileFireLastY = 0;
@@ -702,6 +747,10 @@ const donPunchPositionScratch = new THREE.Vector3();
 let lastStableViewportHeight = window.innerHeight;
 let viewportRecoveryTimers: number[] = [];
 let viewportRecoveryUntil = 0;
+let activeVehicleId = "";
+let nearestVehicleId = "";
+let lastVehicleInputSent = 0;
+let lastInteractionCheckAt = 0;
 
 function viewportSize() {
   const visualViewport = window.visualViewport;
@@ -1096,6 +1145,12 @@ function trackArenaObject<T extends THREE.Object3D>(object: T) {
 }
 
 function clearArenaObjects() {
+  for (const vehicle of vehicleMeshes.values()) scene.remove(vehicle.group);
+  vehicleMeshes.clear();
+  vehicleSnapshots.clear();
+  automaticDoors.length = 0;
+  activeVehicleId = "";
+  nearestVehicleId = "";
   for (const object of arenaObjects.splice(0)) {
     scene.remove(object);
     object.traverse((child) => {
@@ -1994,6 +2049,137 @@ function addSpiralStairs(
   }
 }
 
+function addInstancedTowerSpiral(name: string, center: [number, number, number], floors = 4, floorHeight = 5.5) {
+  const stepsPerFloor = 14;
+  const rise = floorHeight / stepsPerFloor;
+  const radius = 2.35;
+  const width = 1.86;
+  const totalAngle = Math.PI * 1.82;
+  const totalSteps = floors * stepsPerFloor;
+  const stepMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(width, rise, 0.84), materials.green, totalSteps);
+  stepMesh.name = `${name} steps`;
+  const postCount = Math.ceil(totalSteps / 2);
+  const postMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.055, 0.94, 6), materials.metal, postCount);
+  postMesh.name = `${name} rail posts`;
+  const dummy = new THREE.Object3D();
+  let stepIndex = 0;
+  let postIndex = 0;
+  let startAngle = -Math.PI * 0.78;
+
+  for (let floor = 0; floor < floors; floor += 1) {
+    const baseY = center[1] + floor * floorHeight;
+    spiralStairZones.push({
+      center: new THREE.Vector3(center[0], baseY, center[2]),
+      radius,
+      width,
+      startAngle,
+      totalAngle,
+      direction: 1,
+      count: stepsPerFloor,
+      rise,
+      baseY
+    });
+    for (let step = 0; step < stepsPerFloor; step += 1) {
+      const progress = (step + 0.5) / stepsPerFloor;
+      const angle = startAngle + totalAngle * progress;
+      const y = baseY + rise * step + rise / 2;
+      dummy.position.set(center[0] + Math.cos(angle) * radius, y, center[2] + Math.sin(angle) * radius);
+      dummy.rotation.set(0, -angle, 0);
+      dummy.updateMatrix();
+      stepMesh.setMatrixAt(stepIndex, dummy.matrix);
+      stepIndex += 1;
+      if (step % 2 === 0) {
+        dummy.position.set(
+          center[0] + Math.cos(angle) * (radius + width * 0.56),
+          y + rise * 0.72 + 0.4,
+          center[2] + Math.sin(angle) * (radius + width * 0.56)
+        );
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        postMesh.setMatrixAt(postIndex, dummy.matrix);
+        postIndex += 1;
+      }
+    }
+    startAngle += totalAngle;
+  }
+  stepMesh.instanceMatrix.needsUpdate = true;
+  postMesh.instanceMatrix.needsUpdate = true;
+  stepMesh.receiveShadow = true;
+  trackArenaObject(stepMesh);
+  trackArenaObject(postMesh);
+
+  const poleHeight = floors * floorHeight + 0.45;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, poleHeight, 10), materials.metal);
+  pole.name = `${name} center pole`;
+  pole.position.set(center[0], center[1] + poleHeight / 2, center[2]);
+  trackArenaObject(pole);
+}
+
+function addAutomaticSlidingDoor(name: string, center: [number, number, number]) {
+  const left = addDetailBox(`${name} left`, [center[0] - 1.35, center[1], center[2]], [2.55, 2.9, 0.1], materials.glass);
+  const right = addDetailBox(`${name} right`, [center[0] + 1.35, center[1], center[2]], [2.55, 2.9, 0.1], materials.glass);
+  addDetailBox(`${name} header`, [center[0], center[1] + 1.62, center[2] - 0.04], [6.2, 0.28, 0.32], materials.metal);
+  addDetailBox(`${name} left frame`, [center[0] - 3.05, center[1], center[2] - 0.04], [0.18, 3.18, 0.3], materials.metal);
+  addDetailBox(`${name} right frame`, [center[0] + 3.05, center[1], center[2] - 0.04], [0.18, 3.18, 0.3], materials.metal);
+  automaticDoors.push({
+    left,
+    right,
+    center: new THREE.Vector3(...center),
+    closedLeftX: left.position.x,
+    closedRightX: right.position.x,
+    openness: 0
+  });
+}
+
+function addAuroraTower() {
+  const x = 74;
+  const z = -22;
+  const h = 22;
+  addBox("aurora tower rear wall", [x, h / 2, z - 10], [20, h, 0.5], materials.wall);
+  addBox("aurora tower front west", [67.6, h / 2, z + 10], [7.2, h, 0.5], materials.wall);
+  addBox("aurora tower front east", [80.4, h / 2, z + 10], [7.2, h, 0.5], materials.wall);
+  addBox("aurora tower west wall", [x - 10, h / 2, z], [0.5, h, 20], materials.wall);
+  addBox("aurora tower east wall", [x + 10, h / 2, z], [0.5, h, 20], materials.wall);
+  addBox("aurora lobby floor", [x, 0.04, z], [19.5, 0.12, 19.5], materials.floor, false);
+
+  for (let level = 1; level <= 4; level += 1) {
+    const floorY = level * 5.5 + 0.05;
+    const floorMaterial = level === 4 ? materials.metal : materials.floor;
+    const slabs: Array<{ position: [number, number, number]; scale: [number, number, number] }> = [
+      { position: [65.025, floorY, z], scale: [1.55, 0.22, 19.5] },
+      { position: [78.175, floorY, z], scale: [11.15, 0.22, 19.5] },
+      { position: [69.2, floorY, -29.675], scale: [6.8, 0.22, 4.15] },
+      { position: [69.2, floorY, -16.525], scale: [6.8, 0.22, 8.55] }
+    ];
+    for (const [slabIndex, slab] of slabs.entries()) {
+      addBox(`aurora floor ${level}-${slabIndex}`, slab.position, slab.scale, floorMaterial, false);
+      addWalkSurface(slab.position, slab.scale);
+    }
+    if (level < 4) {
+      addDetailBox(`aurora level band ${level}`, [x, floorY + 0.16, z + 9.73], [19.2, 0.16, 0.08], level % 2 ? materials.green : materials.blue);
+    }
+  }
+
+  for (let level = 0; level < 4; level += 1) {
+    const windowY = 2.25 + level * 5.5;
+    for (const offset of [-6.8, -2.3, 2.3, 6.8]) {
+      addDetailBox(`aurora rear window ${level}-${offset}`, [x + offset, windowY, z - 9.72], [3.5, 2.7, 0.08], materials.glass);
+    }
+    addDetailBox(`aurora west window ${level}`, [x - 9.72, windowY, z + 2.8], [0.08, 2.7, 5.2], materials.glass);
+    addDetailBox(`aurora east window ${level}`, [x + 9.72, windowY, z - 2.8], [0.08, 2.7, 5.2], materials.glass);
+    addDetailBox(`aurora light ${level}`, [x, level * 5.5 + 5.12, z + 1.2], [8.4, 0.06, 0.18], materials.light);
+  }
+
+  addBox("aurora reception", [x + 3.6, 0.52, z + 4.3], [5.2, 0.9, 1.3], materials.blue);
+  addDetailBox("aurora reception top", [x + 3.6, 1.01, z + 4.3], [5.4, 0.12, 1.5], materials.metal);
+  addBox("aurora lift bank", [x + 5.7, 1.55, z - 9.68], [5.8, 3.1, 0.12], materials.dark);
+  addDetailBox("aurora route stripe", [x - 2.4, 0.09, z + 2.6], [0.5, 0.04, 11], materials.green);
+  addInstancedTowerSpiral("aurora spiral", [x - 4.8, 0.08, z - 2.2], 4, 5.5);
+  addAutomaticSlidingDoor("aurora auto door", [x, 1.48, z + 10.28]);
+  addSign("AURORA TOWER", [x, 3.85, z + 10.32], Math.PI, "#177fd2");
+  addWallDecal("aurora lobby mural", [x, 2.45, z - 9.7], Math.PI, decalTextures.greenSmile, 5.6, 3.5, 0.78);
+}
+
 function addMetroAtrium() {
   const x = -48;
   const z = -24;
@@ -2195,6 +2381,7 @@ function addToyboxArena() {
   addBox("monument cover", [-62, 1.8, 78], [5.2, 3.6, 5.2], materials.yellow);
   addBox("north alley cover", [45, 0.95, -83], [13, 1.9, 3], materials.dark);
   addBox("west alley cover", [-85, 0.95, 18], [3, 1.9, 13], materials.dark);
+  addAuroraTower();
   addRealismDetails();
   addWalkSurface([0, 30.95, -86], [12.8, 0.35, 7.8]);
   addWalkSurface([-79, 27.2, -74], [13.8, 0.35, 10.8]);
@@ -2813,6 +3000,10 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     triggerDonPunch();
   }
+  if (event.code === "KeyE" && !event.repeat && self.joined) {
+    event.preventDefault();
+    toggleVehicleInteraction();
+  }
   if ((event.code === "ControlLeft" || event.code === "ControlRight" || event.code === "MetaLeft" || event.code === "MetaRight") && !event.repeat && self.joined) {
     event.preventDefault();
     useHealPack();
@@ -2880,7 +3071,13 @@ canvas.addEventListener("pointercancel", stopDesktopFire);
 canvas.addEventListener("pointerleave", stopDesktopFire);
 document.addEventListener("pointerup", stopDesktopFire);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) stopDesktopFire();
+  if (document.hidden) {
+    stopDesktopFire();
+    mobileFiring = false;
+    mobileFirePointer = null;
+    mobileBraking = false;
+    releaseMobileStick();
+  }
   updateLobbyBgm();
 });
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -3347,6 +3544,8 @@ function updateMobileStick(event: PointerEvent) {
   const ny = y / max;
 
   mobileMoveIntensity = THREE.MathUtils.clamp(distance / max, 0, 1);
+  mobileMoveX = Math.abs(nx) < 0.12 ? 0 : nx;
+  mobileMoveY = Math.abs(ny) < 0.12 ? 0 : ny;
   mobileStickKnob.style.transform = `translate(${x}px, ${y}px)`;
   clearMobileMoveKeys();
   if (ny < -0.18) keys.add("KeyW");
@@ -3361,6 +3560,8 @@ function releaseMobileStick() {
   mobileStickOriginX = 0;
   mobileStickOriginY = 0;
   mobileMoveIntensity = 0;
+  mobileMoveX = 0;
+  mobileMoveY = 0;
   clearMobileMoveKeys();
   mobileStickKnob.style.transform = "translate(0, 0)";
   mobileStick.classList.remove("floating");
@@ -3438,8 +3639,18 @@ mobileFire.addEventListener("lostpointercapture", releaseMobileFire);
 mobileJump.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
-  jumpQueued = true;
+  if (activeVehicleId) mobileBraking = true;
+  else {
+    jumpQueued = true;
+    pulseHaptic(12);
+  }
 });
+const releaseMobileBrake = () => {
+  mobileBraking = false;
+};
+mobileJump.addEventListener("pointerup", releaseMobileBrake);
+mobileJump.addEventListener("pointercancel", releaseMobileBrake);
+mobileJump.addEventListener("lostpointercapture", releaseMobileBrake);
 mobileWeapon.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
@@ -3464,6 +3675,11 @@ mobileSkill.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   triggerDonPunch();
+});
+mobileInteract.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleVehicleInteraction();
 });
 setCustomColor(customColor);
 setSoundEnabled(soundEnabled);
@@ -3746,11 +3962,19 @@ function handleMessage(event: MessageEvent<string>) {
     if (gameMode === "castle" && castleEndsAt && typeof message.now === "number") {
       roundSeconds = Math.max(0, (castleEndsAt - Number(message.now)) / 1000);
     }
+    syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[]);
+    const previousVehicleId = activeVehicleId;
     players.clear();
     for (const player of message.players as PlayerState[]) players.set(player.id, player);
     const me = players.get(self.id);
     if (me) {
       self.health = me.health;
+      activeVehicleId = me.vehicleId || "";
+      if (!activeVehicleId && previousVehicleId) {
+        self.position.set(me.x, me.y, me.z);
+        self.velocity.set(0, 0, 0);
+        lastSafePosition.copy(self.position);
+      }
       setTeamChoice(me.color);
       if (loggedInLoginId && typeof me.healPacks === "number" && me.healPacks !== profileInventory.healPacks) {
         profileInventory.healPacks = THREE.MathUtils.clamp(Math.floor(me.healPacks), 0, 12);
@@ -3802,6 +4026,7 @@ function handleMessage(event: MessageEvent<string>) {
     const blocked = Boolean(message.blocked);
     showHitIndicator(damagedSelf, damage, blocked);
     pushDamageNotice(damagedSelf ? "taken" : "dealt", damage, message.weapon, damagedSelf ? message.shooter : message.target, blocked);
+    pulseHaptic(blocked ? 12 : damagedSelf ? 32 : 16);
     if (damagedSelf && damage > 0) playDamageSound();
   }
   if (message.type === "death_info") showKillcam(message);
@@ -3812,6 +4037,17 @@ function handleMessage(event: MessageEvent<string>) {
     addFlowReward(18, text);
   }
   if (message.type === "powerup") applyPowerupPickup(message.kind as PowerupKind);
+  if (message.type === "vehicle_status") {
+    activeVehicleId = String(message.vehicleId || "");
+    if (!activeVehicleId && message.spawn) {
+      self.position.set(Number(message.spawn.x) || 0, Number(message.spawn.y) || 1.6, Number(message.spawn.z) || 0);
+      self.velocity.set(0, 0, 0);
+      lastSafePosition.copy(self.position);
+      showToast("ロードスターから降りました");
+    } else if (activeVehicleId) {
+      showToast("ロードスターに乗りました");
+    }
+  }
   if (message.type === "impact") addBulletDecal(message.point, message.normal, message.shooter === self.id);
   if (message.type === "ashinaga") addAshinagaBurst(message.origin, message.target, message.shooter === self.id);
   if (message.type === "donpunch") showToast("ドンパンチ接近");
@@ -4145,6 +4381,11 @@ function move(delta: number) {
   const me = players.get(self.id);
   if (me?.creative && !creativeMode) creativeMode = true;
   if (me?.eliminated || (me && me.health <= 0)) return;
+  if (activeVehicleId) {
+    jumpQueued = false;
+    self.velocity.set(0, 0, 0);
+    return;
+  }
   if (creativeMode) {
     const speed = keys.has("ShiftLeft") ? 7.5 : 13.5;
     const forward = getLookDirection();
@@ -4175,7 +4416,7 @@ function move(delta: number) {
   const sprinting = now < sprintUntil && keys.has("KeyW") && !sneaking;
   const boosted = Date.now() < ((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0));
   const touchMoving = mobileMoveIntensity > 0;
-  const touchScale = touchMoving ? 0.46 + mobileMoveIntensity * 0.36 : 1;
+  const touchScale = touchMoving ? 0.42 + mobileMoveIntensity * 0.42 : 1;
   const baseSpeed = sneaking ? 2.8 : sprinting ? (touchMoving ? 8.0 : 10.2) : 5.5;
   const speed = baseSpeed * (boosted ? 1.18 : 1) * touchScale;
   const forward = getLookDirection();
@@ -4183,10 +4424,15 @@ function move(delta: number) {
   forward.normalize();
   const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
   const wish = new THREE.Vector3();
-  if (keys.has("KeyW")) wish.add(forward);
-  if (keys.has("KeyS")) wish.sub(forward);
-  if (keys.has("KeyD")) wish.add(right);
-  if (keys.has("KeyA")) wish.sub(right);
+  if (touchMoving) {
+    wish.addScaledVector(forward, -mobileMoveY);
+    wish.addScaledVector(right, mobileMoveX);
+  } else {
+    if (keys.has("KeyW")) wish.add(forward);
+    if (keys.has("KeyS")) wish.sub(forward);
+    if (keys.has("KeyD")) wish.add(right);
+    if (keys.has("KeyA")) wish.sub(right);
+  }
   if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed * delta);
 
   moveWithSlide(wish);
@@ -4296,6 +4542,9 @@ function recoverIfStuck() {
 }
 
 function resetSelf() {
+  activeVehicleId = "";
+  nearestVehicleId = "";
+  document.body.classList.remove("driving");
   self.position.set(0, 1.6, 10);
   self.velocity.set(0, 0, 0);
   self.pitch = 0;
@@ -4367,12 +4616,18 @@ function collides(position: THREE.Vector3) {
     new THREE.Vector3(position.x - playerRadius, minY, position.z - playerRadius),
     new THREE.Vector3(position.x + playerRadius, maxY, position.z + playerRadius)
   );
-  return colliders.some((box) => box.intersectsBox(playerBox));
+  if (colliders.some((box) => box.intersectsBox(playerBox))) return true;
+  if (position.y > 3.4) return false;
+  for (const vehicle of vehicleSnapshots.values()) {
+    if (vehicle.id === activeVehicleId) continue;
+    if (Math.hypot(position.x - vehicle.x, position.z - vehicle.z) < 1.72 + playerRadius) return true;
+  }
+  return false;
 }
 
 function shoot() {
   const me = players.get(self.id);
-  if (me?.eliminated || (me && me.health <= 0)) return;
+  if (activeVehicleId || me?.eliminated || (me && me.health <= 0)) return;
   const now = performance.now();
   const gun = currentGun();
   if (reloadTimer > 0 || now - self.lastShot < gun.fireDelay) return;
@@ -4439,6 +4694,12 @@ function switchGun(index: number) {
 
 function updateWeaponMotion(delta: number) {
   if (!weaponView) return;
+  weaponView.visible = !activeVehicleId;
+  if (activeVehicleId) {
+    if (muzzleFlashMesh) muzzleFlashMesh.visible = false;
+    if (muzzleFlashLight) muzzleFlashLight.intensity = 0;
+    return;
+  }
   weaponSwayClock += delta * (keys.size > 0 ? 8 : 3.2);
   weaponKick = Math.max(0, weaponKick - delta * 5.8);
   const walkSway = keys.size > 0 ? 1 : 0.32;
@@ -4559,6 +4820,11 @@ function returnToLobbyAfterRound() {
   setFpsActive(false);
   desktopFiring = false;
   mobileFiring = false;
+  activeVehicleId = "";
+  nearestVehicleId = "";
+  document.body.classList.remove("driving");
+  mobileInteract.classList.remove("available");
+  interactionHint.classList.remove("show");
   roomCodeEl.textContent = "----";
   readyButton.classList.remove("active");
   readyButton.querySelector("span")!.textContent = "準備完了";
@@ -4592,7 +4858,10 @@ function updateCamera() {
     camera.rotation.y = self.yaw;
     camera.rotation.x = self.pitch;
   }
-  const targetFov = scoped && isScopedGun() ? 31 : 72;
+  const vehicleSpeed = activeVehicleId ? Math.abs(vehicleSnapshots.get(activeVehicleId)?.speed || 0) : 0;
+  const targetFov = activeVehicleId
+    ? THREE.MathUtils.clamp(74 + vehicleSpeed * 0.46, 74, 80)
+    : scoped && isScopedGun() ? 31 : 72;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
     camera.fov += (targetFov - camera.fov) * 0.28;
     camera.updateProjectionMatrix();
@@ -4633,6 +4902,21 @@ Object.assign(window, {
 function syncState(now: number) {
   if (!self.joined || now - lastStateSent < 75) return;
   lastStateSent = now;
+  if (activeVehicleId && now - lastVehicleInputSent >= 70) {
+    const throttle = mobileMoveIntensity > 0
+      ? THREE.MathUtils.clamp(-mobileMoveY, -1, 1)
+      : (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0);
+    const steer = mobileMoveIntensity > 0
+      ? THREE.MathUtils.clamp(mobileMoveX, -1, 1)
+      : (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0);
+    send({
+      type: "vehicle_input",
+      throttle,
+      steer,
+      braking: mobileBraking || keys.has("Space") || keys.has("ShiftLeft")
+    });
+    lastVehicleInputSent = now;
+  }
   send({
     type: "state",
     x: self.position.x,
@@ -4661,9 +4945,163 @@ function updateRemotePlayers() {
     applyPlayerMeshColor(mesh, player);
     mesh.position.lerp(remotePositionScratch.set(player.x, Math.max(0, player.y - 1.6), player.z), 0.38);
     mesh.rotation.y = player.yaw;
-    mesh.children[4].visible = (player.shieldUntil || 0) > Date.now();
+    mesh.children[4].visible = Math.max(player.shieldUntil || 0, player.spawnProtectedUntil || 0) > Date.now();
     mesh.visible = player.health > 0;
   }
+}
+
+function vehicleMaterial(color?: VehicleSnapshot["color"]) {
+  if (color === "blue") return materials.blue;
+  if (color === "yellow") return materials.yellow;
+  if (color === "red") return materials.red;
+  return materials.green;
+}
+
+function createVehicleMesh(snapshot: VehicleSnapshot) {
+  const group = new THREE.Group();
+  group.name = snapshot.id;
+  const paint = vehicleMaterial(snapshot.color);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.42, 3.45), paint);
+  body.position.y = 0.56;
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(2.04, 0.22, 3.18), materials.dark);
+  lower.position.y = 0.34;
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.34, 1.22), paint);
+  hood.position.set(0, 0.88, -1.02);
+  hood.rotation.x = -0.055;
+  const rear = new THREE.Mesh(new THREE.BoxGeometry(1.78, 0.48, 0.78), paint);
+  rear.position.set(0, 0.9, 1.25);
+  const dash = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.3, 0.28), materials.dark);
+  dash.position.set(0, 1.08, -0.28);
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 0.08), materials.glass);
+  windshield.position.set(0, 1.35, -0.38);
+  windshield.rotation.x = -0.23;
+  const leftRail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.72, 1.52), materials.metal);
+  leftRail.position.set(-0.85, 1.2, 0.45);
+  const rightRail = leftRail.clone();
+  rightRail.position.x = 0.85;
+  const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(2.06, 0.16, 0.16), materials.metal);
+  frontBumper.position.set(0, 0.42, -1.78);
+  const rearBumper = frontBumper.clone();
+  rearBumper.position.z = 1.78;
+  group.add(body, lower, hood, rear, dash, windshield, leftRail, rightRail, frontBumper, rearBumper);
+
+  for (const x of [-0.58, 0.58]) {
+    const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.2, 0.08), materials.light);
+    headlight.position.set(x, 0.88, -1.68);
+    group.add(headlight);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.08), materials.red);
+    tail.position.set(x, 0.82, 1.68);
+    group.add(tail);
+  }
+
+  const wheels: THREE.Mesh[] = [];
+  for (const x of [-1.02, 1.02]) {
+    for (const z of [-1.15, 1.15]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12), materials.rubber);
+      wheel.position.set(x, 0.42, z);
+      wheel.rotation.z = Math.PI / 2;
+      wheels.push(wheel);
+      group.add(wheel);
+    }
+  }
+
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.35, 4.2), shadowMaterial);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.02;
+  group.add(shadow);
+  group.position.set(snapshot.x, 0, snapshot.z);
+  group.rotation.y = snapshot.yaw;
+  scene.add(group);
+  return { group, wheels, wheelSpin: 0 };
+}
+
+function syncVehicleSnapshots(snapshots: VehicleSnapshot[]) {
+  const seen = new Set<string>();
+  vehicleSnapshots.clear();
+  for (const snapshot of snapshots) {
+    if (!snapshot?.id || !Number.isFinite(snapshot.x) || !Number.isFinite(snapshot.z)) continue;
+    seen.add(snapshot.id);
+    vehicleSnapshots.set(snapshot.id, snapshot);
+    if (!vehicleMeshes.has(snapshot.id)) vehicleMeshes.set(snapshot.id, createVehicleMesh(snapshot));
+  }
+  for (const [id, visual] of vehicleMeshes) {
+    if (seen.has(id)) continue;
+    scene.remove(visual.group);
+    vehicleMeshes.delete(id);
+  }
+}
+
+function updateVehicleVisuals(delta: number) {
+  const blend = 1 - Math.pow(0.002, Math.min(0.05, delta));
+  for (const [id, snapshot] of vehicleSnapshots) {
+    const visual = vehicleMeshes.get(id);
+    if (!visual) continue;
+    visual.group.position.lerp(remotePositionScratch.set(snapshot.x, 0, snapshot.z), blend);
+    visual.group.rotation.y += shortestAngleDelta(visual.group.rotation.y, snapshot.yaw) * blend;
+    visual.wheelSpin += snapshot.speed * delta / 0.38;
+    for (const wheel of visual.wheels) wheel.rotation.x = visual.wheelSpin;
+  }
+  const activeVisual = activeVehicleId ? vehicleMeshes.get(activeVehicleId) : null;
+  if (activeVisual) {
+    self.position.set(activeVisual.group.position.x, 1.82, activeVisual.group.position.z);
+    self.velocity.set(0, 0, 0);
+    lastSafePosition.copy(self.position);
+  }
+}
+
+function updateAutomaticDoors(delta: number) {
+  for (const door of automaticDoors) {
+    let nearest = self.joined ? Math.hypot(self.position.x - door.center.x, self.position.z - door.center.z) : Infinity;
+    for (const player of players.values()) {
+      nearest = Math.min(nearest, Math.hypot(player.x - door.center.x, player.z - door.center.z));
+    }
+    const target = nearest < 4.2 ? 1 : 0;
+    door.openness = THREE.MathUtils.damp(door.openness, target, 8.5, delta);
+    door.left.position.x = door.closedLeftX - door.openness * 2.32;
+    door.right.position.x = door.closedRightX + door.openness * 2.32;
+  }
+}
+
+function pulseHaptic(duration = 18) {
+  if (!isCoarsePointer() || typeof navigator.vibrate !== "function") return;
+  navigator.vibrate(Math.max(8, Math.min(45, duration)));
+}
+
+function updateVehicleInteraction(now = performance.now()) {
+  if (now - lastInteractionCheckAt < 90) return;
+  lastInteractionCheckAt = now;
+  nearestVehicleId = "";
+  let nearestDistance = Infinity;
+  if (!activeVehicleId) {
+    for (const vehicle of vehicleSnapshots.values()) {
+      if (vehicle.driverId) continue;
+      const distance = Math.hypot(vehicle.x - self.position.x, vehicle.z - self.position.z);
+      if (distance < 3.35 && distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestVehicleId = vehicle.id;
+      }
+    }
+  }
+  const available = Boolean(activeVehicleId || nearestVehicleId);
+  document.body.classList.toggle("driving", Boolean(activeVehicleId));
+  if (activeVehicleId) mobileFiring = false;
+  mobileInteract.classList.toggle("available", available);
+  interactionHint.classList.toggle("show", available && !isCoarsePointer());
+  interactionHintText.textContent = activeVehicleId ? "ロードスターから降りる" : "ロードスターに乗る";
+  mobileInteract.setAttribute("aria-label", activeVehicleId ? "車から降りる" : "車に乗る");
+  mobileJump.setAttribute("aria-label", activeVehicleId ? "ブレーキ" : "ジャンプ");
+}
+
+function toggleVehicleInteraction() {
+  if (!self.joined) return;
+  if (activeVehicleId) {
+    send({ type: "vehicle_exit" });
+    pulseHaptic(28);
+    return;
+  }
+  if (!nearestVehicleId) return;
+  send({ type: "vehicle_enter", vehicleId: nearestVehicleId });
+  pulseHaptic(28);
 }
 
 function rayBoxDistance(origin: THREE.Vector3, direction: THREE.Vector3, box: THREE.Box3, maxDistance: number) {
@@ -5144,17 +5582,26 @@ function updateHud(feed: FeedItem[]) {
   ammoEl.textContent = reloadTimer > 0 ? "--" : String(self.ammo);
   const gearTier = Math.max(0, Math.floor(Number(me?.equipmentTier) || 0));
   const gearText = gearTier > 0 ? ` / 装備Lv.${gearTier}` : "";
-  weaponRangeEl.textContent = reloadTimer > 0
+  const activeVehicle = activeVehicleId ? vehicleSnapshots.get(activeVehicleId) : null;
+  const vehicleKmh = Math.round(Math.abs(activeVehicle?.speed || 0) * 3.6);
+  weaponRangeEl.textContent = activeVehicle
+    ? `ROADSTER · ${vehicleKmh}km/h`
+    : reloadTimer > 0
     ? `リロード中 / MED ${me?.healPacks ?? 0}${gearText}`
     : `${currentGun().name} · ${currentGun().range}m · MED ${me?.healPacks ?? 0}${gearText}`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
+  const spawnSafeLeft = Math.max(0, ((me?.spawnProtectedUntil || 0) - Date.now()) / 1000);
   const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
   const damageLeft = Math.max(0, ((me?.damageBoostUntil || 0) - Date.now()) / 1000);
   const lifeText = gameMode === "life3" ? `  LIFE ${me?.lives ?? 3}` : gameMode === "oneLife" ? "  1 LIFE" : gameMode === "practice" ? "  PRACTICE" : gameMode === "castle" ? "  CASTLE" : "";
   const powerText = speedLeft > 0 ? `  SPD ${speedLeft.toFixed(0)}s` : damageLeft > 0 ? `  DMG ${damageLeft.toFixed(0)}s` : gearTier > 0 ? `  GEAR ${gearTier}` : "";
   movementStatusEl.textContent = shieldLeft > 0
     ? `BARRIER ${shieldLeft.toFixed(1)}s`
+    : activeVehicle
+      ? `DRIVE  ${vehicleKmh}km/h`
+      : spawnSafeLeft > 0
+        ? `SPAWN SAFE ${spawnSafeLeft.toFixed(1)}s`
     : me?.eliminated
       ? "ELIMINATED"
       : creativeMode || me?.creative
@@ -5689,6 +6136,9 @@ function animate() {
     roundClock.textContent = clockText;
   }
 
+  updateVehicleVisuals(delta);
+  updateAutomaticDoors(delta);
+  if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);
   if (self.joined) applyMobileAimAssist(delta);
   if (self.joined && desktopFiring) shoot();

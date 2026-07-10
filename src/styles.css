@@ -1025,12 +1025,14 @@ body.scoped .center-reticle::after {
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
+  transition: transform 0.08s ease, background-color 0.08s ease, opacity 0.08s ease;
 }
 
 .mobile-action:active,
 .fire-button:active {
   background: rgba(147, 228, 60, 0.82);
   color: #19331f;
+  transform: scale(0.94);
 }
 
 .mobile-action svg,
@@ -1038,6 +1040,34 @@ body.scoped .center-reticle::after {
   width: 24px;
   height: 24px;
   stroke-width: 2.7;
+}
+
+.mobile-interact {
+  left: max(158px, calc(env(safe-area-inset-left) + 158px));
+  bottom: max(24px, calc(env(safe-area-inset-bottom) + 24px));
+  width: 58px;
+  height: 58px;
+  display: none;
+  color: #10251a;
+  background: rgba(147, 228, 60, 0.9);
+  box-shadow: 0 8px 18px rgba(8, 18, 28, 0.22);
+}
+
+.mobile-interact.available {
+  display: grid;
+}
+
+body.driving .fire-button,
+body.driving .mobile-weapon,
+body.driving .mobile-reload,
+body.driving .mobile-scope,
+body.driving .mobile-skill {
+  display: none !important;
+}
+
+body.driving .mobile-jump {
+  color: #fff;
+  background: rgba(235, 77, 67, 0.9);
 }
 
 .fire-button {
@@ -1105,6 +1135,43 @@ body.scoped .center-reticle::after {
 
 .mobile-install.hidden {
   display: none;
+}
+
+.interaction-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 24%;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 6px;
+  color: #f7fbff;
+  background: rgba(8, 21, 30, 0.74);
+  box-shadow: 0 8px 22px rgba(5, 14, 22, 0.24);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  pointer-events: none;
+}
+
+.interaction-hint.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.interaction-hint svg {
+  width: 20px;
+  height: 20px;
+  color: #93e43c;
+}
+
+.interaction-hint span {
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .mobile-fullscreen-guide {
@@ -4331,8 +4398,8 @@ body.celebrating::after {
   }
 
   body.game-active #settingsButton {
-    width: 42px;
-    min-height: 42px;
+    width: 48px;
+    min-height: 48px;
     background: rgba(8, 21, 30, 0.7);
     border: 1px solid rgba(214, 248, 255, 0.2);
   }
@@ -4346,8 +4413,8 @@ body.celebrating::after {
   }
 
   body.game-active .audio-unlock-button {
-    width: 42px;
-    min-height: 42px;
+    width: 48px;
+    min-height: 48px;
     padding: 0;
     justify-content: center;
     font-size: 0;
@@ -4505,16 +4572,28 @@ body.celebrating::after {
   }
 
   body.game-active .mobile-action {
-    width: 44px;
-    height: 44px;
-    opacity: 0.86;
+    width: 48px;
+    height: 48px;
+    opacity: 0.92;
+  }
+
+  body.game-active .mobile-interact {
+    left: max(136px, calc(env(safe-area-inset-left) + 136px));
+    bottom: max(18px, calc(env(safe-area-inset-bottom) + 18px));
+    width: 50px;
+    height: 50px;
+    opacity: 0.94;
+  }
+
+  body.game-active .interaction-hint {
+    display: none;
   }
 
   body.game-active .fire-button {
-    width: 62px;
-    height: 62px;
-    opacity: 0.42;
-    background: rgba(255, 90, 82, 0.58);
+    width: 68px;
+    height: 68px;
+    opacity: 0.68;
+    background: rgba(255, 90, 82, 0.72);
   }
 
   body.game-active .fire-button::after {

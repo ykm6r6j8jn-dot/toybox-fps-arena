@@ -31,6 +31,7 @@ const ashinagaRange = 14;
 const ashinagaDamage = 86;
 const barrierDurationMs = 7000;
 const barrierRespawnMs = 15000;
+const spawnProtectionMs = 2200;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
 const powerupRespawnMs = 18_000;
 const powerupDurationMs = 10_000;
@@ -83,6 +84,30 @@ const weaponRange = new Map([
   ["type95", 76],
   ["cpu", 34]
 ]);
+const weaponFireDelay = new Map([
+  ["rifle", 115],
+  ["ak47", 135],
+  ["aug", 118],
+  ["smg", 72],
+  ["shotgun", 520],
+  ["marksman", 310],
+  ["awm", 1180],
+  ["type95", 205]
+]);
+const weaponPellets = new Map([
+  ["shotgun", 6],
+  ["type95", 3]
+]);
+const weaponFalloff = new Map([
+  ["rifle", { start: 0.58, minimum: 0.72 }],
+  ["ak47", { start: 0.52, minimum: 0.68 }],
+  ["aug", { start: 0.65, minimum: 0.76 }],
+  ["smg", { start: 0.45, minimum: 0.58 }],
+  ["shotgun", { start: 0.38, minimum: 0.42 }],
+  ["marksman", { start: 0.72, minimum: 0.86 }],
+  ["awm", { start: 0.78, minimum: 0.9 }],
+  ["type95", { start: 0.58, minimum: 0.72 }]
+]);
 const cpuWeaponMaxRange = new Map([
   ["rifle", 50],
   ["ak47", 52],
@@ -100,8 +125,14 @@ const maxEquipmentTier = 5;
 const allowedWeapons = new Set(weaponDamage.keys());
 const solidObstacles = [];
 const okakoSolidObstacles = [];
+const vehicleSpawns = [
+  { id: "roadster-east", x: 64, z: 2, yaw: 0, color: "green" },
+  { id: "roadster-west", x: -66, z: -38, yaw: Math.PI / 2, color: "blue" },
+  { id: "roadster-south", x: 62, z: 62, yaw: -Math.PI / 2, color: "yellow" },
+  { id: "roadster-north", x: -58, z: 66, yaw: Math.PI, color: "red" }
+];
 
-function addSolidObstacle(position, scale, arena = "toybox") {
+function addSolidObstacle(position, scale, arena = "toybox", movement = true) {
   const target = arena === "okakoj" ? okakoSolidObstacles : solidObstacles;
   target.push({
     minX: position[0] - scale[0] / 2,
@@ -109,7 +140,8 @@ function addSolidObstacle(position, scale, arena = "toybox") {
     minY: position[1] - scale[1] / 2,
     maxY: position[1] + scale[1] / 2,
     minZ: position[2] - scale[2] / 2,
-    maxZ: position[2] + scale[2] / 2
+    maxZ: position[2] + scale[2] / 2,
+    movement
   });
 }
 
@@ -166,6 +198,26 @@ function initSolidObstacles() {
     [[-41, 2.6, -24], [0.5, 5.2, 8]], [[-49.7, 1.35, -21.35], [0.9, 2.7, 0.9]]
   ];
   for (const [position, scale] of boxes) addSolidObstacle(position, scale);
+
+  const auroraTowerWalls = [
+    [[74, 11, -32], [20, 22, 0.5]],
+    [[67.6, 11, -12], [7.2, 22, 0.5]],
+    [[80.4, 11, -12], [7.2, 22, 0.5]],
+    [[64, 11, -22], [0.5, 22, 20]],
+    [[84, 11, -22], [0.5, 22, 20]],
+    [[77.6, 0.52, -17.7], [5.2, 0.9, 1.3]],
+    [[79.7, 1.55, -31.68], [5.8, 3.1, 0.12]]
+  ];
+  for (const [position, scale] of auroraTowerWalls) addSolidObstacle(position, scale);
+  for (const y of [5.56, 11.06, 16.56, 22.06]) {
+    const slabs = [
+      [[65.025, y, -22], [1.55, 0.22, 19.5]],
+      [[78.175, y, -22], [11.15, 0.22, 19.5]],
+      [[69.2, y, -29.675], [6.8, 0.22, 4.15]],
+      [[69.2, y, -16.525], [6.8, 0.22, 8.55]]
+    ];
+    for (const [position, scale] of slabs) addSolidObstacle(position, scale, "toybox", false);
+  }
 
   const okakoBoxes = [
     [[0, 1.2, -67.5], [136, 2.4, 1]], [[0, 1.2, 67.5], [136, 2.4, 1]],
@@ -588,6 +640,35 @@ function normalizeWeapon(value) {
   return allowedWeapons.has(weapon) ? weapon : "rifle";
 }
 
+function consumeShotBudget(player, weapon, now = Date.now()) {
+  const burstLimit = weaponPellets.get(weapon) || 1;
+  const continuingBurst = player.shotBurstWeapon === weapon
+    && now - (player.shotBurstStartedAt || 0) <= 85
+    && (player.shotBurstRemaining || 0) > 0;
+  if (continuingBurst) {
+    player.shotBurstRemaining -= 1;
+    return true;
+  }
+
+  const delay = weaponFireDelay.get(weapon) || 115;
+  if (now - (player.lastWeaponTriggerAt || 0) < delay * 0.82) return false;
+  player.lastWeaponTriggerAt = now;
+  player.shotBurstStartedAt = now;
+  player.shotBurstWeapon = weapon;
+  player.shotBurstRemaining = burstLimit - 1;
+  return true;
+}
+
+function weaponDamageAtDistance(weapon, damage, distance, range) {
+  const falloff = weaponFalloff.get(weapon);
+  if (!falloff || range <= 0) return Math.max(1, Math.round(damage));
+  const ratio = clamp(distance / range, 0, 1);
+  if (ratio <= falloff.start) return Math.max(1, Math.round(damage));
+  const progress = (ratio - falloff.start) / Math.max(0.001, 1 - falloff.start);
+  const multiplier = 1 - progress * (1 - falloff.minimum);
+  return Math.max(1, Math.round(damage * multiplier));
+}
+
 function normalizeTeam(value, room) {
   const requested = String(value || "auto");
   if (room.mode === "castle") {
@@ -658,6 +739,22 @@ function createPowerups(now = Date.now()) {
   }));
 }
 
+function createVehicles(now = Date.now()) {
+  return new Map(vehicleSpawns.map((spawn) => [spawn.id, {
+    ...spawn,
+    spawnX: spawn.x,
+    spawnZ: spawn.z,
+    spawnYaw: spawn.yaw,
+    speed: 0,
+    driverId: "",
+    throttle: 0,
+    steer: 0,
+    braking: false,
+    lastInputAt: 0,
+    updatedAt: now
+  }]));
+}
+
 function normalizeCpuFill(value) {
   return value !== false;
 }
@@ -707,6 +804,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     castleEndsAt: gameMode === "castle" ? Date.now() + castleRoundMs : 0,
     cpuCount: 0,
     donPunches: new Map(),
+    vehicles: createVehicles(),
     castleCores: createCastleCores(),
     barrier: { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 },
     healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "oneLife" ? nextHealthPickupAt() : 0 },
@@ -1419,7 +1517,21 @@ function publicPlayer(player) {
     speedBoostUntil: player.speedBoostUntil || 0,
     damageBoostUntil: player.damageBoostUntil || 0,
     comebackUntil: player.comebackUntil || 0,
+    spawnProtectedUntil: player.spawnProtectedUntil || 0,
+    vehicleId: player.vehicleId || "",
     level: levelFromXp(profileForPlayer(player)?.progress?.xp || 0)
+  };
+}
+
+function publicVehicle(vehicle) {
+  return {
+    id: vehicle.id,
+    x: vehicle.x,
+    z: vehicle.z,
+    yaw: vehicle.yaw,
+    speed: vehicle.speed,
+    driverId: vehicle.driverId || "",
+    color: vehicle.color
   };
 }
 
@@ -1545,12 +1657,27 @@ function lineBlocked(origin, direction, targetDistance, arena = "toybox") {
 
 function cpuCollides(x, z, radius = 0.55, arena = "toybox") {
   return obstaclesForArena(arena).some((box) => (
+    box.movement !== false &&
     x + radius > box.minX &&
     x - radius < box.maxX &&
     z + radius > box.minZ &&
     z - radius < box.maxZ &&
     1.8 > box.minY &&
     0.2 < box.maxY
+  ));
+}
+
+function playerCollides(x, y, z, arena = "toybox", radius = 0.24) {
+  const minY = y - 1.38;
+  const maxY = y + 0.22;
+  return obstaclesForArena(arena).some((box) => (
+    box.movement !== false &&
+    x + radius > box.minX &&
+    x - radius < box.maxX &&
+    z + radius > box.minZ &&
+    z - radius < box.maxZ &&
+    maxY > box.minY &&
+    minY < box.maxY
   ));
 }
 
@@ -1583,7 +1710,16 @@ function keepCpuOutOfWalls(bot, arena = "toybox") {
   return true;
 }
 
-function moveCpuAlongWalls(bot, desiredX, desiredZ, now, arena = "toybox") {
+function cpuMovementCollides(room, x, z, radius = 0.55) {
+  if (cpuCollides(x, z, radius, room.arena)) return true;
+  for (const vehicle of room.vehicles?.values?.() || []) {
+    if (Math.hypot(vehicle.x - x, vehicle.z - z) < 1.48 + radius) return true;
+  }
+  return false;
+}
+
+function moveCpuAlongWalls(bot, desiredX, desiredZ, now, room) {
+  const arena = room.arena;
   const elapsed = Math.min(0.18, Math.max(0.06, (now - (bot.lastCpuMoveAt || now - 110)) / 1000));
   bot.lastCpuMoveAt = now;
 
@@ -1600,15 +1736,15 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, arena = "toybox") {
   const nextX = clamp(bot.x + moveX, -arenaHalfSize + 2, arenaHalfSize - 2);
   const nextZ = clamp(bot.z + moveZ, -arenaHalfSize + 2, arenaHalfSize - 2);
 
-  if (!cpuCollides(nextX, nextZ, 0.55, arena)) {
+  if (!cpuMovementCollides(room, nextX, nextZ, 0.55)) {
     bot.x = nextX;
     bot.z = nextZ;
     bot.stuckTicks = 0;
     return;
   }
 
-  const canMoveX = !cpuCollides(nextX, bot.z, 0.55, arena);
-  const canMoveZ = !cpuCollides(bot.x, nextZ, 0.55, arena);
+  const canMoveX = !cpuMovementCollides(room, nextX, bot.z, 0.55);
+  const canMoveZ = !cpuMovementCollides(room, bot.x, nextZ, 0.55);
   if (canMoveX || canMoveZ) {
     if (canMoveX) bot.x = nextX;
     if (canMoveZ) bot.z = nextZ;
@@ -1622,7 +1758,7 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, arena = "toybox") {
     const tangentLength = Math.hypot(tangent.x, tangent.z) || 1;
     const sideX = clamp(bot.x + tangent.x / tangentLength * step * 0.85, -arenaHalfSize + 2, arenaHalfSize - 2);
     const sideZ = clamp(bot.z + tangent.z / tangentLength * step * 0.85, -arenaHalfSize + 2, arenaHalfSize - 2);
-    if (!cpuCollides(sideX, sideZ, 0.55, arena)) {
+    if (!cpuMovementCollides(room, sideX, sideZ, 0.55)) {
       bot.x = sideX;
       bot.z = sideZ;
       bot.stuckTicks = 0;
@@ -1634,6 +1770,115 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, arena = "toybox") {
   if (bot.stuckTicks > 10) {
     bot.botPhase += 0.35 + bot.botIndex * 0.08;
     bot.stuckTicks = 0;
+  }
+}
+
+function vehicleCollides(room, vehicle, x, z) {
+  if (cpuCollides(x, z, 1.48, room.arena)) return true;
+  for (const other of room.vehicles?.values?.() || []) {
+    if (other.id === vehicle.id) continue;
+    if (Math.hypot(other.x - x, other.z - z) < 3.05) return true;
+  }
+  for (const player of room.players.values()) {
+    if (player.id === vehicle.driverId || player.eliminated || player.health <= 0) continue;
+    if (Math.hypot(player.x - x, player.z - z) < 1.92) return true;
+  }
+  return false;
+}
+
+function releasePlayerVehicle(room, player, placeBeside = true) {
+  const vehicleId = player?.vehicleId || "";
+  const vehicle = room?.vehicles?.get?.(vehicleId);
+  if (vehicle?.driverId === player.id) {
+    vehicle.driverId = "";
+    vehicle.throttle = 0;
+    vehicle.steer = 0;
+    vehicle.braking = true;
+  }
+  player.vehicleId = "";
+  if (!placeBeside || !vehicle) return;
+  const candidateX = vehicle.x + Math.cos(vehicle.yaw) * 2.25;
+  const candidateZ = vehicle.z - Math.sin(vehicle.yaw) * 2.25;
+  const safe = findNearestCpuSafeSpot(candidateX, candidateZ, 0.4, room.arena);
+  player.x = safe.x;
+  player.y = 1.6;
+  player.z = safe.z;
+}
+
+function tryEnterVehicle(room, player, vehicleId) {
+  if (!room?.vehicles || player.isBot || player.eliminated || player.health <= 0 || player.vehicleId) return;
+  const vehicle = room.vehicles.get(String(vehicleId || ""));
+  if (!vehicle || vehicle.driverId || Math.hypot(vehicle.x - player.x, vehicle.z - player.z) > 3.35) return;
+  vehicle.driverId = player.id;
+  vehicle.throttle = 0;
+  vehicle.steer = 0;
+  vehicle.braking = true;
+  vehicle.lastInputAt = Date.now();
+  player.vehicleId = vehicle.id;
+  player.x = vehicle.x;
+  player.y = 1.82;
+  player.z = vehicle.z;
+  addFeed(room, `${player.name} がロードスターに乗車`, player.color);
+  send(player.ws, { type: "vehicle_status", vehicleId: vehicle.id });
+  broadcast(room, { type: "feed", feed: room.feed });
+}
+
+function updateVehicles(room, now) {
+  for (const vehicle of room.vehicles?.values?.() || []) {
+    const delta = Math.min(0.14, Math.max(0.016, (now - (vehicle.updatedAt || now - 80)) / 1000));
+    vehicle.updatedAt = now;
+    const driver = vehicle.driverId ? room.players.get(vehicle.driverId) : null;
+    if (!driver || driver.eliminated || driver.health <= 0) {
+      if (driver) releasePlayerVehicle(room, driver, false);
+      vehicle.driverId = "";
+      vehicle.throttle = 0;
+      vehicle.steer = 0;
+    }
+
+    if (vehicle.driverId && now - vehicle.lastInputAt > 650) {
+      vehicle.throttle = 0;
+      vehicle.steer = 0;
+      vehicle.braking = true;
+    }
+
+    const throttle = clamp(vehicle.throttle, -1, 1);
+    const targetSpeed = throttle >= 0 ? throttle * 11.8 : throttle * 5.4;
+    const acceleration = throttle === 0 ? 4.2 : 7.2;
+    const speedDelta = clamp(targetSpeed - vehicle.speed, -acceleration * delta, acceleration * delta);
+    vehicle.speed += speedDelta;
+    if (vehicle.braking) vehicle.speed *= Math.max(0, 1 - delta * 7.5);
+    else if (Math.abs(throttle) < 0.02) vehicle.speed *= Math.max(0, 1 - delta * 1.45);
+    if (Math.abs(vehicle.speed) < 0.025) vehicle.speed = 0;
+
+    const speedRatio = clamp(Math.abs(vehicle.speed) / 8, 0, 1);
+    if (speedRatio > 0.025) {
+      const reverseDirection = vehicle.speed < 0 ? -1 : 1;
+      vehicle.yaw += clamp(vehicle.steer, -1, 1) * reverseDirection * delta * (0.56 + speedRatio * 0.82);
+    }
+
+    const moveX = -Math.sin(vehicle.yaw) * vehicle.speed * delta;
+    const moveZ = -Math.cos(vehicle.yaw) * vehicle.speed * delta;
+    const nextX = clamp(vehicle.x + moveX, -arenaHalfSize + 2.2, arenaHalfSize - 2.2);
+    const nextZ = clamp(vehicle.z + moveZ, -arenaHalfSize + 2.2, arenaHalfSize - 2.2);
+    if (!vehicleCollides(room, vehicle, nextX, nextZ)) {
+      vehicle.x = nextX;
+      vehicle.z = nextZ;
+    } else {
+      const canMoveX = !vehicleCollides(room, vehicle, nextX, vehicle.z);
+      const canMoveZ = !vehicleCollides(room, vehicle, vehicle.x, nextZ);
+      if (canMoveX) vehicle.x = nextX;
+      if (canMoveZ) vehicle.z = nextZ;
+      if (!canMoveX && !canMoveZ) vehicle.speed *= -0.12;
+      else vehicle.speed *= 0.72;
+    }
+
+    const activeDriver = vehicle.driverId ? room.players.get(vehicle.driverId) : null;
+    if (activeDriver) {
+      activeDriver.vehicleId = vehicle.id;
+      activeDriver.x = vehicle.x;
+      activeDriver.y = 1.82;
+      activeDriver.z = vehicle.z;
+    }
   }
 }
 
@@ -1813,6 +2058,9 @@ wss.on("connection", (ws) => {
         speedBoostUntil: 0,
         damageBoostUntil: 0,
         comebackUntil: 0,
+        spawnProtectedUntil: Date.now() + spawnProtectionMs,
+        vehicleId: "",
+        lastStateAt: Date.now(),
         nextImpactAt: 0,
         yaw: 0,
         pitch: 0,
@@ -1840,15 +2088,37 @@ wss.on("connection", (ws) => {
 
     if (message.type === "state") {
       if (currentPlayer.eliminated) return;
+      const now = Date.now();
       const previousX = currentPlayer.x;
       const previousY = currentPlayer.y;
       const previousZ = currentPlayer.z;
-      currentPlayer.x = clamp(Number(message.x), -arenaHalfSize + 1, arenaHalfSize - 1);
-      currentPlayer.y = clamp(Number(message.y), 1.4, 80);
-      currentPlayer.z = clamp(Number(message.z), -arenaHalfSize + 1, arenaHalfSize - 1);
       currentPlayer.yaw = clamp(Number(message.yaw), -Math.PI * 2, Math.PI * 2);
       currentPlayer.pitch = clamp(Number(message.pitch), -1.35, 1.35);
-      currentPlayer.lastSeen = Date.now();
+      currentPlayer.lastSeen = now;
+      if (currentPlayer.vehicleId) return;
+
+      let nextX = clamp(Number(message.x), -arenaHalfSize + 1, arenaHalfSize - 1);
+      const nextY = clamp(Number(message.y), 1.4, 80);
+      let nextZ = clamp(Number(message.z), -arenaHalfSize + 1, arenaHalfSize - 1);
+      const stateElapsed = Math.min(0.45, Math.max(0.04, (now - (currentPlayer.lastStateAt || now - 80)) / 1000));
+      currentPlayer.lastStateAt = now;
+      const horizontalDistance = Math.hypot(nextX - previousX, nextZ - previousZ);
+      const maxHorizontalDistance = currentPlayer.creative ? Infinity : Math.min(5.5, 0.9 + stateElapsed * 15);
+      if (horizontalDistance > maxHorizontalDistance) {
+        const scale = maxHorizontalDistance / horizontalDistance;
+        nextX = previousX + (nextX - previousX) * scale;
+        nextZ = previousZ + (nextZ - previousZ) * scale;
+      }
+
+      if (currentPlayer.creative || !playerCollides(nextX, nextY, nextZ, currentRoom.arena)) {
+        currentPlayer.x = nextX;
+        currentPlayer.y = nextY;
+        currentPlayer.z = nextZ;
+      } else {
+        if (!playerCollides(nextX, nextY, previousZ, currentRoom.arena)) currentPlayer.x = nextX;
+        if (!playerCollides(currentPlayer.x, nextY, nextZ, currentRoom.arena)) currentPlayer.z = nextZ;
+        if (!playerCollides(currentPlayer.x, nextY, currentPlayer.z, currentRoom.arena)) currentPlayer.y = nextY;
+      }
       const horizontalMove = Math.hypot(currentPlayer.x - previousX, currentPlayer.z - previousZ);
       currentRoom.movementStats.samples += 1;
       if (horizontalMove > 0.12) currentRoom.movementStats.moving += 1;
@@ -1861,6 +2131,31 @@ wss.on("connection", (ws) => {
       tryPickupBarrier(currentRoom, currentPlayer);
       tryPickupHealth(currentRoom, currentPlayer);
       tryPickupPowerups(currentRoom, currentPlayer);
+      return;
+    }
+
+    if (message.type === "vehicle_enter") {
+      tryEnterVehicle(currentRoom, currentPlayer, message.vehicleId);
+      return;
+    }
+
+    if (message.type === "vehicle_exit") {
+      if (!currentPlayer.vehicleId) return;
+      releasePlayerVehicle(currentRoom, currentPlayer, true);
+      addFeed(currentRoom, `${currentPlayer.name} がロードスターから降車`, currentPlayer.color);
+      send(currentPlayer.ws, { type: "vehicle_status", vehicleId: "", spawn: { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z } });
+      broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
+      return;
+    }
+
+    if (message.type === "vehicle_input") {
+      const vehicle = currentRoom.vehicles?.get?.(currentPlayer.vehicleId || "");
+      if (!vehicle || vehicle.driverId !== currentPlayer.id) return;
+      vehicle.throttle = clamp(Number(message.throttle) || 0, -1, 1);
+      vehicle.steer = clamp(Number(message.steer) || 0, -1, 1);
+      vehicle.braking = Boolean(message.braking);
+      vehicle.lastInputAt = Date.now();
+      currentPlayer.lastSeen = vehicle.lastInputAt;
       return;
     }
 
@@ -2039,15 +2334,24 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "shoot") {
-      if (currentPlayer.eliminated || currentPlayer.health <= 0) return;
-      const origin = vectorFrom(message.origin);
-      const direction = normalize(vectorFrom(message.direction));
+      if (currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.vehicleId) return;
       const weapon = normalizeWeapon(message.weapon);
+      const now = Date.now();
+      if (!consumeShotBudget(currentPlayer, weapon, now)) return;
+      const reportedOrigin = vectorFrom(message.origin);
+      const originDistance = Math.hypot(
+        reportedOrigin.x - currentPlayer.x,
+        reportedOrigin.y - currentPlayer.y,
+        reportedOrigin.z - currentPlayer.z
+      );
+      const origin = originDistance <= 2.8
+        ? reportedOrigin
+        : { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z };
+      const direction = normalize(vectorFrom(message.direction));
       const range = weaponRange.get(weapon) || 70;
       currentRoom.weaponStats[weapon] = (currentRoom.weaponStats[weapon] || 0) + 1;
       currentPlayer.lastWeapon = weapon;
       const shotResult = applyShot(currentRoom, currentPlayer, origin, direction, weapon);
-      const now = Date.now();
       const canEmitImpact = now >= (currentPlayer.nextImpactAt || 0);
       if (canEmitImpact) currentPlayer.nextImpactAt = now + (weapon === "shotgun" ? 140 : 70);
       const impact = canEmitImpact ? firstObstacleImpact(origin, direction, Math.min(range, 110), currentRoom.arena) : null;
@@ -2090,6 +2394,7 @@ wss.on("connection", (ws) => {
       }
     }
     if (!currentRoom || !currentPlayer) return;
+    if (currentPlayer.vehicleId) releasePlayerVehicle(currentRoom, currentPlayer, false);
     currentRoom.players.delete(currentPlayer.id);
     addFeed(currentRoom, `${currentPlayer.name} が退出`, currentPlayer.color);
     broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
@@ -2105,6 +2410,7 @@ setInterval(() => {
     let removedHuman = false;
     for (const player of room.players.values()) {
     if (!player.isBot && now - player.lastSeen > 45_000) {
+        if (player.vehicleId) releasePlayerVehicle(room, player, false);
         player.ws.close();
         room.players.delete(player.id);
         removedHuman = true;
@@ -2119,6 +2425,7 @@ setInterval(() => {
     updateHealthPickup(room, now);
     updatePowerups(room, now);
     updateDonPunchProjectiles(room, now);
+    updateVehicles(room, now);
     updateCpuPlayers(room, now);
     updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
@@ -2154,6 +2461,7 @@ setInterval(() => {
       castleCores: room.castleCores,
       castleEndsAt: room.castleEndsAt || 0,
       donPunches,
+      vehicles: [...room.vehicles.values()].map(publicVehicle),
       barrier: room.barrier,
       healthPickup: room.healthPickup,
       powerups: room.powerups
@@ -2292,7 +2600,7 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   const baseDamage = weaponDamage.get(weapon) || 25;
   const boosted = !shooter.isBot && Date.now() < (shooter.damageBoostUntil || 0);
   const damageMultiplier = (boosted ? 1.18 : 1) * equipmentDamageMultiplier(shooter);
-  const damage = shooter.isBot ? Math.max(6, Math.ceil(baseDamage * cpuDamageMultiplier)) : Math.ceil(baseDamage * damageMultiplier);
+  const rawDamage = shooter.isBot ? Math.max(6, Math.ceil(baseDamage * cpuDamageMultiplier)) : Math.ceil(baseDamage * damageMultiplier);
   const range = weaponRange.get(weapon) || 70;
   let best;
   let bestDistance = Infinity;
@@ -2311,11 +2619,13 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle") {
 
   const coreHit = room.mode === "castle" ? nearestCastleCoreHit(room, shooter, origin, direction, range) : null;
   if (coreHit && (!best || coreHit.targetDistance < bestTargetDistance)) {
+    const damage = weaponDamageAtDistance(weapon, rawDamage, coreHit.targetDistance, range);
     applyCastleCoreDamage(room, shooter, coreHit.core, damage);
     return { hit: "castle", targetDistance: coreHit.targetDistance };
   }
 
   if (!best || bestDistance >= 0.8) return null;
+  const damage = weaponDamageAtDistance(weapon, rawDamage, bestTargetDistance, range);
   applyDirectDamage(room, shooter, best, damage, weapon);
   return { hit: "player", targetDistance: bestTargetDistance };
 }
@@ -2381,6 +2691,10 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
     broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
     return;
   }
+  if ((target.spawnProtectedUntil || 0) > Date.now()) {
+    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon: "スポーン保護" });
+    return;
+  }
   if ((target.shieldUntil || 0) > Date.now()) {
     addFeed(room, `${target.name} がバリアで防いだ`, target.color);
     broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
@@ -2417,6 +2731,7 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
 }
 
 function handleDeath(room, shooter, target) {
+  if (target.vehicleId) releasePlayerVehicle(room, target, true);
   if (room.mode === "practice") {
     addFeed(room, `${target.name} 復帰練習`, target.color);
     respawnPlayer(target);
@@ -2451,7 +2766,7 @@ function handleDeath(room, shooter, target) {
 
 function respawnPlayer(player) {
   const spawn = spawnPoint(Math.floor(Math.random() * 16));
-  Object.assign(player, spawn, { health: maxHealth, eliminated: false });
+  Object.assign(player, spawn, { health: maxHealth, eliminated: false, spawnProtectedUntil: Date.now() + spawnProtectionMs, vehicleId: "" });
   if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
 }
 
@@ -2542,6 +2857,8 @@ function setCpuCount(room, count) {
       speedBoostUntil: 0,
       damageBoostUntil: 0,
       comebackUntil: 0,
+      spawnProtectedUntil: Date.now() + spawnProtectionMs,
+      vehicleId: "",
       nextImpactAt: 0,
       yaw: spawn.yaw,
       pitch: 0,
@@ -2589,6 +2906,8 @@ function createCpuPlayer(room, id, index, team) {
     speedBoostUntil: 0,
     damageBoostUntil: 0,
     comebackUntil: 0,
+    spawnProtectedUntil: Date.now() + spawnProtectionMs,
+    vehicleId: "",
     nextImpactAt: 0,
     yaw: spawn.yaw,
     pitch: 0,
@@ -2735,6 +3054,9 @@ function resetRoomScores(room) {
     player.speedBoostUntil = 0;
     player.damageBoostUntil = 0;
     player.comebackUntil = 0;
+    player.spawnProtectedUntil = Date.now() + spawnProtectionMs;
+    player.vehicleId = "";
+    player.lastStateAt = Date.now();
     player.nextImpactAt = 0;
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
@@ -2743,6 +3065,7 @@ function resetRoomScores(room) {
   }
   if (room.mode !== "castle") room.playerTeam = null;
   room.donPunches.clear();
+  room.vehicles = createVehicles();
   room.castleCores = createCastleCores(room.playerTeam || "blue");
   room.castleEndsAt = room.mode === "castle" ? Date.now() + castleRoundMs : 0;
   room.barrier = { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 };
@@ -2947,7 +3270,7 @@ function updateCpuPlayers(room, now) {
       : clamp(Math.sin(phase * 0.9) * radius, -arenaHalfSize + 2, arenaHalfSize - 2);
     bot.learnedSpeedBoost = samples > 30 && movingRatio > 0.62 ? 0.38 : 0;
     bot.learnedAirborneBias = samples > 30 && airborneRatio > 0.16;
-    moveCpuAlongWalls(bot, desiredX, desiredZ, now, room.arena);
+    moveCpuAlongWalls(bot, desiredX, desiredZ, now, room);
     keepCpuOutOfWalls(bot, room.arena);
     bot.y = 1.6;
     bot.lastSeen = now;

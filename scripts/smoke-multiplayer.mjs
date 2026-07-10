@@ -44,6 +44,41 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function latestSnapshot(client) {
+  return client.state.snapshots.at(-1);
+}
+
+function latestPlayer(client, playerId) {
+  return latestSnapshot(client)?.players?.find((player) => player.id === playerId);
+}
+
+async function moveAlong(client, playerId, waypoints, label) {
+  await waitFor(() => latestPlayer(client, playerId), `${label} initial position`, 6000);
+  let cursor = latestPlayer(client, playerId);
+  for (const waypoint of waypoints) {
+    while (Math.hypot(waypoint.x - cursor.x, waypoint.z - cursor.z) > 0.55) {
+      const distance = Math.hypot(waypoint.x - cursor.x, waypoint.z - cursor.z);
+      const step = Math.min(1.5, distance);
+      cursor = {
+        ...cursor,
+        x: cursor.x + (waypoint.x - cursor.x) / distance * step,
+        z: cursor.z + (waypoint.z - cursor.z) / distance * step
+      };
+      send(client.ws, { type: "state", x: cursor.x, y: 1.6, z: cursor.z, yaw: 0, pitch: 0 });
+      await delay(86);
+    }
+    await waitFor(() => {
+      const player = latestPlayer(client, playerId);
+      return player && Math.hypot(player.x - waypoint.x, player.z - waypoint.z) < 1.05;
+    }, `${label} reaches ${waypoint.x},${waypoint.z}`, 5000);
+    cursor = latestPlayer(client, playerId);
+  }
+}
+
 function testRoomCode() {
   return `T${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
 }
@@ -53,8 +88,8 @@ async function shootUntilHit(shooter, targetId, label) {
   while (Date.now() - started < 7000) {
     send(shooter.ws, {
       type: "shoot",
-      origin: { x: 24, y: 1.6, z: 24 },
-      direction: { x: 0, y: 0, z: -1 },
+      origin: { x: -36, y: 1.6, z: 16 },
+      direction: { x: -1, y: 0, z: 0 },
       weapon: "rifle"
     });
     try {
@@ -75,9 +110,6 @@ const roomCode = testRoomCode();
 const alpha = await openClient("Alpha", roomCode, { cpuFill: false });
 const beta = await openClient("Beta", alpha.state.room, { cpuFill: false });
 
-send(alpha.ws, { type: "state", x: 24, y: 1.6, z: 24, yaw: 0, pitch: 0 });
-send(beta.ws, { type: "state", x: 24, y: 1.6, z: 18, yaw: Math.PI, pitch: 0 });
-
 await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
     snapshot.players?.some((player) => player.name === "Alpha") &&
@@ -92,23 +124,66 @@ await waitFor(
   "both clients see each other without CP fill"
 );
 
-await new Promise((resolve) => setTimeout(resolve, 2200));
+await waitFor(
+  () => latestSnapshot(alpha)?.vehicles?.length === 4 && latestSnapshot(beta)?.vehicles?.length === 4,
+  "both clients receive shared vehicles"
+);
+
+await moveAlong(beta, beta.state.id, [
+  { x: 32, z: -16 },
+  { x: 32, z: -46 },
+  { x: -66, z: -46 },
+  { x: -66, z: -38 }
+], "target route to roadster");
+
+send(beta.ws, { type: "vehicle_enter", vehicleId: "roadster-west" });
+await waitFor(
+  () => latestPlayer(beta, beta.state.id)?.vehicleId === "roadster-west",
+  "target enters roadster"
+);
+
+send(alpha.ws, { type: "vehicle_enter", vehicleId: "roadster-west" });
+await delay(350);
+if (latestPlayer(alpha, alpha.state.id)?.vehicleId) throw new Error("occupied roadster accepted a second driver");
+
+const vehicleBefore = latestSnapshot(beta).vehicles.find((vehicle) => vehicle.id === "roadster-west");
+for (let i = 0; i < 9; i += 1) {
+  send(beta.ws, { type: "vehicle_input", throttle: 1, steer: 0, braking: false });
+  await delay(95);
+}
+await waitFor(() => {
+  const vehicle = latestSnapshot(beta)?.vehicles?.find((item) => item.id === "roadster-west");
+  return vehicle && Math.hypot(vehicle.x - vehicleBefore.x, vehicle.z - vehicleBefore.z) > 0.65;
+}, "roadster movement is server synchronized");
+
+send(beta.ws, { type: "vehicle_exit" });
+await waitFor(() => !latestPlayer(beta, beta.state.id)?.vehicleId, "target exits roadster");
+
+await moveAlong(beta, beta.state.id, [
+  { x: -66, z: 10 },
+  { x: -44, z: 10 },
+  { x: -44, z: 16 }
+], "target route to firing lane");
 
 await waitFor(
-  () => alpha.state.snapshots.some((snapshot) => snapshot.players?.some((player) => player.name === "Beta" && player.x === 24 && player.z === 18)),
+  () => {
+    const player = latestPlayer(alpha, beta.state.id);
+    return player && Math.hypot(player.x + 44, player.z - 16) < 1.05;
+  },
   "server receives target position"
 );
 
 await shootUntilHit(alpha, beta.state.id, "server resolves a hit");
 
-for (let i = 0; i < 7; i += 1) {
+await delay(180);
+for (let i = 0; i < 8; i += 1) {
   send(alpha.ws, {
     type: "shoot",
-    origin: { x: 24, y: 1.6, z: 24 },
-    direction: { x: 0, y: 0, z: -1 },
+    origin: { x: -36, y: 1.6, z: 16 },
+    direction: { x: -1, y: 0, z: 0 },
     weapon: "rifle"
   });
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  await delay(180);
 }
 
 await waitFor(
@@ -120,4 +195,4 @@ await waitFor(
 
 alpha.ws.close();
 beta.ws.close();
-console.log(`smoke passed: room ${alpha.state.room}, clients synced, hit resolved`);
+console.log(`smoke passed: room ${alpha.state.room}, clients synced, roadster driven, hit resolved`);
