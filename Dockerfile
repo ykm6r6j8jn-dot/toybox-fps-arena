@@ -13,5 +13,6 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server.mjs ./server.mjs
 COPY --from=build /app/gameplay-systems.mjs ./gameplay-systems.mjs
+COPY --from=build /app/network-systems.mjs ./network-systems.mjs
 EXPOSE 5188
 CMD ["npm", "start"]

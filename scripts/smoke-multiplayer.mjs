@@ -1,11 +1,58 @@
 import WebSocket from "ws";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const endpoint = process.env.SMOKE_WS || "ws://localhost:5188/ws";
+let endpoint = process.env.SMOKE_WS || "";
+let managedServer = null;
+let managedServerOutput = "";
+
+async function startManagedServer() {
+  if (endpoint) return;
+  const port = 49_152 + Math.floor(Math.random() * 8_000);
+  endpoint = `ws://127.0.0.1:${port}/ws`;
+  managedServer = spawn(process.execPath, ["server.mjs"], {
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+    env: { ...process.env, PORT: String(port), NODE_ENV: "test" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  managedServer.stdout.on("data", (chunk) => {
+    managedServerOutput += String(chunk);
+  });
+  managedServer.stderr.on("data", (chunk) => {
+    managedServerOutput += String(chunk);
+  });
+
+  const healthUrl = `http://127.0.0.1:${port}/health`;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 7_000) {
+    if (managedServer.exitCode !== null) {
+      throw new Error(`smoke server exited early\n${managedServerOutput}`);
+    }
+    try {
+      const response = await fetch(healthUrl);
+      if (response.ok) return;
+    } catch {
+      // The listener may still be starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  throw new Error(`timeout starting smoke server\n${managedServerOutput}`);
+}
+
+async function stopManagedServer() {
+  if (!managedServer || managedServer.exitCode !== null) return;
+  managedServer.kill("SIGTERM");
+  await Promise.race([
+    new Promise((resolve) => managedServer.once("exit", resolve)),
+    new Promise((resolve) => setTimeout(resolve, 1_000))
+  ]);
+  if (managedServer.exitCode === null) managedServer.kill("SIGKILL");
+}
 
 function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
-    const state = { name, id: "", room: "", snapshots: [], respawns: [], hits: [], teamPings: [] };
+    const state = { name, id: "", room: "", resumeToken: "", resumed: false, snapshots: [], respawns: [], hits: [], teamPings: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 5000);
 
     ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
@@ -14,6 +61,8 @@ function openClient(name, room = "", options = {}) {
       if (message.type === "welcome") {
         state.id = message.id;
         state.room = message.room;
+        state.resumeToken = message.resumeToken || "";
+        state.resumed = Boolean(message.resumed);
         clearTimeout(timeout);
         resolve({ ws, state });
       }
@@ -107,10 +156,12 @@ async function shootUntilHit(shooter, targetId, label) {
   throw new Error(`timeout: ${label}`);
 }
 
+try {
+await startManagedServer();
 const roomCode = testRoomCode();
 const alpha = await openClient("Alpha", roomCode, { cpuFill: false });
 const beta = await openClient("Beta", alpha.state.room, { cpuFill: false });
-const gamma = await openClient("Gamma", alpha.state.room, { cpuFill: false });
+let gamma = await openClient("Gamma", alpha.state.room, { cpuFill: false });
 
 await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
@@ -151,6 +202,26 @@ await waitFor(
 );
 await delay(420);
 if (beta.state.teamPings.length > 0) throw new Error("enemy client received a team-only ping");
+
+const gammaIdBeforeReconnect = gamma.state.id;
+const gammaResumeToken = gamma.state.resumeToken;
+if (!gammaResumeToken) throw new Error("server did not issue a resume token");
+gamma.ws.close();
+await waitFor(
+  () => latestSnapshot(alpha)?.players?.some((player) => player.id === gammaIdBeforeReconnect && player.connected === false),
+  "disconnected player enters reconnect grace"
+);
+gamma = await openClient("Gamma", alpha.state.room, { cpuFill: false, resumeToken: gammaResumeToken });
+if (!gamma.state.resumed) throw new Error("reconnect did not report a resumed session");
+if (gamma.state.id !== gammaIdBeforeReconnect) throw new Error("reconnect changed the player id");
+await waitFor(
+  () => latestSnapshot(alpha)?.players?.some((player) => player.id === gammaIdBeforeReconnect && player.connected === true),
+  "resumed player becomes connected"
+);
+const resumedGamma = latestPlayer(alpha, gammaIdBeforeReconnect);
+if ((resumedGamma?.spawnProtectedUntil || 0) > Date.now() + 3_000) {
+  throw new Error("reconnect granted excessive spawn protection");
+}
 
 await moveAlong(beta, beta.state.id, [
   { x: 32, z: -16 },
@@ -219,6 +290,37 @@ await waitFor(
   "server receives target position"
 );
 
+const historicalSnapshot = latestSnapshot(alpha);
+const historicalViewedAt = historicalSnapshot.now;
+const hitsBeforeRewindShot = alpha.state.hits.length;
+send(beta.ws, { type: "state", x: -44, y: 1.6, z: 18, yaw: 0, pitch: 0 });
+await waitFor(
+  () => {
+    const player = latestPlayer(alpha, beta.state.id);
+    return player && Math.hypot(player.x + 44, player.z - 18) < 0.8;
+  },
+  "target moves away from historical sight line"
+);
+send(alpha.ws, {
+  type: "shoot",
+  viewedAt: historicalViewedAt,
+  origin: { x: -36, y: 1.6, z: 16 },
+  direction: { x: -1, y: 0, z: 0 },
+  weapon: "rifle"
+});
+await waitFor(
+  () => alpha.state.hits.slice(hitsBeforeRewindShot).some((hit) => hit.target === beta.state.id && hit.damage === 25),
+  "bounded lag compensation resolves the historical hit"
+);
+send(beta.ws, { type: "state", x: -44, y: 1.6, z: 16, yaw: 0, pitch: 0 });
+await waitFor(
+  () => {
+    const player = latestPlayer(alpha, beta.state.id);
+    return player && Math.hypot(player.x + 44, player.z - 16) < 0.8;
+  },
+  "target returns to firing lane"
+);
+
 await shootUntilHit(alpha, beta.state.id, "server resolves a hit");
 
 await delay(180);
@@ -239,7 +341,10 @@ await waitFor(
   "target is eliminated in one-life mode"
 );
 
-alpha.ws.close();
-beta.ws.close();
-gamma.ws.close();
-console.log(`smoke passed: room ${alpha.state.room}, team ping isolated, safe zone synced, roadster driven/damaged, hit resolved`);
+for (const client of [alpha, beta, gamma]) send(client.ws, { type: "leave" });
+await delay(80);
+for (const client of [alpha, beta, gamma]) client.ws.close(1000, "leave");
+console.log(`smoke passed: room ${alpha.state.room}, reconnect resumed, lag-compensated hit resolved, team ping isolated, safe zone synced, roadster driven/damaged`);
+} finally {
+  await stopManagedServer();
+}

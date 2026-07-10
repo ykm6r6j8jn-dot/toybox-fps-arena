@@ -18,6 +18,7 @@
     "test:smoke": "node scripts/smoke-multiplayer.mjs",
     "test:controls": "node scripts/control-physics-test.mjs",
     "test:systems": "node scripts/gameplay-systems-test.mjs",
+    "test:network": "node scripts/network-systems-test.mjs",
     "verify:public": "node scripts/verify-public-url.mjs"
   },
   "dependencies": {

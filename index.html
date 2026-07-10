@@ -59,6 +59,12 @@
         <button id="scoreboardToggle" class="hud-button"><span class="keycap">Tab</span><span>スコアボード</span></button>
       </section>
 
+      <section class="connection-recovery" id="connectionRecovery" role="status" aria-live="assertive">
+        <i data-lucide="signal"></i>
+        <div><strong>接続を復旧中</strong><span id="connectionRecoveryText">試合状態を保持しています</span></div>
+        <b aria-hidden="true"></b>
+      </section>
+
       <section class="minimap" aria-label="ミニマップ">
         <canvas id="minimap" width="220" height="220"></canvas>
       </section>
@@ -438,6 +444,11 @@
           <div class="update-log-list">
             <article>
               <b>最新</b>
+              <strong>RESILIENCE通信基盤更新</strong>
+              <p>15秒の試合復旧、自動再接続、通信ゆらぎ対応の時刻補間、車両予測、最大220msの公平な射撃補正を追加。</p>
+            </article>
+            <article>
+              <b>戦術</b>
               <strong>SAFE DISTRICT大型戦術更新</strong>
               <p>終盤安全エリア、範囲外ダメージ、同チーム共有ピン、車両耐久、破壊・再出現、3か所の修理パッド、専用HUDを追加。</p>
             </article>

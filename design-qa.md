@@ -7,6 +7,9 @@
 - SAFE DISTRICT desktop screenshot: `/tmp/donpachi-safe-district-desktop.png`
 - SAFE DISTRICT mobile screenshot: `/tmp/donpachi-safe-district-mobile.png`
 - SAFE DISTRICT public mobile screenshot: `/tmp/donpachi-safe-district-public-mobile.png`
+- RESILIENCE reconnect screenshot: `/tmp/donpachi-resilience-reconnecting.png`
+- RESILIENCE mobile reconnect screenshot: `/tmp/donpachi-resilience-mobile-reconnecting.png`
+- clean mobile lobby screenshot: `/tmp/donpachi-resilience-mobile-lobby.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
 - state: FPS match active in global room `DONPCH`, one-life mode, CP fill disabled for frame-budget QA
@@ -32,6 +35,9 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - Late joins: players and replacement CPs entering after a shrink use collision-checked spawn points inside the active safe zone, while initial match spawns remain unchanged.
 - Team play: desktop `P`/middle-click and the smartphone pin control create short-lived server-filtered markers that are delivered only to teammates and also appear on the minimap.
 - Vehicle balance: roadsters have 600 durability, weapon damage, a disabled/restart state, compact durability HUD, and three low-cost repair pads. Repair pads are visible in the world and as green crosses on the minimap.
+- Network resilience: unexpected disconnects preserve the server-owned player state for 15 seconds. The client reconnects with a session-only resume token, freezes combat input while disconnected, and restores the same player id, health, score, equipment, and match state.
+- Network rendering: remote players and shared vehicles use timestamped interpolation, capped short extrapolation, teleport-history resets, yaw-wrap handling, measured packet jitter, and an adaptive 122-220ms interpolation window.
+- Shot fairness: the client sends the server timestamp of the rendered target state and the server applies a bounded 220ms rewind while retaining authoritative weapon range and wall blocking.
 
 ## Comparison history
 
@@ -46,6 +52,10 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 9. P1: the smartphone fire-size setting was overridden by a fixed in-match size. The selected 72-96px value now controls the live fire target while preserving zero overlap with jump/reload controls.
 10. P1: smartphone players had no direct control for their five starting heal packs. Added a dedicated 48px heal action with the existing server-authoritative inventory check.
 11. P2: the compact smartphone HUD had hidden the real latency/FPS readout. Restored a small 84px live readout without intersecting the centered score, audio, settings, or ammo controls.
+12. P1: a brief mobile disconnect previously required manual re-entry and could lose the current state. Added automatic retry with an explicit recovery overlay and a 15-second server resume window; browser QA used `?qa=1` and `F10` to reproduce the real WebSocket close.
+13. P1: the mobile lobby showed movement, firing, score, and combat HUD behind the scrollable join surface. Those controls now remain hidden until a match is active, while the full lobby still scrolls to poker, online players, and update history.
+14. P2: the mobile settings content could scroll visually above its sticky title. Removed the negative top offset; the close control and title now stay cleanly fixed while all settings remain reachable.
+15. P1: multiplayer smoke tests could inherit players from the shared local `DONPCH` room and become spawn-order dependent. The test now starts and stops its own isolated production server, so reconnect, vehicle, safe-zone, ping, shot, and elimination checks are deterministic.
 
 ## Findings
 
@@ -64,10 +74,10 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Desktop render: `58-60fps` observed after settle in the in-app browser.
 - Mobile render: `60fps` observed at `844 x 390`; the actual latency/FPS text remained visible.
 - Interaction: mobile settings opened a `320px`-high scrollable panel with `706px` content; active controls measured at `48px` or larger, the fire target honored its `88px` setting, and pairwise button-overlap/document-overflow checks returned zero.
-- Build, controls, gameplay-systems, and three-client multiplayer smoke tests: passed. Multiplayer smoke verifies team-only ping delivery, synchronized safe-zone state, four vehicle durability snapshots, exclusive ownership, movement replication, weapon damage to a roadster, exit, player damage, and one-life elimination.
-- Bundle: main gameplay JS `143.07 kB` (`50.80 kB` gzip), CSS `72.88 kB` (`15.30 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+- Build, controls, gameplay-systems, network-systems, and three-client multiplayer smoke tests: passed. Multiplayer smoke verifies same-id reconnect, bounded spawn protection, lag-compensated historical hit resolution, team-only ping delivery, synchronized safe-zone state, four vehicle durability snapshots, exclusive ownership, movement replication, weapon damage to a roadster, exit, player damage, and one-life elimination.
+- Bundle: main gameplay JS `149.32 kB` (`53.33 kB` gzip), CSS `75.21 kB` (`15.67 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: passed against `https://toybox-fps-arena.onrender.com` with one non-destructive probe. It validates the published asset set, vehicle durability, safe-zone state, and team-filtered ping without moving or firing in the shared room.
-- `tsc --noEmit`: stopped after it made no progress for about 90 seconds; this repository's narrower build/runtime checks completed normally.
+- Public verification: SAFE DISTRICT release passed against `https://toybox-fps-arena.onrender.com`; RESILIENCE deployment verification is pending the current Render publish.
+- `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed

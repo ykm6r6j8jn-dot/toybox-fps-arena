@@ -6,6 +6,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
+import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
@@ -36,6 +37,8 @@ const spawnProtectionMs = 2200;
 const vehicleMaxHealth = 600;
 const vehicleDisabledMs = 9000;
 const vehicleRepairPerSecond = 72;
+const reconnectGraceMs = 15_000;
+const lagCompensationMs = 220;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
 const powerupRespawnMs = 18_000;
 const powerupDurationMs = 10_000;
@@ -547,7 +550,7 @@ const server = createServer(async (req, res) => {
   if (req.url === "/health") {
     const now = Date.now();
     const players = [...rooms.values()].flatMap((room) => [...room.players.values()]
-      .filter((player) => !player.isBot && now - player.lastSeen < 45_000)
+      .filter((player) => !player.isBot && !player.disconnectedAt && now - player.lastSeen < 45_000)
       .map((player) => ({
         name: player.name,
         room: room.code,
@@ -637,6 +640,11 @@ function normalizeRelationMode(value) {
 function normalizeSkin(value) {
   const skin = String(value || "rounded");
   return skins.has(skin) ? skin : "rounded";
+}
+
+function normalizeResumeToken(value) {
+  const token = String(value || "").trim();
+  return /^[a-f0-9-]{20,80}$/i.test(token) ? token : "";
 }
 
 function normalizeWeapon(value) {
@@ -1520,6 +1528,7 @@ function publicPlayer(player) {
     yaw: player.yaw,
     pitch: player.pitch,
     lastSeen: player.lastSeen,
+    connected: !player.disconnectedAt,
     isBot: Boolean(player.isBot),
     weapon: player.botWeapon || "rifle",
     shieldUntil: player.shieldUntil || 0,
@@ -1529,6 +1538,37 @@ function publicPlayer(player) {
     spawnProtectedUntil: player.spawnProtectedUntil || 0,
     vehicleId: player.vehicleId || "",
     level: levelFromXp(profileForPlayer(player)?.progress?.xp || 0)
+  };
+}
+
+function recordPlayerPose(player, at = Date.now()) {
+  player.poseHistory ||= [];
+  appendMotionSample(player.poseHistory, {
+    at,
+    x: player.x,
+    y: player.y,
+    z: player.z,
+    yaw: player.yaw
+  }, { maxSamples: 18, maxAgeMs: 1200, teleportDistance: 24 });
+}
+
+function fpsWelcomePayload(player, room, profile, resumed = false) {
+  return {
+    type: "welcome",
+    id: player.id,
+    room: room.code,
+    gameMode: room.mode,
+    arena: room.arena,
+    team: player.color,
+    partySize: room.partySize,
+    cpuFill: room.cpuFill,
+    relationMode: room.relationMode,
+    targetScore: room.targetScore,
+    maxPlayers: room.maxHumanPlayers || maxPlayers,
+    spawn: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+    profile: profile ? publicProfile(profile) : null,
+    resumeToken: player.resumeToken,
+    resumed
   };
 }
 
@@ -1561,7 +1601,7 @@ function publicFocusTask(task) {
 }
 
 function send(ws, payload) {
-  if (ws?.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
+  if (ws?.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
 function broadcast(room, payload) {
@@ -1793,7 +1833,7 @@ function vehicleCollides(room, vehicle, x, z) {
     if (Math.hypot(other.x - x, other.z - z) < 3.05) return true;
   }
   for (const player of room.players.values()) {
-    if (player.id === vehicle.driverId || player.eliminated || player.health <= 0) continue;
+    if (player.id === vehicle.driverId || player.disconnectedAt || player.eliminated || player.health <= 0) continue;
     if (Math.hypot(player.x - x, player.z - z) < 1.92) return true;
   }
   return false;
@@ -1944,7 +1984,7 @@ function updateSafeZone(room, now) {
   if (!safeZone.enabled || safeZone.damage <= 0) return safeZone;
 
   for (const player of room.players.values()) {
-    if (player.creative || player.eliminated || player.health <= 0 || !isOutsideSafeZone(player, safeZone, 0.4)) continue;
+    if (player.disconnectedAt || player.creative || player.eliminated || player.health <= 0 || !isOutsideSafeZone(player, safeZone, 0.4)) continue;
     if (now < (player.nextZoneDamageAt || 0)) continue;
     player.nextZoneDamageAt = now + 1000;
     const damage = Math.min(player.health, safeZone.damage);
@@ -2089,6 +2129,34 @@ wss.on("connection", (ws) => {
       }
       const loginProfile = profileRecord?.profile || null;
       const room = getRoom(globalFpsRoomCode, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
+      const requestedResumeToken = normalizeResumeToken(message.resumeToken);
+      const now = Date.now();
+      const resumedPlayer = requestedResumeToken
+        ? [...room.players.values()].find((player) => (
+          !player.isBot &&
+          player.resumeToken === requestedResumeToken &&
+          player.disconnectedAt &&
+          (player.reconnectDeadline || 0) >= now
+        ))
+        : null;
+      if (resumedPlayer) {
+        resumedPlayer.ws = ws;
+        resumedPlayer.disconnectedAt = 0;
+        resumedPlayer.reconnectDeadline = 0;
+        resumedPlayer.explicitLeave = false;
+        resumedPlayer.lastSeen = now;
+        resumedPlayer.lastStateAt = now;
+        resumedPlayer.spawnProtectedUntil = Math.max(resumedPlayer.spawnProtectedUntil || 0, now + 1600);
+        resumedPlayer.nextZoneDamageAt = Math.max(resumedPlayer.nextZoneDamageAt || 0, now + 1600);
+        if (profileRecord?.key) resumedPlayer.profileKey = profileRecord.key;
+        currentRoom = room;
+        currentPlayer = resumedPlayer;
+        recordPlayerPose(resumedPlayer, now);
+        send(ws, fpsWelcomePayload(resumedPlayer, room, loginProfile, true));
+        addFeed(room, `${resumedPlayer.name} が接続復旧`, resumedPlayer.color);
+        broadcast(room, { type: "feed", feed: room.feed });
+        return;
+      }
       if (humanPlayers(room).length === 0) room.cpuFill = requestedCpuFill;
       if (humanPlayers(room).length === 0) room.relationMode = requestedRelationMode;
       if (room.matchmaking) {
@@ -2117,6 +2185,11 @@ wss.on("connection", (ws) => {
       const player = {
         id,
         ws,
+        resumeToken: crypto.randomUUID(),
+        disconnectedAt: 0,
+        reconnectDeadline: 0,
+        explicitLeave: false,
+        poseHistory: [],
         profileKey: profileRecord?.key || "",
         name: sanitizePlayerName(loginProfile?.name || message.name),
         color: team,
@@ -2158,6 +2231,7 @@ wss.on("connection", (ws) => {
       };
 
       room.players.set(id, player);
+      recordPlayerPose(player);
       currentRoom = room;
       currentPlayer = player;
       if (player.name === "ひでお") {
@@ -2166,13 +2240,18 @@ wss.on("connection", (ws) => {
       }
       syncMatchCpuFill(room);
       addFeed(room, `${player.name} が参加`, player.color);
-      const welcomeSpawn = { x: player.x, y: player.y, z: player.z, yaw: player.yaw };
-      send(ws, { type: "welcome", id, room: room.code, gameMode: room.mode, arena: room.arena, team: player.color, partySize: room.partySize, cpuFill: room.cpuFill, relationMode: room.relationMode, targetScore: room.targetScore, maxPlayers: room.maxHumanPlayers || maxPlayers, spawn: welcomeSpawn, profile: loginProfile ? publicProfile(loginProfile) : null });
+      send(ws, fpsWelcomePayload(player, room, loginProfile, false));
       broadcast(room, { type: "feed", feed: room.feed });
       return;
     }
 
-    if (!currentRoom || !currentPlayer) return;
+    if (!currentRoom || !currentPlayer || !currentRoom.players.has(currentPlayer.id)) return;
+
+    if (message.type === "leave") {
+      currentPlayer.explicitLeave = true;
+      ws.close(1000, "leave");
+      return;
+    }
 
     if (message.type === "state") {
       if (currentPlayer.eliminated) return;
@@ -2216,6 +2295,7 @@ wss.on("connection", (ws) => {
         currentRoom.movementStats.moving = Math.ceil(currentRoom.movementStats.moving * 0.5);
         currentRoom.movementStats.airborne = Math.ceil(currentRoom.movementStats.airborne * 0.5);
       }
+      recordPlayerPose(currentPlayer, now);
       tryPickupBarrier(currentRoom, currentPlayer);
       tryPickupHealth(currentRoom, currentPlayer);
       tryPickupPowerups(currentRoom, currentPlayer);
@@ -2464,9 +2544,10 @@ wss.on("connection", (ws) => {
         : { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z };
       const direction = normalize(vectorFrom(message.direction));
       const range = weaponRange.get(weapon) || 70;
+      const viewedAt = Number.isFinite(Number(message.viewedAt)) ? Number(message.viewedAt) : now;
       currentRoom.weaponStats[weapon] = (currentRoom.weaponStats[weapon] || 0) + 1;
       currentPlayer.lastWeapon = weapon;
-      const shotResult = applyShot(currentRoom, currentPlayer, origin, direction, weapon);
+      const shotResult = applyShot(currentRoom, currentPlayer, origin, direction, weapon, viewedAt, now);
       const canEmitImpact = now >= (currentPlayer.nextImpactAt || 0);
       if (canEmitImpact) currentPlayer.nextImpactAt = now + (weapon === "shotgun" ? 140 : 70);
       const impact = canEmitImpact ? firstObstacleImpact(origin, direction, Math.min(range, 110), currentRoom.arena) : null;
@@ -2494,7 +2575,7 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => {
+  ws.on("close", (code, reason) => {
     if (currentPokerRoom && currentPokerPlayer) {
       currentPokerRoom.players.delete(currentPokerPlayer.id);
       currentPokerRoom.seats = currentPokerRoom.seats.filter((id) => id !== currentPokerPlayer.id);
@@ -2508,8 +2589,19 @@ wss.on("connection", (ws) => {
         broadcastPoker(currentPokerRoom);
       }
     }
-    if (!currentRoom || !currentPlayer) return;
+    if (!currentRoom || !currentPlayer || !currentRoom.players.has(currentPlayer.id)) return;
     if (currentPlayer.vehicleId) releasePlayerVehicle(currentRoom, currentPlayer, false);
+    const explicitLeave = currentPlayer.explicitLeave || (code === 1000 && String(reason || "") === "leave");
+    if (!explicitLeave) {
+      const disconnectedAt = Date.now();
+      currentPlayer.ws = null;
+      currentPlayer.disconnectedAt = disconnectedAt;
+      currentPlayer.reconnectDeadline = disconnectedAt + reconnectGraceMs;
+      currentPlayer.lastSeen = disconnectedAt;
+      addFeed(currentRoom, `${currentPlayer.name} の接続復旧を待機`, currentPlayer.color);
+      broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
+      return;
+    }
     currentRoom.players.delete(currentPlayer.id);
     addFeed(currentRoom, `${currentPlayer.name} が退出`, currentPlayer.color);
     broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
@@ -2524,18 +2616,29 @@ setInterval(() => {
   for (const room of rooms.values()) {
     let removedHuman = false;
     for (const player of room.players.values()) {
-      if (!player.isBot && now - player.lastSeen > 45_000) {
-        if (player.vehicleId) releasePlayerVehicle(room, player, false);
-        player.ws.close();
+      if (player.isBot) continue;
+      if (player.disconnectedAt) {
+        if (now < (player.reconnectDeadline || 0)) continue;
         room.players.delete(player.id);
+        addFeed(room, `${player.name} が接続タイムアウト`, player.color);
         removedHuman = true;
+        continue;
       }
+      if (now - player.lastSeen <= 45_000) continue;
+      if (player.vehicleId) releasePlayerVehicle(room, player, false);
+      player.explicitLeave = true;
+      player.ws?.close(4000, "timeout");
+      room.players.delete(player.id);
+      removedHuman = true;
     }
     if (humanPlayers(room).length === 0) {
       rooms.delete(room.code);
       continue;
     }
-    if (removedHuman) syncMatchCpuFill(room);
+    if (removedHuman) {
+      syncMatchCpuFill(room);
+      checkSurvivalWinner(room);
+    }
     updateBarrierRespawn(room, now);
     updateHealthPickup(room, now);
     updatePowerups(room, now);
@@ -2545,6 +2648,9 @@ setInterval(() => {
     updateCpuPlayers(room, now);
     updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
+    for (const player of room.players.values()) {
+      if (!player.disconnectedAt) recordPlayerPose(player, now);
+    }
     const players = [...room.players.values()].map(publicPlayer);
     const blueScore = players.filter((p) => p.color === "blue").reduce((sum, p) => sum + p.score, 0);
     const redScore = players.filter((p) => p.color === "red").reduce((sum, p) => sum + p.score, 0);
@@ -2767,7 +2873,7 @@ function applyVehicleDamage(room, shooter, vehicle, damage, weapon) {
   });
 }
 
-function applyShot(room, shooter, origin, direction, weapon = "rifle") {
+function applyShot(room, shooter, origin, direction, weapon = "rifle", viewedAt = Date.now(), now = Date.now()) {
   const baseDamage = weaponDamage.get(weapon) || 25;
   const boosted = !shooter.isBot && Date.now() < (shooter.damageBoostUntil || 0);
   const damageMultiplier = (boosted ? 1.18 : 1) * equipmentDamageMultiplier(shooter);
@@ -2777,10 +2883,12 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   let bestDistance = Infinity;
   let bestTargetDistance = Infinity;
   for (const target of room.players.values()) {
-    if (target.id === shooter.id || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
-    const targetDistance = projectionToRay({ x: target.x, y: target.y, z: target.z }, origin, direction);
+    if (target.id === shooter.id || target.disconnectedAt || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
+    const rewound = rewindPose(target.poseHistory || [], viewedAt, now, lagCompensationMs) || target;
+    const targetPoint = { x: rewound.x, y: rewound.y, z: rewound.z };
+    const targetDistance = projectionToRay(targetPoint, origin, direction);
     if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room.arena)) continue;
-    const distance = distanceToRay({ x: target.x, y: target.y, z: target.z }, origin, direction, range);
+    const distance = distanceToRay(targetPoint, origin, direction, range);
     if (distance < bestDistance) {
       bestDistance = distance;
       bestTargetDistance = targetDistance;
@@ -2865,6 +2973,7 @@ function resolveCastleRoundByTimer(room, now) {
 }
 
 function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメージ") {
+  if (target.disconnectedAt) return;
   if (target.creative) {
     broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
     return;
@@ -2960,6 +3069,7 @@ function safeRespawnPoint(room) {
 
 function respawnPlayer(player, room) {
   const spawn = safeRespawnPoint(room);
+  player.poseHistory = [];
   Object.assign(player, spawn, {
     health: maxHealth,
     eliminated: false,
@@ -2967,6 +3077,7 @@ function respawnPlayer(player, room) {
     nextZoneDamageAt: Date.now() + 1200,
     vehicleId: ""
   });
+  recordPlayerPose(player);
   if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
 }
 
@@ -2991,7 +3102,7 @@ function applyHadeonBurst(room, shooter) {
   shooter.specialsUsed = (shooter.specialsUsed || 0) + 1;
   addFeed(room, `${shooter.name} が銃ダメージ`, shooter.color);
   for (const target of room.players.values()) {
-    if (target.id === shooter.id || target.creative || target.eliminated || target.health <= 0) continue;
+    if (target.id === shooter.id || target.disconnectedAt || target.creative || target.eliminated || target.health <= 0) continue;
     applyDirectDamage(room, shooter, target, 95, "銃ダメージ");
   }
   broadcast(room, { type: "feed", feed: room.feed });
@@ -3001,7 +3112,7 @@ function nearestEnemy(room, shooter, maxDistance = Infinity, requireLineOfSight 
   let best;
   let bestDistance = Infinity;
   for (const target of room.players.values()) {
-    if (target.id === shooter.id || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
+    if (target.id === shooter.id || target.disconnectedAt || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
     const distance = Math.hypot(target.x - shooter.x, target.y - shooter.y, target.z - shooter.z);
     if (distance > maxDistance) continue;
     if (requireLineOfSight) {
@@ -3269,8 +3380,10 @@ function resetRoomScores(room) {
     player.nextImpactAt = 0;
     player.nextZoneDamageAt = 0;
     player.nextTeamPingAt = 0;
+    player.poseHistory = [];
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
+    recordPlayerPose(player);
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
     index += 1;
   }
@@ -3422,7 +3535,7 @@ function updateDonPunchProjectiles(room, now) {
   for (const punch of room.donPunches.values()) {
     const shooter = room.players.get(punch.shooterId);
     const target = room.players.get(punch.targetId);
-    if (!shooter || !target || target.health <= 0 || now >= punch.expiresAt) {
+    if (!shooter || !target || target.disconnectedAt || target.health <= 0 || now >= punch.expiresAt) {
       room.donPunches.delete(punch.id);
       continue;
     }
@@ -3498,7 +3611,7 @@ function updateCpuPlayers(room, now) {
     keepCpuOutOfWalls(bot, room.arena);
     bot.y = 1.6;
     bot.lastSeen = now;
-    const targets = [...room.players.values()].filter((player) => player.id !== bot.id && !player.creative && !player.eliminated && player.health > 0 && player.color !== bot.color);
+    const targets = [...room.players.values()].filter((player) => player.id !== bot.id && !player.disconnectedAt && !player.creative && !player.eliminated && player.health > 0 && player.color !== bot.color);
     if ((targets.length > 0 || attackCore?.health > 0) && now >= bot.nextShotAt) {
       if (attackCore?.health > 0) {
         const distance = Math.hypot(attackCore.x - bot.x, attackCore.y - bot.y, attackCore.z - bot.z);

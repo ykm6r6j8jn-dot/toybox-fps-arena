@@ -25,6 +25,8 @@ import Users from "lucide/dist/esm/icons/users.js";
 import Volume2 from "lucide/dist/esm/icons/volume-2.js";
 import X from "lucide/dist/esm/icons/x.js";
 import Zap from "lucide/dist/esm/icons/zap.js";
+import { appendMotionSample, sampleMotion } from "../network-systems.mjs";
+import type { MotionSample, SampledMotion } from "../network-systems.mjs";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -78,6 +80,7 @@ type PlayerState = {
   level?: number;
   spawnProtectedUntil?: number;
   vehicleId?: string;
+  connected?: boolean;
 };
 
 type FocusTask = {
@@ -440,6 +443,8 @@ const ammoEl = $("#ammo");
 const weaponRangeEl = $("#weaponRange");
 const movementStatusEl = $("#movementStatus");
 const latencyEl = $("#latency");
+const connectionRecovery = $("#connectionRecovery");
+const connectionRecoveryText = $("#connectionRecoveryText");
 const blueScoreEl = $("#blueScore");
 const redScoreEl = $("#redScore");
 const playerCountEl = $("#playerCount");
@@ -470,6 +475,7 @@ const roundClock = $("#roundClock");
 const modeLabel = $("#modeLabel");
 const targetScoreText = document.querySelector<HTMLElement>(".score-orb strong");
 const launchParams = new URLSearchParams(location.search);
+const qaReconnectShortcutEnabled = launchParams.get("qa") === "1";
 const progressStorageKey = "donpachi-progress-v1";
 const inventoryStorageKey = "donpachi-inventory-v1";
 const loginStorageKey = "donpachi-login-id";
@@ -661,6 +667,13 @@ const lastSafePosition = self.position.clone();
 let creativeMode = false;
 
 let socket: WebSocket | null = null;
+const fpsResumeStorageKey = "donpachi-fps-resume-token";
+let fpsResumeToken = sessionStorage.getItem(fpsResumeStorageKey) || "";
+let fpsReconnectWanted = false;
+let fpsConnectionRecovering = false;
+let fpsReconnectAttempt = 0;
+let fpsReconnectTimer = 0;
+let pingTimer = 0;
 let lastStateSent = 0;
 let reloadTimer = 0;
 let roundSeconds = 525;
@@ -752,11 +765,18 @@ let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
 const vehicleSnapshots = new Map<string, VehicleSnapshot>();
+const playerMotionTracks = new Map<string, MotionSample[]>();
+const vehicleMotionTracks = new Map<string, MotionSample[]>();
+const renderedPlayerMotion = new Map<string, SampledMotion>();
 const vehicleMeshes = new Map<string, { group: THREE.Group; wheels: THREE.Mesh[]; wheelSpin: number; statusBeacon: THREE.Mesh }>();
 const teamPingMeshes = new Map<string, { group: THREE.Group; expiresAt: number; snapshot: TeamPingSnapshot }>();
 let safeZoneSnapshot: SafeZoneSnapshot = { enabled: false, phase: -1, stage: "inactive", x: 0, z: 0, radius: 92, nextRadius: 92, damage: 0, endsAt: 0 };
 let safeZoneVisual: { group: THREE.Group; ring: THREE.Mesh; wall: THREE.Mesh } | null = null;
 let serverClockOffsetMs = 0;
+let serverClockReady = false;
+let lastSnapshotArrivalAt = 0;
+let snapshotJitterMs = 0;
+let networkInterpolationDelayMs = 132;
 let lastSafeZonePhase = -1;
 let wasOutsideSafeZone = false;
 let wasVehicleRepairing = false;
@@ -795,7 +815,6 @@ let spectatorTargetId = "";
 let resultWinnerSeen = "";
 let lobbyReturnTimer = 0;
 let inviteAutoJoinStarted = false;
-const remotePositionScratch = new THREE.Vector3();
 const donPunchPositionScratch = new THREE.Vector3();
 let lastStableViewportHeight = window.innerHeight;
 let viewportRecoveryTimers: number[] = [];
@@ -3069,6 +3088,11 @@ addSky();
 addWeapon();
 
 document.addEventListener("keydown", (event) => {
+  if (qaReconnectShortcutEnabled && event.code === "F10" && !event.repeat) {
+    event.preventDefault();
+    socket?.close(4000, "qa-reconnect-check");
+    return;
+  }
   const target = event.target as HTMLElement | null;
   if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return;
   if (event.code === "KeyW" && !event.repeat) {
@@ -3856,11 +3880,147 @@ function joinTypedPokerRoom() {
   joinPoker(code);
 }
 
+function setConnectionRecovery(active: boolean, detail = "試合状態を保持しています") {
+  fpsConnectionRecovering = active;
+  connectionRecovery.classList.toggle("show", active);
+  connectionRecoveryText.textContent = detail;
+  document.body.classList.toggle("connection-recovering", active);
+  if (active) {
+    desktopFiring = false;
+    mobileFiring = false;
+    jumpQueued = false;
+  }
+}
+
+function stopFpsReconnect(clearResumeToken = false) {
+  fpsReconnectWanted = false;
+  fpsReconnectAttempt = 0;
+  if (fpsReconnectTimer) window.clearTimeout(fpsReconnectTimer);
+  fpsReconnectTimer = 0;
+  if (pingTimer) window.clearTimeout(pingTimer);
+  pingTimer = 0;
+  setConnectionRecovery(false);
+  if (clearResumeToken) {
+    fpsResumeToken = "";
+    sessionStorage.removeItem(fpsResumeStorageKey);
+  }
+}
+
+function closeCurrentSocket(reason = "leave") {
+  const activeSocket = socket;
+  socket = null;
+  if (!activeSocket || activeSocket.readyState === WebSocket.CLOSED) return;
+  if (activeSocket.readyState === WebSocket.CONNECTING) {
+    activeSocket.addEventListener("open", () => activeSocket.close(1000, reason), { once: true });
+    return;
+  }
+  try {
+    activeSocket.close(1000, reason);
+  } catch {
+    // A connecting socket can disappear before close completes.
+  }
+}
+
+function fpsJoinPayload() {
+  return {
+    type: "join",
+    name: sanitizePlayerNameInput(),
+    room: globalFpsRoomCode,
+    gameMode,
+    arena: arenaChoice,
+    team: teamChoice,
+    partySize,
+    cpuFill: cpuFillEnabled,
+    relationMode,
+    cosmeticColor: customColor,
+    skin: currentSkin,
+    loginId: loggedInLoginId,
+    progress: progressState,
+    inventory: profileInventory,
+    resumeToken: fpsResumeToken
+  };
+}
+
+function scheduleFpsReconnect() {
+  if (!fpsReconnectWanted || pokerJoined || fpsReconnectTimer) return;
+  fpsReconnectAttempt += 1;
+  const baseDelay = Math.min(5000, 350 * 2 ** Math.min(4, fpsReconnectAttempt - 1));
+  const delay = Math.round(baseDelay + Math.random() * 180);
+  setConnectionRecovery(true, `再接続 ${fpsReconnectAttempt}回目 / ${Math.max(1, Math.ceil(delay / 1000))}秒`);
+  fpsReconnectTimer = window.setTimeout(() => {
+    fpsReconnectTimer = 0;
+    openFpsSocket(true);
+  }, delay);
+}
+
+function openFpsSocket(reconnecting = false) {
+  if (!fpsReconnectWanted) return;
+  if (fpsReconnectTimer) window.clearTimeout(fpsReconnectTimer);
+  fpsReconnectTimer = 0;
+  const nextSocket = new WebSocket(appWebSocketUrl());
+  socket = nextSocket;
+  let welcomed = false;
+  const welcomeTimeout = window.setTimeout(() => {
+    if (!welcomed && socket === nextSocket) nextSocket.close(4001, "welcome-timeout");
+  }, 8000);
+  nextSocket.addEventListener("open", () => {
+    if (socket !== nextSocket) return;
+    if (reconnecting) setConnectionRecovery(true, "サーバーと試合状態を同期中");
+    nextSocket.send(JSON.stringify(fpsJoinPayload()));
+  });
+  nextSocket.addEventListener("message", (event) => {
+    try {
+      const message = JSON.parse(String(event.data));
+      if (message?.type === "welcome") {
+        welcomed = true;
+        window.clearTimeout(welcomeTimeout);
+      }
+    } catch {
+      // handleMessage reports malformed payloads consistently.
+    }
+    handleMessage(event as MessageEvent<string>);
+  });
+  nextSocket.addEventListener("error", () => {
+    if (!self.joined && !reconnecting) showToast("オンライン接続に失敗しました。通信を確認してください。");
+  });
+  nextSocket.addEventListener("close", () => {
+    window.clearTimeout(welcomeTimeout);
+    if (socket !== nextSocket) return;
+    socket = null;
+    if (!fpsReconnectWanted) return;
+    scheduleFpsReconnect();
+  });
+}
+
+window.addEventListener("offline", () => {
+  if (!fpsReconnectWanted || !self.joined) return;
+  setConnectionRecovery(true, "ネットワークの復帰を待っています");
+  const activeSocket = socket;
+  if (!activeSocket) return;
+  if (activeSocket.readyState === WebSocket.CONNECTING) {
+    activeSocket.addEventListener("open", () => activeSocket.close(4002, "offline"), { once: true });
+    return;
+  }
+  try {
+    activeSocket.close(4002, "offline");
+  } catch {
+    // The close handler will retry when the browser reports the disconnect.
+  }
+});
+
+window.addEventListener("online", () => {
+  if (!fpsReconnectWanted || socket) return;
+  if (fpsReconnectTimer) window.clearTimeout(fpsReconnectTimer);
+  fpsReconnectTimer = 0;
+  openFpsSocket(true);
+});
+
 function joinPoker(room: string) {
   const name = sanitizePlayerNameInput();
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
-  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+  stopFpsReconnect(true);
+  closeCurrentSocket("leave");
   self.joined = false;
   pokerJoined = false;
   pokerSelfId = "";
@@ -3890,8 +4050,7 @@ function leavePokerRoom() {
   document.body.classList.remove("poker-open");
   joinPanel.classList.remove("hidden");
   history.replaceState(null, "", location.pathname);
-  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
-  socket = null;
+  closeCurrentSocket("leave");
   updateLobbyBgm();
 }
 
@@ -3917,22 +4076,14 @@ function join(room: string) {
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
   localStorage.setItem("toybox-skin", currentSkin);
-  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
-
   const fpsRoom = globalFpsRoomCode;
   roomInput.value = fpsRoom;
   localStorage.setItem(inviteRoomStorageKey, fpsRoom);
-  socket = new WebSocket(appWebSocketUrl());
-  socket.addEventListener("open", () => {
-    send({ type: "join", name, room: fpsRoom, gameMode, arena: arenaChoice, team: teamChoice, partySize, cpuFill: cpuFillEnabled, relationMode, cosmeticColor: customColor, skin: currentSkin, loginId: loggedInLoginId, progress: progressState, inventory: profileInventory });
-  });
-  socket.addEventListener("message", handleMessage);
-  socket.addEventListener("error", () => {
-    if (!self.joined) showToast("オンライン接続に失敗しました。通信を確認してください。");
-  });
-  socket.addEventListener("close", () => {
-    if (self.joined) showToast("接続が切れました。再参加してください。");
-  });
+  stopFpsReconnect(false);
+  closeCurrentSocket("leave");
+  fpsReconnectWanted = true;
+  fpsReconnectAttempt = 0;
+  openFpsSocket(false);
 }
 
 function maybeStartInviteAutoJoin() {
@@ -3998,6 +4149,19 @@ function handleMessage(event: MessageEvent<string>) {
     return;
   }
   if (message.type === "welcome") {
+    const resumed = Boolean(message.resumed);
+    if (typeof message.resumeToken === "string" && message.resumeToken) {
+      fpsResumeToken = message.resumeToken;
+      sessionStorage.setItem(fpsResumeStorageKey, fpsResumeToken);
+    }
+    fpsReconnectAttempt = 0;
+    setConnectionRecovery(false);
+    if (!resumed) {
+      serverClockReady = false;
+      lastSnapshotArrivalAt = 0;
+      snapshotJitterMs = 0;
+      networkInterpolationDelayMs = 132;
+    }
     self.id = message.id;
     self.room = message.room;
     self.joined = true;
@@ -4008,16 +4172,19 @@ function handleMessage(event: MessageEvent<string>) {
     resultWinnerSeen = "";
     resultPanel.classList.remove("open");
     self.position.set(message.spawn.x, message.spawn.y, message.spawn.z);
+    lastSafePosition.copy(self.position);
     self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z);
     self.pitch = 0;
-    flowScore = 0;
-    flowCombo = 0;
-    flowUntil = 0;
-    lastFlowAt = 0;
-    lastSelfKills = 0;
-    lastSelfScore = 0;
-    lastSelfHealth = maxHealth;
-    updateFlowHud(performance.now());
+    if (!resumed) {
+      flowScore = 0;
+      flowCombo = 0;
+      flowUntil = 0;
+      lastFlowAt = 0;
+      lastSelfKills = 0;
+      lastSelfScore = 0;
+      lastSelfHealth = maxHealth;
+      updateFlowHud(performance.now());
+    }
     gameMode = (message.gameMode as GameMode) || "oneLife";
     arenaChoice = "toybox";
     if (message.partySize) setPartySize(Number(message.partySize));
@@ -4027,7 +4194,7 @@ function handleMessage(event: MessageEvent<string>) {
     targetScore = Number(message.targetScore) || 0;
     setGameMode(gameMode);
     setArenaChoice(arenaChoice);
-    switchArena(arenaChoice);
+    if (!resumed || currentArena !== arenaChoice) switchArena(arenaChoice);
     setTeamChoice((message.team as TeamChoice) || teamChoice);
     if (message.profile) applyLoginProfile(message.profile as LoginProfile);
     roomCodeEl.textContent = self.room;
@@ -4036,13 +4203,36 @@ function handleMessage(event: MessageEvent<string>) {
     setFpsActive(true);
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${self.room}`);
-    touchProgressSession("fps");
-    showToast("ルームに参加しました。画面をクリックして開始。");
+    playerMotionTracks.clear();
+    vehicleMotionTracks.clear();
+    renderedPlayerMotion.clear();
+    if (!resumed) touchProgressSession("fps");
+    showToast(resumed ? "接続を復旧しました" : "ルームに参加しました。画面をクリックして開始。");
     ping();
     return;
   }
   if (message.type === "snapshot") {
-    if (typeof message.now === "number") serverClockOffsetMs = Number(message.now) - Date.now();
+    const arrivalAt = performance.now();
+    if (lastSnapshotArrivalAt > 0) {
+      const interval = arrivalAt - lastSnapshotArrivalAt;
+      if (interval >= 20 && interval <= 1000) {
+        const jitterSample = Math.abs(interval - 110);
+        snapshotJitterMs += (jitterSample - snapshotJitterMs) * 0.14;
+      }
+    }
+    lastSnapshotArrivalAt = arrivalAt;
+    const snapshotAt = typeof message.now === "number" ? Number(message.now) : Date.now() + serverClockOffsetMs;
+    if (typeof message.now === "number") {
+      const oneWayEstimate = Math.min(220, Math.max(0, self.latency * 0.5));
+      const offsetSample = snapshotAt + oneWayEstimate - Date.now();
+      if (!serverClockReady) {
+        serverClockOffsetMs = offsetSample;
+        serverClockReady = true;
+      } else {
+        serverClockOffsetMs += THREE.MathUtils.clamp(offsetSample - serverClockOffsetMs, -30, 30) * 0.08;
+      }
+    }
+    networkInterpolationDelayMs = THREE.MathUtils.clamp(122 + snapshotJitterMs * 1.8 + self.latency * 0.18, 122, 220);
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.partySize) setPartySize(Number(message.partySize));
     if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
@@ -4062,11 +4252,13 @@ function handleMessage(event: MessageEvent<string>) {
     if (gameMode === "castle" && castleEndsAt && typeof message.now === "number") {
       roundSeconds = Math.max(0, (castleEndsAt - Number(message.now)) / 1000);
     }
-    syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[]);
+    const incomingPlayers = (message.players || []) as PlayerState[];
+    syncPlayerMotionSnapshots(incomingPlayers, snapshotAt);
+    syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[], snapshotAt);
     syncSafeZone(message.safeZone as SafeZoneSnapshot | undefined);
     const previousVehicleId = activeVehicleId;
     players.clear();
-    for (const player of message.players as PlayerState[]) players.set(player.id, player);
+    for (const player of incomingPlayers) players.set(player.id, player);
     const me = players.get(self.id);
     if (me) {
       self.health = me.health;
@@ -4186,7 +4378,18 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "pong") {
     const sentAt = Number(message.at);
     if (Number.isFinite(sentAt) && sentAt > 0) {
-      self.latency = Math.max(0, performance.now() - sentAt);
+      const roundTrip = Math.max(0, performance.now() - sentAt);
+      self.latency = roundTrip;
+      const serverAt = Number(message.serverAt);
+      if (Number.isFinite(serverAt) && serverAt > 0) {
+        const offsetSample = serverAt + roundTrip * 0.5 - Date.now();
+        if (!serverClockReady) {
+          serverClockOffsetMs = offsetSample;
+          serverClockReady = true;
+        } else {
+          serverClockOffsetMs += THREE.MathUtils.clamp(offsetSample - serverClockOffsetMs, -80, 80) * 0.18;
+        }
+      }
     }
   }
   if (message.type === "error") showToast(message.message);
@@ -4498,13 +4701,20 @@ function playGunSound(gun: Gun) {
 }
 
 function ping() {
-  if (!self.joined) return;
+  if (pingTimer) window.clearTimeout(pingTimer);
+  pingTimer = 0;
+  if (!self.joined || !socket || socket.readyState !== WebSocket.OPEN) return;
   self.pingStarted = performance.now();
   send({ type: "ping", at: self.pingStarted });
-  setTimeout(ping, 2500);
+  pingTimer = window.setTimeout(ping, 2500);
 }
 
 function move(delta: number) {
+  if (fpsConnectionRecovering) {
+    self.velocity.set(0, 0, 0);
+    jumpQueued = false;
+    return;
+  }
   const me = players.get(self.id);
   if (me?.creative && !creativeMode) creativeMode = true;
   if (me?.eliminated || (me && me.health <= 0)) return;
@@ -4753,6 +4963,7 @@ function collides(position: THREE.Vector3) {
 }
 
 function shoot() {
+  if (fpsConnectionRecovering) return;
   const me = players.get(self.id);
   if (activeVehicleId || me?.eliminated || (me && me.health <= 0)) return;
   const now = performance.now();
@@ -4776,6 +4987,7 @@ function shoot() {
       type: "shoot",
       weapon: gun.kind,
       range: gun.range,
+      viewedAt: Date.now() + serverClockOffsetMs - networkInterpolationDelayMs,
       origin: { x: self.position.x, y: self.position.y, z: self.position.z },
       direction: { x: direction.x, y: direction.y, z: direction.z }
     });
@@ -4855,7 +5067,7 @@ function getLookDirection() {
 
 function spectatorTargets() {
   const me = players.get(self.id);
-  const alive = [...players.values()].filter((player) => player.id !== self.id && !player.eliminated && player.health > 0);
+  const alive = [...players.values()].filter((player) => player.id !== self.id && player.connected !== false && !player.eliminated && player.health > 0);
   const teammates = me ? alive.filter((player) => player.color === me.color) : [];
   return teammates.length ? teammates : alive;
 }
@@ -4968,8 +5180,8 @@ function returnToLobbyAfterRound() {
   clearBulletDecals();
   endCelebration();
   if (document.pointerLockElement) void document.exitPointerLock?.();
-  if (socket && socket.readyState === WebSocket.OPEN) socket.close();
-  socket = null;
+  stopFpsReconnect(true);
+  closeCurrentSocket("leave");
   history.replaceState(null, "", location.pathname);
   updateLobbyBgm();
   void refreshOnlinePlayers();
@@ -4978,13 +5190,17 @@ function returnToLobbyAfterRound() {
 function updateCamera() {
   const spectated = updateSpectatorState();
   if (spectated) {
-    const yaw = spectated.yaw || 0;
+    const rendered = renderedPlayerMotion.get(spectated.id);
+    const targetX = rendered?.x ?? spectated.x;
+    const targetY = rendered?.y ?? spectated.y;
+    const targetZ = rendered?.z ?? spectated.z;
+    const yaw = rendered?.yaw ?? spectated.yaw ?? 0;
     camera.position.set(
-      spectated.x + Math.sin(yaw) * 4.2,
-      spectated.y + 2.25,
-      spectated.z + Math.cos(yaw) * 4.2
+      targetX + Math.sin(yaw) * 4.2,
+      targetY + 2.25,
+      targetZ + Math.cos(yaw) * 4.2
     );
-    camera.lookAt(spectated.x, spectated.y + 0.85, spectated.z);
+    camera.lookAt(targetX, targetY + 0.85, targetZ);
   } else {
     camera.position.copy(self.position);
     camera.rotation.order = "YXZ";
@@ -5032,6 +5248,20 @@ Object.assign(window, {
     serverPose() {
       const me = players.get(self.id);
       return me ? { x: me.x, y: me.y, z: me.z, vehicleId: me.vehicleId || "" } : null;
+    },
+    connection() {
+      return {
+        id: self.id,
+        joined: self.joined,
+        recovering: fpsConnectionRecovering,
+        reconnectAttempt: fpsReconnectAttempt,
+        interpolationMs: Math.round(networkInterpolationDelayMs),
+        jitterMs: Math.round(snapshotJitterMs),
+        socketState: socket?.readyState ?? WebSocket.CLOSED
+      };
+    },
+    dropConnection() {
+      socket?.close(4000, "debug-drop");
     }
   }
 });
@@ -5064,24 +5294,54 @@ function syncState(now: number) {
   });
 }
 
+function syncPlayerMotionSnapshots(snapshots: PlayerState[], snapshotAt: number) {
+  const seen = new Set<string>();
+  for (const player of snapshots) {
+    if (!player?.id || player.id === self.id) continue;
+    seen.add(player.id);
+    const track = playerMotionTracks.get(player.id) || [];
+    appendMotionSample(track, {
+      at: snapshotAt,
+      x: player.x,
+      y: player.y,
+      z: player.z,
+      yaw: player.yaw
+    }, { maxSamples: 12, maxAgeMs: 1600, teleportDistance: 24 });
+    playerMotionTracks.set(player.id, track);
+  }
+  for (const id of playerMotionTracks.keys()) {
+    if (!seen.has(id)) playerMotionTracks.delete(id);
+  }
+}
+
 function updateRemotePlayers() {
+  const renderAt = Date.now() + serverClockOffsetMs - networkInterpolationDelayMs;
+  renderedPlayerMotion.clear();
   for (const [id, mesh] of playerMeshes) {
-    if (!players.has(id) || id === self.id) {
+    const player = players.get(id);
+    if (!player || id === self.id || player.connected === false) {
       scene.remove(mesh);
       playerMeshes.delete(id);
     }
   }
 
   for (const player of players.values()) {
-    if (player.id === self.id) continue;
+    if (player.id === self.id || player.connected === false) continue;
+    const sampled = sampleMotion(playerMotionTracks.get(player.id) || [], renderAt, {
+      maxExtrapolationMs: 105,
+      maxSpeed: 19,
+      maxVerticalSpeed: 170,
+      maxAngularSpeed: 11
+    }) || ({ at: renderAt, x: player.x, y: player.y, z: player.z, yaw: player.yaw, mode: "hold" } as SampledMotion);
+    renderedPlayerMotion.set(player.id, sampled);
     let mesh = playerMeshes.get(player.id);
     if (!mesh) {
       mesh = createPlayerMesh(player);
       playerMeshes.set(player.id, mesh);
     }
     applyPlayerMeshColor(mesh, player);
-    mesh.position.lerp(remotePositionScratch.set(player.x, Math.max(0, player.y - 1.6), player.z), 0.38);
-    mesh.rotation.y = player.yaw;
+    mesh.position.set(sampled.x, Math.max(0, sampled.y - 1.6), sampled.z);
+    mesh.rotation.y = sampled.yaw;
     mesh.children[4].visible = Math.max(player.shieldUntil || 0, player.spawnProtectedUntil || 0) > Date.now();
     mesh.visible = player.health > 0;
   }
@@ -5157,29 +5417,50 @@ function createVehicleMesh(snapshot: VehicleSnapshot) {
   return { group, wheels, wheelSpin: 0, statusBeacon };
 }
 
-function syncVehicleSnapshots(snapshots: VehicleSnapshot[]) {
+function syncVehicleSnapshots(snapshots: VehicleSnapshot[], snapshotAt: number) {
   const seen = new Set<string>();
   vehicleSnapshots.clear();
   for (const snapshot of snapshots) {
     if (!snapshot?.id || !Number.isFinite(snapshot.x) || !Number.isFinite(snapshot.z)) continue;
     seen.add(snapshot.id);
     vehicleSnapshots.set(snapshot.id, snapshot);
+    const track = vehicleMotionTracks.get(snapshot.id) || [];
+    appendMotionSample(track, {
+      at: snapshotAt,
+      x: snapshot.x,
+      y: 0,
+      z: snapshot.z,
+      yaw: snapshot.yaw,
+      speed: snapshot.speed
+    }, { maxSamples: 12, maxAgeMs: 1600, teleportDistance: 28 });
+    vehicleMotionTracks.set(snapshot.id, track);
     if (!vehicleMeshes.has(snapshot.id)) vehicleMeshes.set(snapshot.id, createVehicleMesh(snapshot));
   }
   for (const [id, visual] of vehicleMeshes) {
     if (seen.has(id)) continue;
     scene.remove(visual.group);
     vehicleMeshes.delete(id);
+    vehicleMotionTracks.delete(id);
   }
 }
 
 function updateVehicleVisuals(delta: number) {
-  const blend = 1 - Math.pow(0.002, Math.min(0.05, delta));
+  const serverNow = Date.now() + serverClockOffsetMs;
   for (const [id, snapshot] of vehicleSnapshots) {
     const visual = vehicleMeshes.get(id);
     if (!visual) continue;
-    visual.group.position.lerp(remotePositionScratch.set(snapshot.x, 0, snapshot.z), blend);
-    visual.group.rotation.y += shortestAngleDelta(visual.group.rotation.y, snapshot.yaw) * blend;
+    const active = id === activeVehicleId;
+    const renderAt = serverNow - (active ? Math.min(58, networkInterpolationDelayMs * 0.42) : networkInterpolationDelayMs);
+    const sampled = sampleMotion(vehicleMotionTracks.get(id) || [], renderAt, {
+      maxExtrapolationMs: active ? 125 : 105,
+      maxSpeed: 10,
+      maxVerticalSpeed: 0,
+      maxAngularSpeed: 3.2
+    });
+    if (sampled) {
+      visual.group.position.set(sampled.x, 0, sampled.z);
+      visual.group.rotation.y = sampled.yaw;
+    }
     visual.wheelSpin += snapshot.speed * delta / 0.38;
     for (const wheel of visual.wheels) wheel.rotation.x = visual.wheelSpin;
     const healthRatio = THREE.MathUtils.clamp((snapshot.health ?? 600) / Math.max(1, snapshot.maxHealth ?? 600), 0, 1);
@@ -5970,10 +6251,11 @@ function updateHud(feed: FeedItem[]) {
   const latency = self.latency > 0 ? Math.round(self.latency) : null;
   const fps = measuredFps;
   latencyEl.textContent = `${latency === null ? "--" : latency}ms ${fps === null ? "--" : fps}fps`;
+  latencyEl.title = `受信ゆらぎ ${Math.round(snapshotJitterMs)}ms / 補間 ${Math.round(networkInterpolationDelayMs)}ms`;
   const latencyBox = latencyEl.parentElement;
-  const badConnection = (latency !== null && latency > 140) || (fps !== null && fps < 35);
-  const okConnection = !badConnection && ((latency !== null && latency > 80) || (fps !== null && fps < 50));
-  const goodConnection = latency !== null && fps !== null && latency <= 80 && fps >= 50;
+  const badConnection = (latency !== null && latency > 180) || snapshotJitterMs > 55 || (fps !== null && fps < 35);
+  const okConnection = !badConnection && ((latency !== null && latency > 90) || snapshotJitterMs > 25 || (fps !== null && fps < 50));
+  const goodConnection = latency !== null && fps !== null && latency <= 90 && snapshotJitterMs <= 25 && fps >= 50;
   latencyBox?.classList.toggle("bad", badConnection);
   latencyBox?.classList.toggle("ok", okConnection);
   latencyBox?.classList.toggle("good", goodConnection);
@@ -6077,17 +6359,17 @@ function updateFocusTaskHud(task?: FocusTask | null) {
 
 function updateSlots() {
   const list = [...players.values()].sort((a, b) => b.score - a.score);
-  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.cosmeticColor}:${player.skin}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.healPacks}:${player.equipmentTier}`).join("|")}`;
+  const signature = `${gameMode}|${matchMaxPlayers}|${list.map((player) => `${player.id}:${player.color}:${player.cosmeticColor}:${player.skin}:${player.score}:${player.ready}:${player.health}:${player.lives}:${player.eliminated}:${player.connected}:${player.healPacks}:${player.equipmentTier}`).join("|")}`;
   if (signature === slotsSignature) return;
   slotsSignature = signature;
   playerSlots.innerHTML = "";
   for (let i = 0; i < matchMaxPlayers; i += 1) {
     const player = list[i];
     const slot = document.createElement("div");
-    const canChangeTeam = Boolean(player) && (gameMode === "oneLife" || gameMode === "practice" || gameMode === "life3");
+    const canChangeTeam = Boolean(player) && player.connected !== false && (gameMode === "oneLife" || gameMode === "practice" || gameMode === "life3");
     const shape = player?.skin || ["circle", "triangle", "hex", "dot", "square"][i % 5];
-    slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${canChangeTeam ? "team-editable" : ""} shape-${shape}`;
-    const status = player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : gameMode === "oneLife" ? "IN" : gameMode === "practice" ? `${player?.kills ?? 0}K` : player?.score;
+    slot.className = `player-slot ${player?.color || "empty"} ${player?.ready ? "ready" : ""} ${player?.connected === false ? "disconnected" : ""} ${canChangeTeam ? "team-editable" : ""} shape-${shape}`;
+    const status = player?.connected === false ? "LINK" : player?.eliminated ? "OUT" : gameMode === "life3" ? `L${player.lives ?? 3}` : gameMode === "oneLife" ? "IN" : gameMode === "practice" ? `${player?.kills ?? 0}K` : player?.score;
     slot.innerHTML = player
       ? `<span class="slot-key">${i + 1}</span><b class="slot-avatar" style="--slot-color:${escapeHtml(player.cosmeticColor || "")}"></b><strong>${escapeHtml(player.name)}</strong><small>${status}</small>${
           canChangeTeam
@@ -6101,7 +6383,7 @@ function updateSlots() {
 
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.score - a.score);
-  const signature = rows.map((player) => `${player.id}:${player.score}:${player.kills}:${player.deaths}:${player.damageDealt}:${player.hits}:${player.ready}:${player.lives}:${player.eliminated}`).join("|");
+  const signature = rows.map((player) => `${player.id}:${player.score}:${player.kills}:${player.deaths}:${player.damageDealt}:${player.hits}:${player.ready}:${player.lives}:${player.eliminated}:${player.connected}`).join("|");
   if (signature === scoreboardSignature) return;
   scoreboardSignature = signature;
   scoreRows.innerHTML = rows.map((player, index) => `
@@ -6109,7 +6391,7 @@ function updateScoreboard() {
       <span>#${index + 1} ${escapeHtml(player.name)}</span>
       <strong>${player.score}</strong>
       <small>${player.kills}K/${player.deaths}D  与${Math.round(player.damageDealt || 0)}  命中${player.hits || 0}</small>
-      <em>${player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : gameMode === "oneLife" ? "alive" : gameMode === "practice" ? "practice" : player.ready ? "ready" : "wait"}</em>
+      <em>${player.connected === false ? "reconnecting" : player.eliminated ? "out" : gameMode === "life3" ? `life ${player.lives ?? 3}` : gameMode === "oneLife" ? "alive" : gameMode === "practice" ? "practice" : player.ready ? "ready" : "wait"}</em>
     </div>
   `).join("");
 }
@@ -6465,10 +6747,14 @@ function findMobileAimTarget() {
   const pitchLimit = scoped ? 0.15 : 0.13;
   let best: { target: PlayerState; yawDelta: number; pitchDelta: number; distance: number; score: number } | null = null;
   for (const target of players.values()) {
-    if (target.id === self.id || target.color === me.color || target.eliminated || target.health <= 0 || target.creative) continue;
-    const dx = target.x - self.position.x;
-    const dy = target.y + 0.65 - self.position.y;
-    const dz = target.z - self.position.z;
+    if (target.id === self.id || target.connected === false || target.color === me.color || target.eliminated || target.health <= 0 || target.creative) continue;
+    const rendered = renderedPlayerMotion.get(target.id);
+    const targetX = rendered?.x ?? target.x;
+    const targetY = rendered?.y ?? target.y;
+    const targetZ = rendered?.z ?? target.z;
+    const dx = targetX - self.position.x;
+    const dy = targetY + 0.65 - self.position.y;
+    const dz = targetZ - self.position.z;
     const distance = Math.hypot(dx, dy, dz);
     if (distance <= 0.1 || distance > maxDistance) continue;
     const targetYaw = Math.atan2(-dx, -dz);
@@ -6522,6 +6808,7 @@ function animate() {
   updateSafeZoneVisual(delta);
   updateTeamPings(delta);
   updateAutomaticDoors(delta);
+  updateRemotePlayers();
   if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);
   if (self.joined) applyMobileAimAssist(delta);
@@ -6530,7 +6817,6 @@ function animate() {
   updateKillcam();
   updateCamera();
   updateWeaponMotion(delta);
-  updateRemotePlayers();
   updateTracers(delta);
   updateDonPunches(delta);
   updateBarrierAnimation(delta);
