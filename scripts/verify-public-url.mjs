@@ -24,10 +24,17 @@ if (!healthResponse.ok) {
 const health = await healthResponse.json();
 if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.stringify(health)}`);
 
+const pageResponse = await fetch(baseUrl, { cache: "no-store" });
+if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
+const pageHtml = await pageResponse.text();
+if (!pageHtml.includes("SAFE DISTRICT大型戦術更新")) throw new Error("public page is missing the SAFE DISTRICT update marker");
+const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
+if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
+
 function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
-    const state = { name, id: "", room: "", snapshots: [], respawns: [], hits: [] };
+    const state = { name, id: "", room: "", snapshots: [], teamPings: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 8000);
 
     ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
@@ -40,8 +47,11 @@ function openClient(name, room = "", options = {}) {
         resolve({ ws, state });
       }
       if (message.type === "snapshot") state.snapshots.push(message);
-      if (message.type === "respawn") state.respawns.push(message);
-      if (message.type === "hit") state.hits.push(message);
+      if (message.type === "team_ping") state.teamPings.push(message.ping);
+      if (message.type === "error") {
+        clearTimeout(timeout);
+        reject(new Error(String(message.message || "public server rejected probe")));
+      }
     });
     ws.on("error", reject);
   });
@@ -66,64 +76,29 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
-function testRoomCode() {
-  return `P${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
-}
-
-async function shootUntilHit(shooter, targetId, label) {
-  const started = Date.now();
-  while (Date.now() - started < 9000) {
-    send(shooter.ws, {
-      type: "shoot",
-      origin: { x: 24, y: 1.6, z: 24 },
-      direction: { x: 0, y: 0, z: -1 },
-      weapon: "rifle"
-    });
-    try {
-      await waitFor(
-        () => shooter.state.hits?.some((hit) => hit.target === targetId && hit.damage === 25),
-        label,
-        650
-      );
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 260));
-    }
-  }
-  throw new Error(`timeout: ${label}`);
-}
-
-const roomCode = testRoomCode();
-const alpha = await openClient("PublicAlpha", roomCode, { cpuFill: false });
-const beta = await openClient("PublicBeta", alpha.state.room, { cpuFill: false });
-
-send(alpha.ws, { type: "state", x: 24, y: 1.6, z: 24, yaw: 0, pitch: 0 });
-send(beta.ws, { type: "state", x: 24, y: 1.6, z: 18, yaw: Math.PI, pitch: 0 });
+const probeName = `Probe${Math.random().toString(36).slice(2, 7)}`;
+const probe = await openClient(probeName, "DONPCH", {
+  cpuFill: false,
+  gameMode: "oneLife",
+  partySize: 1,
+  relationMode: "versus"
+});
 
 await waitFor(
-  () => alpha.state.snapshots.some((snapshot) =>
-    snapshot.players?.some((player) => player.name === "PublicAlpha") &&
-    snapshot.players?.some((player) => player.name === "PublicBeta") &&
-    !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
-  ) &&
-    beta.state.snapshots.some((snapshot) =>
-      snapshot.players?.some((player) => player.name === "PublicAlpha") &&
-      snapshot.players?.some((player) => player.name === "PublicBeta") &&
-      !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
-    ),
-  "both public clients see each other without CP fill"
+  () => probe.state.snapshots.some((snapshot) =>
+    snapshot.players?.some((player) => player.id === probe.state.id) &&
+    snapshot.vehicles?.length === 4 &&
+    snapshot.vehicles.every((vehicle) => typeof vehicle.health === "number" && typeof vehicle.maxHealth === "number") &&
+    typeof snapshot.safeZone?.enabled === "boolean"
+  ),
+  "public snapshot includes player, vehicle durability, and safe-zone state"
 );
 
-await new Promise((resolve) => setTimeout(resolve, 2500));
+const snapshot = probe.state.snapshots.at(-1);
+const self = snapshot.players.find((player) => player.id === probe.state.id);
+send(probe.ws, { type: "team_ping", point: { x: self.x, y: 0.1, z: self.z } });
+await waitFor(() => probe.state.teamPings.length > 0, "public server echoes a team-filtered ping");
 
-await waitFor(
-  () => alpha.state.snapshots.some((snapshot) => snapshot.players?.some((player) => player.name === "PublicBeta" && player.x === 24 && player.z === 18)),
-  "public server receives target position"
-);
+probe.ws.close();
 
-await shootUntilHit(alpha, beta.state.id, "public server resolves hit");
-
-alpha.ws.close();
-beta.ws.close();
-
-console.log(`public verify passed: ${baseUrl.origin}, room ${alpha.state.room}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, assets ${assetNames.join(", ")}`);

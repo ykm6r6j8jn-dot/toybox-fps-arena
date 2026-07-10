@@ -6,6 +6,7 @@
 - AURORA TOWER nearby screenshot: `/tmp/donpachi-aurora-nearby.png`
 - SAFE DISTRICT desktop screenshot: `/tmp/donpachi-safe-district-desktop.png`
 - SAFE DISTRICT mobile screenshot: `/tmp/donpachi-safe-district-mobile.png`
+- SAFE DISTRICT public mobile screenshot: `/tmp/donpachi-safe-district-public-mobile.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
 - state: FPS match active in global room `DONPCH`, one-life mode, CP fill disabled for frame-budget QA
@@ -66,6 +67,7 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Build, controls, gameplay-systems, and three-client multiplayer smoke tests: passed. Multiplayer smoke verifies team-only ping delivery, synchronized safe-zone state, four vehicle durability snapshots, exclusive ownership, movement replication, weapon damage to a roadster, exit, player damage, and one-life elimination.
 - Bundle: main gameplay JS `143.07 kB` (`50.80 kB` gzip), CSS `72.88 kB` (`15.30 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
+- Public verification: passed against `https://toybox-fps-arena.onrender.com` with one non-destructive probe. It validates the published asset set, vehicle durability, safe-zone state, and team-filtered ping without moving or firing in the shared room.
 - `tsc --noEmit`: stopped after it made no progress for about 90 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
