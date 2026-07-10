@@ -34,7 +34,7 @@ if (assetNames.length < 3) throw new Error(`public page asset list is incomplete
 function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
-    const state = { name, id: "", room: "", snapshots: [], teamPings: [] };
+    const state = { name, id: "", room: "", snapshots: [], teamPings: [], movementCorrections: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 8000);
 
     ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
@@ -48,6 +48,7 @@ function openClient(name, room = "", options = {}) {
       }
       if (message.type === "snapshot") state.snapshots.push(message);
       if (message.type === "team_ping") state.teamPings.push(message.ping);
+      if (message.type === "movement_correction") state.movementCorrections.push(message);
       if (message.type === "error") {
         clearTimeout(timeout);
         reject(new Error(String(message.message || "public server rejected probe")));
@@ -99,6 +100,22 @@ const self = snapshot.players.find((player) => player.id === probe.state.id);
 send(probe.ws, { type: "team_ping", point: { x: self.x, y: 0.1, z: self.z } });
 await waitFor(() => probe.state.teamPings.length > 0, "public server echoes a team-filtered ping");
 
-probe.ws.close();
+send(probe.ws, { type: "state", x: self.x + 90, y: 80, z: self.z + 90, yaw: Math.PI * 13, pitch: 0 });
+await waitFor(() => probe.state.movementCorrections.length > 0, "public server returns a movement correction");
+const authorityPosition = probe.state.movementCorrections.at(-1).position;
+await waitFor(() => {
+  const player = probe.state.snapshots.at(-1)?.players?.find((item) => item.id === probe.state.id);
+  return player
+    && player.lastSeen > self.lastSeen
+    && Math.hypot(player.x - authorityPosition.x, player.y - authorityPosition.y, player.z - authorityPosition.z) < 0.08;
+}, "public movement correction reaches the snapshot");
+const corrected = probe.state.snapshots.at(-1).players.find((player) => player.id === probe.state.id);
+if (Math.hypot(corrected.x - self.x, corrected.z - self.z) > 6.3) throw new Error("public server accepted an excessive horizontal warp");
+if (corrected.y - self.y > 6.3) throw new Error("public server accepted an excessive vertical warp");
+if (corrected.yaw < -Math.PI || corrected.yaw >= Math.PI) throw new Error("public server did not normalize yaw");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, assets ${assetNames.join(", ")}`);
+send(probe.ws, { type: "leave" });
+await new Promise((resolve) => setTimeout(resolve, 80));
+probe.ws.close(1000, "leave");
+
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, movement corrected, assets ${assetNames.join(", ")}`);

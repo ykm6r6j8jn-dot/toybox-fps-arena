@@ -17,6 +17,7 @@
 - MOTION 2.0 desktop screenshot: `/tmp/donpachi-motion-desktop.jpg`
 - MOTION 2.0 mobile screenshot: `/tmp/donpachi-motion-mobile.jpg`
 - MOTION 2.0 remote runner screenshot: `/tmp/donpachi-motion-mobile-runner.jpg`
+- MOTION 2.0 public mobile screenshot: `/tmp/donpachi-motion-public-mobile.jpg`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
 - state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for MOTION 2.0 browser QA
@@ -102,7 +103,7 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, and three-client multiplayer smoke tests: passed. MOTION tests cover radial analog input, diagonal normalization, acceleration/deceleration, sustained auto sprint, buffered jumps, coyote timing, normal/trampoline authority envelopes, excessive horizontal/vertical warp rejection, yaw normalization, correction delivery, and unauthorized team-edit rejection.
 - Bundle: main gameplay JS `157.31 kB` (`56.35 kB` gzip), CSS `76.62 kB` (`15.97 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: COMBAT 2.0 remains live at `https://toybox-fps-arena.onrender.com`; MOTION 2.0 deployment verification is pending this pass.
+- Public verification: MOTION 2.0 is live at `https://toybox-fps-arena.onrender.com` from Render commit `032019b`. The public page loaded `index-BHTfX3Mz.js`, `index-BIae-yIk.css`, and `three-cAQsBUvP.js`; at `844 x 390` the browser held `60fps` at `200-226ms` RTT with adaptive `166ms` interpolation. The public jump rendered `1.6m` airborne then returned to `0.0m`, all active controls remained at least `48px`, overlap and horizontal overflow were zero, and console errors/warnings were zero. The ordinary WebSocket verifier also received a server movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
 - `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
-local result: passed; public deployment pending
+final result: passed
