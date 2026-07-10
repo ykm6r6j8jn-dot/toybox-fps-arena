@@ -83,6 +83,8 @@ send({
   relationMode: "versus"
 });
 await waitFor(() => state.id && latestSnapshot()?.players?.some((player) => player.name === targetName), `target ${targetName}`);
+send({ type: "change_team", targetId: state.id, team: "red" });
+await waitFor(() => latestPlayer(state.id)?.color === "red", "probe changes to red team");
 
 await moveAlong([
   { x: 32, z: -16 },
@@ -93,7 +95,9 @@ await moveAlong([
   { x: -44, z: 16 }
 ]);
 
-console.log(`COMBAT_PROBE_READY target=${targetName}; press Enter to fire`);
+const readyTarget = latestSnapshot().players.find((player) => player.name === targetName);
+const readyProbe = latestPlayer(state.id);
+console.log(`COMBAT_PROBE_READY target=${targetName} targetPose=${readyTarget?.x},${readyTarget?.y},${readyTarget?.z}/${readyTarget?.color} probePose=${readyProbe?.x},${readyProbe?.y},${readyProbe?.z}/${readyProbe?.color}; press Enter to fire`);
 await new Promise((resolve) => process.stdin.once("data", resolve));
 process.stdin.pause();
 
@@ -103,6 +107,7 @@ if (!target || !probe) throw new Error("target or probe disappeared before firin
 const direction = { x: target.x - probe.x, y: target.y - probe.y, z: target.z - probe.z };
 const length = Math.hypot(direction.x, direction.y, direction.z) || 1;
 const hitsBefore = state.hits.length;
+const expectedDamage = Math.min(75, Number(target.health) || 75);
 for (let pellet = 0; pellet < 3; pellet += 1) {
   send({
     type: "shoot",
@@ -113,12 +118,19 @@ for (let pellet = 0; pellet < 3; pellet += 1) {
   await delay(18);
 }
 
-await waitFor(() => {
-  const hits = state.hits.slice(hitsBefore).filter((hit) => hit.target === target.id && hit.hitZone === "head");
-  return hits.reduce((total, hit) => total + Number(hit.damage || 0), 0) >= 75;
-}, "three-point headshot burst");
+try {
+  await waitFor(() => {
+    const hits = state.hits.slice(hitsBefore).filter((hit) => hit.target === target.id && hit.hitZone === "head");
+    return hits.reduce((total, hit) => total + Number(hit.damage || 0), 0) >= expectedDamage;
+  }, "three-point headshot burst");
+} catch (error) {
+  const latestTarget = latestSnapshot()?.players?.find((player) => player.id === target.id);
+  const latestProbe = latestPlayer(state.id);
+  console.error("COMBAT_PROBE_DIAGNOSTIC", JSON.stringify({ target, probe, latestTarget, latestProbe, hits: state.hits.slice(hitsBefore) }));
+  throw error;
+}
 const burstHits = state.hits.slice(hitsBefore).filter((hit) => hit.target === target.id && hit.hitZone === "head");
-console.log(`COMBAT_PROBE_FIRED hits=${burstHits.length} damage=${burstHits.reduce((total, hit) => total + Number(hit.damage || 0), 0)}`);
+console.log(`COMBAT_PROBE_FIRED hits=${burstHits.length} damage=${burstHits.reduce((total, hit) => total + Number(hit.damage || 0), 0)} expected=${expectedDamage}`);
 await delay(2400);
 send({ type: "leave" });
 await delay(80);

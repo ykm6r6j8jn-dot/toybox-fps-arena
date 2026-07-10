@@ -13,6 +13,7 @@
 - RESILIENCE public mobile screenshot: `/tmp/donpachi-resilience-public-mobile.png`
 - COMBAT 2.0 desktop screenshot: `/tmp/donpachi-combat-desktop.png`
 - COMBAT 2.0 mobile screenshot: `/tmp/donpachi-combat-mobile.png`
+- COMBAT 2.0 public mobile screenshot: `/tmp/donpachi-combat-public-mobile.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
 - state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for COMBAT 2.0 browser QA
@@ -88,7 +89,7 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Build, controls, gameplay-systems, network-systems, combat-systems, and three-client multiplayer smoke tests: passed. Combat tests cover head/torso/limb intersections, exact damage multipliers, aim spread/recovery, constant-time direction normalization, same-id reconnect, a lag-compensated headshot, and an exact `200` total applied-damage cap.
 - Bundle: main gameplay JS `152.80 kB` (`54.62 kB` gzip), CSS `76.62 kB` (`15.97 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: RESILIENCE remains live at `https://toybox-fps-arena.onrender.com`; COMBAT 2.0 deployment verification is pending this pass.
+- Public verification: COMBAT 2.0 is live at `https://toybox-fps-arena.onrender.com` from Render commit `ab0502d`. The public browser loaded `index-C-tgZEIX.js` and `index-BIae-yIk.css`; an ordinary WebSocket client reached the browser target through the collision-checked arena route and produced three server-authoritative Type 95 head hits for exactly `75` damage. At `844 x 390`, a later lethal hit rendered `!-50`, `ヘッドショット`, `95式`, attacker name, and the source-direction arc at `60fps`; the `180px` damage card remained separate from the ammo and settings controls with zero document overflow.
 - `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
