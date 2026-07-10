@@ -18,9 +18,13 @@
 - MOTION 2.0 mobile screenshot: `/tmp/donpachi-motion-mobile.jpg`
 - MOTION 2.0 remote runner screenshot: `/tmp/donpachi-motion-mobile-runner.jpg`
 - MOTION 2.0 public mobile screenshot: `/tmp/donpachi-motion-public-mobile.jpg`
+- TACTICS 2.0 local mobile screenshot: `/tmp/donpachi-tactics-local-mobile.png`
+- TACTICS 2.0 local settings screenshot: `/tmp/donpachi-tactics-settings-mobile.png`
+- TACTICS 2.0 public mobile screenshot: `/tmp/donpachi-tactics-public-mobile.png`
+- TACTICS 2.0 public settings screenshot: `/tmp/donpachi-tactics-public-settings.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
-- state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for MOTION 2.0 browser QA
+- state: FPS match active in global room `DONPCH`; practice mode, cooperative humans, and CP fill enabled for TACTICS 2.0 browser QA
 
 ## Full-view comparison evidence
 
@@ -40,7 +44,7 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - Icons and interactions: Lucide controls remain aligned; mobile settings opens to a `320px`-high scrollable panel; ammo does not intersect mobile action buttons.
 - World interactions: four shared roadsters use server-owned drivers, obstacle/player/CP collision, analog steering, braking, and enter/exit controls. AURORA TOWER provides an automatic entrance, four interior floors, real stairwell openings, instanced spiral steps, a lobby, and a reachable roof.
 - Match pacing: one-life and life3 now use a server-owned multi-phase safe zone with waiting, shrinking, holding, and final stages. CPs route back toward safety and life3 respawns are selected inside the current zone.
-- Late joins: players and replacement CPs entering after a shrink use collision-checked spawn points inside the active safe zone, while initial match spawns remain unchanged.
+- Late joins: players and replacement CPs entering after a shrink use collision-checked spawn points inside the active safe zone. Initial human spawns remain unchanged, while every CP spawn is checked against walls, vehicles, humans, and previously placed CPs.
 - Team play: desktop `P`/middle-click and the smartphone pin control create short-lived server-filtered markers that are delivered only to teammates and also appear on the minimap.
 - Vehicle balance: roadsters have 600 durability, weapon damage, a disabled/restart state, compact durability HUD, and three low-cost repair pads. Repair pads are visible in the world and as green crosses on the minimap.
 - Network resilience: unexpected disconnects preserve the server-owned player state for 15 seconds. The client reconnects with a session-only resume token, freezes combat input while disconnected, and restores the same player id, health, score, equipment, and match state.
@@ -52,6 +56,9 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - Movement authority: the server normalizes unlimited yaw rotations, bounds horizontal and vertical state changes, preserves the shared high-force trampoline envelope, validates walls, and returns a targeted correction only when the requested pose is invalid.
 - Movement feel: desktop and touch input use responsive acceleration/deceleration, touch input has a radial dead zone plus low-speed response curve, full-forward touch hold sustains auto sprint, and 170ms jump buffering plus 135ms coyote time prevents dropped edge inputs without enabling repeat air jumps.
 - Character motion: remote bodies use measured network speed and vertical speed for interpolated leg, arm, and airborne poses. First-person walk and landing motion is reduced on touch devices and disabled by the operating system's reduced-motion preference.
+- CP tactics: four deterministic roles use bounded reaction time, sticky target memory, health and local-number checks, weapon-specific ranges, safe-zone priority, strafing, pushing, flanking, retreating, and cached cover selection. Target decisions run every `650-1095ms` and inspect at most five candidates.
+- CP physical safety: wall-following and wall-recovery use the same `0.68m` radius; CP movement cannot enter vehicles or other players, and human-facing personal space stays above `2m` without blocking movement away from an overlap.
+- Mobile combat layout: the special control has a `44px` minimum target and a dedicated center-right lane; it does not overlap fire, jump, scope, reload, weapon, heal, ping, or settings controls at `844 x 390`.
 
 ## Comparison history
 
@@ -82,6 +89,10 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 25. P2: touch auto sprint was extended only by pointer-move events, so holding the stick still could drop back to walking. The initial full-forward timestamp now drives sustained sprint independently of later pointer movement.
 26. P2: mobile aim target selection ran twice per firing frame and camera motion added redundant ground scans. The animation loop now reuses one target result and cached contact state, and reuses a movement scratch vector to avoid extra frame allocations.
 27. P2: the ground sweep allowed a surface up to `0.75-0.9m` above the current eye reference even while rising, which could classify an overhead edge as ground. Rising motion now accepts only surfaces at or below the current pose; descending and stair motion keep their normal landing tolerance.
+28. P1: CPs followed fixed arena orbits and selected only the nearest visible target. Replaced that loop with role-based tactical movement, human reaction windows, sticky target memory, local-number checks, range-aware weapon choice, and cached cover routing.
+29. P1: CP movement used a `0.55m` route radius but a `0.68m` wall-recovery radius, allowing a wall-edge correction to look like a speed spike. Both paths now use `0.68m`; the 19-CP live test caps observed movement at `11.5m/s` and reports no correction spike.
+30. P1: the mobile special button overlapped jump by `48 x 10px` and fire by `20 x 28px`. Moved it to a responsive independent lane and increased its target height from `32px` to `44px`; post-fix pairwise overlap is zero.
+31. P1: one late CP spawn started `0.93m` from the human camera, and CP movement had no player-body entry check. Added sequential collision-checked CP spawning plus directional personal-space collision; the eight-second 19-CP run held a minimum human gap of `2.21m`.
 
 ## Findings
 
@@ -94,16 +105,16 @@ No actionable P0, P1, or P2 findings remain for this pass.
 
 ## Verification
 
-- Browser page identity and nonblank canvas: passed for MOTION 2.0 at desktop `1440 x 900` and mobile `844 x 390`.
+- Browser page identity and nonblank canvas: prior desktop `1440 x 900` MOTION 2.0 proof remains valid; TACTICS 2.0 passed locally and publicly at mobile `844 x 390`.
 - Framework overlay: none.
 - Console errors and warnings: none in desktop and mobile checks.
 - Desktop render: `58-60fps` observed after settle in the in-app browser.
-- Mobile render: `60fps` observed at `844 x 390`; the actual latency/FPS text remained visible. A 100ms-sampled mobile jump rose through `1.2m`, peaked at `1.9m`, fell back through `1.2m`, and returned to `0.0m` without a second jump by the first `900ms` HUD sample; desktop jump also completed normally.
-- Interaction: mobile settings opened a `320px`-high scrollable panel with `706px` content; active controls measured at `48px` or larger, the fire target remained `88px`, and pairwise button-overlap/document-overflow checks returned zero. A real second WebSocket player ran through the collision route and rendered with its name, weapon, and motion rig at `60fps`.
-- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, and three-client multiplayer smoke tests: passed. MOTION tests cover radial analog input, diagonal normalization, acceleration/deceleration, sustained auto sprint, buffered jumps, coyote timing, normal/trampoline authority envelopes, excessive horizontal/vertical warp rejection, yaw normalization, correction delivery, and unauthorized team-edit rejection.
-- Bundle: main gameplay JS `157.31 kB` (`56.35 kB` gzip), CSS `76.62 kB` (`15.97 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+- Mobile render: local and public TACTICS 2.0 held `60fps` at `844 x 390`; public RTT was `176-178ms`, the real latency/FPS text remained visible, horizontal overflow was zero, and console errors/warnings were zero.
+- Interaction: public mobile settings opened a `318px`-high scrollable panel with `706px` content. Main gameplay controls measured at least `44px`, the fire target remained `88px`, and pairwise button-overlap checks returned zero after the special-control fix.
+- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, AI systems, 19-CP production live test, and three-client multiplayer smoke tests: passed. The eight-second AI run observed all four roles, tactical movement, 11 visible shots, a `2.21m` minimum human gap, and a `3.0ms` maximum health response.
+- Bundle: main gameplay JS `157.31 kB` (`56.35 kB` gzip), CSS `76.64 kB` (`15.98 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: MOTION 2.0 is live at `https://toybox-fps-arena.onrender.com` from Render commit `032019b`. The public page loaded `index-BHTfX3Mz.js`, `index-BIae-yIk.css`, and `three-cAQsBUvP.js`; at `844 x 390` the browser held `60fps` at `200-226ms` RTT with adaptive `166ms` interpolation. The public jump rendered `1.6m` airborne then returned to `0.0m`, all active controls remained at least `48px`, overlap and horizontal overflow were zero, and console errors/warnings were zero. The ordinary WebSocket verifier also received a server movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
+- Public verification: the TACTICS 2.0 implementation from commit `19cc000` is live at `https://toybox-fps-arena.onrender.com`. The public page loaded `index-7bP4VYGF.js`, `index-CnxG3BAV.css`, and `three-cAQsBUvP.js`; the WebSocket snapshot reported `aiVersion: TACTICS 2.0`, and the verifier also received an authoritative movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
 - `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
