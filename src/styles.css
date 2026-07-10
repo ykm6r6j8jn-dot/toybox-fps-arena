@@ -4753,9 +4753,9 @@ body.celebrating::after {
 
   body.game-active .donpunch-button,
   body.game-active:not(.celebrating) .donpunch-button {
-    right: max(86px, calc(env(safe-area-inset-right) + 86px));
-    bottom: max(76px, calc(env(safe-area-inset-bottom) + 76px));
-    min-height: 32px;
+    right: max(clamp(180px, 35vw, 304px), calc(env(safe-area-inset-right) + 180px));
+    bottom: max(68px, calc(env(safe-area-inset-bottom) + 68px));
+    min-height: 44px;
     max-width: 148px;
     padding: 0 8px;
     font-size: 11px;

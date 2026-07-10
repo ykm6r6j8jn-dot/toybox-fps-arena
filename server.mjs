@@ -9,6 +9,19 @@ import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gam
 import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
 import { clampMovementRequest, isNearToyboxTrampoline, wrapAngle } from "./movement-systems.mjs";
+import {
+  chooseCpuTactic,
+  computeCpuDestination,
+  cpuCanFire,
+  cpuDecisionInterval,
+  cpuFireDelayMultiplier,
+  cpuReactionDelay,
+  cpuRoleForIndex,
+  cpuTargetMemoryMs,
+  scoreCpuCoverPoint,
+  scoreCpuTarget,
+  selectCpuWeapon
+} from "./ai-systems.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
@@ -28,6 +41,7 @@ const pokerJankenChoices = new Set(["rock", "scissors", "paper"]);
 const matchTeamSize = maxPlayers / 2;
 const maxHealth = 200;
 const arenaHalfSize = 96;
+const cpuAiVersion = "TACTICS 2.0";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -158,6 +172,31 @@ function obstaclesForArena(arena = "toybox") {
   return arena === "okakoj" ? okakoSolidObstacles : solidObstacles;
 }
 
+function buildCpuCoverPoints(arena = "toybox") {
+  const points = [];
+  let index = 0;
+  for (const box of obstaclesForArena(arena)) {
+    if (box.movement === false || box.minY > 1.9 || box.maxY < 1.25) continue;
+    const width = box.maxX - box.minX;
+    const depth = box.maxZ - box.minZ;
+    if (width < 0.45 || depth < 0.45 || width > 32 || depth > 32) continue;
+    const blockerX = (box.minX + box.maxX) / 2;
+    const blockerZ = (box.minZ + box.maxZ) / 2;
+    const gap = 1.05;
+    const candidates = [
+      { x: box.minX - gap, z: blockerZ },
+      { x: box.maxX + gap, z: blockerZ },
+      { x: blockerX, z: box.minZ - gap },
+      { x: blockerX, z: box.maxZ + gap }
+    ];
+    for (const candidate of candidates) {
+      if (Math.abs(candidate.x) > arenaHalfSize - 2 || Math.abs(candidate.z) > arenaHalfSize - 2) continue;
+      points.push({ id: `${arena}-cover-${index++}`, ...candidate, blockerX, blockerZ });
+    }
+  }
+  return Object.freeze(points);
+}
+
 function initSolidObstacles() {
   const boxes = [
     [[0, 1.2, -96.5], [194, 2.4, 1]], [[0, 1.2, 96.5], [194, 2.4, 1]],
@@ -253,6 +292,10 @@ function initSolidObstacles() {
   for (const [position, scale] of okakoBoxes) addSolidObstacle(position, scale, "okakoj");
 }
 initSolidObstacles();
+const cpuCoverPointsByArena = new Map([
+  ["toybox", buildCpuCoverPoints("toybox")],
+  ["okakoj", buildCpuCoverPoints("okakoj")]
+]);
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -1533,6 +1576,8 @@ function publicPlayer(player) {
     connected: !player.disconnectedAt,
     isBot: Boolean(player.isBot),
     weapon: player.botWeapon || "rifle",
+    botRole: player.isBot ? player.botRole || cpuRoleForIndex(player.botIndex) : undefined,
+    botTactic: player.isBot ? player.botTactic || "patrol" : undefined,
     shieldUntil: player.shieldUntil || 0,
     speedBoostUntil: player.speedBoostUntil || 0,
     damageBoostUntil: player.damageBoostUntil || 0,
@@ -1765,10 +1810,18 @@ function keepCpuOutOfWalls(bot, arena = "toybox") {
   return true;
 }
 
-function cpuMovementCollides(room, x, z, radius = 0.55) {
+function cpuMovementCollides(room, x, z, radius = 0.55, mover = null) {
   if (cpuCollides(x, z, radius, room.arena)) return true;
   for (const vehicle of room.vehicles?.values?.() || []) {
     if (Math.hypot(vehicle.x - x, vehicle.z - z) < 1.48 + radius) return true;
+  }
+  for (const player of room.players.values()) {
+    if (player.id === mover?.id || player.disconnectedAt || player.eliminated || player.health <= 0 || player.vehicleId) continue;
+    const threshold = radius + (player.isBot ? 0.78 : 1.42);
+    const nextDistance = Math.hypot(player.x - x, player.z - z);
+    if (nextDistance >= threshold) continue;
+    const currentDistance = mover ? Math.hypot(player.x - mover.x, player.z - mover.z) : Infinity;
+    if (!mover || currentDistance >= threshold || nextDistance <= currentDistance + 0.005) return true;
   }
   return false;
 }
@@ -1791,15 +1844,15 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, room) {
   const nextX = clamp(bot.x + moveX, -arenaHalfSize + 2, arenaHalfSize - 2);
   const nextZ = clamp(bot.z + moveZ, -arenaHalfSize + 2, arenaHalfSize - 2);
 
-  if (!cpuMovementCollides(room, nextX, nextZ, 0.55)) {
+  if (!cpuMovementCollides(room, nextX, nextZ, 0.68, bot)) {
     bot.x = nextX;
     bot.z = nextZ;
     bot.stuckTicks = 0;
     return;
   }
 
-  const canMoveX = !cpuMovementCollides(room, nextX, bot.z, 0.55);
-  const canMoveZ = !cpuMovementCollides(room, bot.x, nextZ, 0.55);
+  const canMoveX = !cpuMovementCollides(room, nextX, bot.z, 0.68, bot);
+  const canMoveZ = !cpuMovementCollides(room, bot.x, nextZ, 0.68, bot);
   if (canMoveX || canMoveZ) {
     if (canMoveX) bot.x = nextX;
     if (canMoveZ) bot.z = nextZ;
@@ -1813,7 +1866,7 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, room) {
     const tangentLength = Math.hypot(tangent.x, tangent.z) || 1;
     const sideX = clamp(bot.x + tangent.x / tangentLength * step * 0.85, -arenaHalfSize + 2, arenaHalfSize - 2);
     const sideZ = clamp(bot.z + tangent.z / tangentLength * step * 0.85, -arenaHalfSize + 2, arenaHalfSize - 2);
-    if (!cpuMovementCollides(room, sideX, sideZ, 0.55)) {
+    if (!cpuMovementCollides(room, sideX, sideZ, 0.68, bot)) {
       bot.x = sideX;
       bot.z = sideZ;
       bot.stuckTicks = 0;
@@ -1826,6 +1879,48 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, room) {
     bot.botPhase += 0.35 + bot.botIndex * 0.08;
     bot.stuckTicks = 0;
   }
+}
+
+function findCpuCoverPoint(room, bot, target) {
+  const ranked = [];
+  for (const point of cpuCoverPointsByArena.get(room.arena) || []) {
+    const score = scoreCpuCoverPoint({ bot, target, point, role: bot.botRole, safeZone: room.safeZone });
+    if (!Number.isFinite(score) || cpuMovementCollides(room, point.x, point.z, 0.58, bot)) continue;
+    ranked.push({ point, score });
+  }
+  ranked.sort((left, right) => left.score - right.score);
+  for (const { point } of ranked.slice(0, 6)) {
+    const origin = { x: point.x, y: 1.6, z: point.z };
+    const distance = Math.hypot(target.x - point.x, target.y - 1.6, target.z - point.z);
+    const direction = normalize({ x: target.x - point.x, y: target.y - 1.6, z: target.z - point.z });
+    if (lineBlocked(origin, direction, distance, room.arena)) return { x: point.x, z: point.z };
+  }
+  return null;
+}
+
+function applyCpuSeparation(room, bot, destination) {
+  let repelX = 0;
+  let repelZ = 0;
+  for (const teammate of room.players.values()) {
+    if (teammate.id === bot.id || teammate.color !== bot.color || teammate.disconnectedAt || teammate.eliminated || teammate.health <= 0) continue;
+    let dx = bot.x - teammate.x;
+    let dz = bot.z - teammate.z;
+    let distance = Math.hypot(dx, dz);
+    if (distance >= 3.1) continue;
+    if (distance < 0.01) {
+      const angle = (bot.botIndex + 1) * 1.73;
+      dx = Math.cos(angle);
+      dz = Math.sin(angle);
+      distance = 1;
+    }
+    const strength = (3.1 - distance) / 3.1;
+    repelX += dx / distance * strength;
+    repelZ += dz / distance * strength;
+  }
+  return {
+    x: clamp(destination.x + repelX * 4.2, -arenaHalfSize + 2, arenaHalfSize - 2),
+    z: clamp(destination.z + repelZ * 4.2, -arenaHalfSize + 2, arenaHalfSize - 2)
+  };
 }
 
 function vehicleCollides(room, vehicle, x, z) {
@@ -2701,6 +2796,7 @@ setInterval(() => {
     }));
     broadcast(room, {
       type: "snapshot",
+      aiVersion: cpuAiVersion,
       players,
       blueScore,
       redScore,
@@ -3121,6 +3217,7 @@ function respawnPlayer(player, room) {
     nextZoneDamageAt: Date.now() + 1200,
     vehicleId: ""
   });
+  if (player.isBot) Object.assign(player, createCpuTacticalState(player.botIndex));
   recordPlayerPose(player);
   if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
 }
@@ -3172,6 +3269,149 @@ function nearestEnemy(room, shooter, maxDistance = Infinity, requireLineOfSight 
   return best;
 }
 
+function createCpuTacticalState(index = 0, now = Date.now()) {
+  const role = cpuRoleForIndex(index);
+  return {
+    botRole: role,
+    botTactic: "patrol",
+    targetId: "",
+    targetSeenAt: 0,
+    targetVisible: false,
+    lastTargetVisibleAt: 0,
+    nextDecisionAt: now + 220 + (index % 4) * 90,
+    outnumbered: false,
+    coverPoint: null,
+    nextCoverSearchAt: 0,
+    strafeDirection: index % 2 === 0 ? 1 : -1,
+    nextStrafeFlipAt: now + 1500 + (index % 5) * 260,
+    weaponReadyAt: now + 900 + index * 80
+  };
+}
+
+function isActiveCpuTarget(bot, target) {
+  return Boolean(
+    target &&
+    target.id !== bot.id &&
+    !target.disconnectedAt &&
+    !target.creative &&
+    !target.eliminated &&
+    target.health > 0 &&
+    target.color !== bot.color
+  );
+}
+
+function cpuHasLineOfSight(room, bot, target) {
+  const origin = { x: bot.x, y: bot.y, z: bot.z };
+  const distance = Math.hypot(target.x - bot.x, target.y - bot.y, target.z - bot.z);
+  const direction = normalize({ x: target.x - bot.x, y: target.y - bot.y, z: target.z - bot.z });
+  return distance > 0.01 && !lineBlocked(origin, direction, distance, room.arena);
+}
+
+function updateCpuAwareness(room, bot, targets, now) {
+  bot.botRole ||= cpuRoleForIndex(bot.botIndex);
+  let currentTarget = room.players.get(bot.targetId);
+  if (!isActiveCpuTarget(bot, currentTarget)) currentTarget = null;
+  if (now >= (bot.nextDecisionAt || 0) || !currentTarget) {
+    const ownCore = room.castleCores?.[bot.color];
+    const candidates = targets
+      .filter((target) => isActiveCpuTarget(bot, target))
+      .map((target) => {
+        const distance = Math.hypot(target.x - bot.x, target.y - bot.y, target.z - bot.z);
+        return {
+          target,
+          distance,
+          healthRatio: clamp(target.health / maxHealth, 0, 1),
+          sticky: target.id === bot.targetId,
+          objectiveThreat: Boolean(ownCore?.health > 0 && Math.hypot(target.x - ownCore.x, target.z - ownCore.z) < 24)
+        };
+      })
+      .sort((left, right) => (
+        scoreCpuTarget({ ...left, visible: true }) - scoreCpuTarget({ ...right, visible: true })
+      ))
+      .slice(0, 5);
+    let selected = null;
+    let selectedScore = Infinity;
+    for (const candidate of candidates) {
+      const visible = cpuHasLineOfSight(room, bot, candidate.target);
+      const score = scoreCpuTarget({ ...candidate, visible });
+      if (score < selectedScore) {
+        selected = candidate.target;
+        selectedScore = score;
+      }
+    }
+    if (selected?.id !== bot.targetId) {
+      bot.targetId = selected?.id || "";
+      bot.targetSeenAt = 0;
+      bot.targetVisible = false;
+      bot.lastTargetVisibleAt = 0;
+      bot.coverPoint = null;
+    }
+    currentTarget = selected;
+    let nearbyAllies = 0;
+    let nearbyEnemies = 0;
+    for (const player of room.players.values()) {
+      if (player.disconnectedAt || player.eliminated || player.health <= 0) continue;
+      if (Math.hypot(player.x - bot.x, player.z - bot.z) > 28) continue;
+      if (player.color === bot.color) nearbyAllies += 1;
+      else nearbyEnemies += 1;
+    }
+    bot.outnumbered = nearbyEnemies > nearbyAllies;
+    bot.nextDecisionAt = now + cpuDecisionInterval(bot.botRole, bot.botIndex);
+  }
+
+  if (!currentTarget || !isActiveCpuTarget(bot, currentTarget)) {
+    bot.targetId = "";
+    bot.targetVisible = false;
+    return { target: null, visible: false, remembered: false, distance: Infinity };
+  }
+  const visible = cpuHasLineOfSight(room, bot, currentTarget);
+  if (visible) {
+    if (!bot.targetVisible || !bot.targetSeenAt) bot.targetSeenAt = now;
+    bot.lastTargetVisibleAt = now;
+  }
+  bot.targetVisible = visible;
+  const remembered = now - (bot.lastTargetVisibleAt || 0) <= cpuTargetMemoryMs(bot.botRole);
+  return {
+    target: currentTarget,
+    visible,
+    remembered,
+    distance: Math.hypot(currentTarget.x - bot.x, currentTarget.y - bot.y, currentTarget.z - bot.z)
+  };
+}
+
+function cpuSpawnIsClear(room, x, z) {
+  if (cpuCollides(x, z, 0.72, room.arena)) return false;
+  for (const vehicle of room.vehicles?.values?.() || []) {
+    if (Math.hypot(vehicle.x - x, vehicle.z - z) < 2.35) return false;
+  }
+  for (const player of room.players.values()) {
+    if (player.disconnectedAt || player.eliminated || player.health <= 0 || player.vehicleId) continue;
+    const minimumPlayerGap = player.isBot ? 1.5 : 2.15;
+    if (Math.hypot(player.x - x, player.z - z) < minimumPlayerGap) return false;
+  }
+  if (room.safeZone?.enabled && room.safeZone.damage > 0 && isOutsideSafeZone({ x, z }, room.safeZone, 2.5)) return false;
+  return true;
+}
+
+function safeCpuSpawnPoint(room, index = 0) {
+  const preferred = room.safeZone?.enabled && room.safeZone.damage > 0
+    ? safeRespawnPoint(room)
+    : spawnPoint(index + 3);
+  if (cpuSpawnIsClear(room, preferred.x, preferred.z)) return preferred;
+  for (let ring = 1; ring <= 8; ring += 1) {
+    const distance = ring * 2.15;
+    for (let step = 0; step < 16; step += 1) {
+      const angle = (Math.PI * 2 * step) / 16 + index * 0.41;
+      const x = clamp(preferred.x + Math.cos(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
+      const z = clamp(preferred.z + Math.sin(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
+      if (!cpuSpawnIsClear(room, x, z)) continue;
+      return { x, y: 1.6, z, yaw: preferred.yaw };
+    }
+  }
+  const fallback = findNearestCpuSafeSpot(preferred.x, preferred.z, 0.72, room.arena);
+  return { x: fallback.x, y: 1.6, z: fallback.z, yaw: preferred.yaw };
+}
+
 function setCpuCount(room, count) {
   const target = Math.min(maxCpuPlayers, Math.max(0, Math.floor(count)));
   if (room.mode === "castle" && !room.playerTeam) room.playerTeam = "blue";
@@ -3182,9 +3422,7 @@ function setCpuCount(room, count) {
   for (let i = 0; i < target; i += 1) {
     const id = `cpu-${room.code}-${i}`;
     if (room.players.has(id)) continue;
-    const spawn = room.safeZone?.enabled && room.safeZone.damage > 0
-      ? safeRespawnPoint(room)
-      : spawnPoint(i + 3);
+    const spawn = safeCpuSpawnPoint(room, i);
     room.players.set(id, {
       id,
       ws: null,
@@ -3228,6 +3466,7 @@ function setCpuCount(room, count) {
       botWeapon: ["ak47", "aug", "type95", "smg"][i % 4],
       nextWeaponSwitchAt: Date.now() + 1100 + i * 420,
       nextShotAt: Date.now() + 1100 + i * 280,
+      ...createCpuTacticalState(i),
       ...spawn
     });
   }
@@ -3235,9 +3474,7 @@ function setCpuCount(room, count) {
 }
 
 function createCpuPlayer(room, id, index, team) {
-  const spawn = room.safeZone?.enabled && room.safeZone.damage > 0
-    ? safeRespawnPoint(room)
-    : spawnPoint(index + 3);
+  const spawn = safeCpuSpawnPoint(room, index);
   return {
     id,
     ws: null,
@@ -3282,6 +3519,7 @@ function createCpuPlayer(room, id, index, team) {
     botWeapon: ["ak47", "aug", "type95", "smg", "marksman", "rifle", "awm"][index % 7],
     nextWeaponSwitchAt: Date.now() + 1100 + index * 420,
     nextShotAt: Date.now() + 1100 + index * 280,
+    ...createCpuTacticalState(index),
     ...spawn
   };
 }
@@ -3623,113 +3861,145 @@ function applyCpuAimError(direction, weapon, distance, index = 0) {
   });
 }
 
+function updateCpuWeapon(room, bot, distance, now) {
+  if (now < (bot.nextWeaponSwitchAt || 0)) return bot.botWeapon || "rifle";
+  const nextWeapon = chooseCpuWeapon(room, distance, bot.botIndex, bot.botRole);
+  if (nextWeapon !== bot.botWeapon) {
+    bot.botWeapon = nextWeapon;
+    bot.weaponReadyAt = now + 260 + (bot.botIndex % 4) * 35;
+  }
+  bot.nextWeaponSwitchAt = now + 2300 + bot.botIndex * 120;
+  return bot.botWeapon || "rifle";
+}
+
+function tryCpuCastleShot(room, bot, attackCore, now) {
+  if (!attackCore?.health || now < (bot.nextShotAt || 0)) return false;
+  const distance = Math.hypot(attackCore.x - bot.x, attackCore.y - bot.y, attackCore.z - bot.z);
+  const weapon = updateCpuWeapon(room, bot, distance, now);
+  const weaponRangeLimit = cpuWeaponMaxRange.get(weapon) || 34;
+  if (distance > weaponRangeLimit || now < (bot.weaponReadyAt || 0)) return false;
+  const origin = { x: bot.x, y: bot.y, z: bot.z };
+  const idealDirection = normalize({ x: attackCore.x - bot.x, y: attackCore.y - bot.y, z: attackCore.z - bot.z });
+  const direction = applyCpuAimError(idealDirection, weapon, distance, bot.botIndex);
+  const targetDistance = projectionToRay(attackCore, origin, direction);
+  const coreMissDistance = distanceToRay(attackCore, origin, direction, weaponRangeLimit);
+  bot.yaw = Math.atan2(direction.x, direction.z);
+  bot.pitch = Math.asin(clamp(direction.y, -1, 1));
+  if (targetDistance <= 0 || targetDistance > weaponRangeLimit || coreMissDistance > castleCoreRadius * 0.82) return false;
+  if (lineBlocked(origin, direction, targetDistance, room.arena)) return false;
+  const baseDamage = weaponDamage.get(weapon) || 25;
+  const damage = Math.max(6, Math.ceil(baseDamage * cpuCastleDamageMultiplier));
+  applyCastleCoreDamage(room, bot, attackCore, damage);
+  broadcast(room, { type: "shot", shooter: bot.id, origin, direction, range: weaponRangeLimit, weapon });
+  bot.nextShotAt = now + cpuFireDelay(weapon, bot.botRole, bot.botIndex);
+  return true;
+}
+
+function tryCpuPlayerShot(room, bot, awareness, now) {
+  const target = awareness.target;
+  if (!target || now < (bot.nextShotAt || 0)) return false;
+  const distance = Math.hypot(target.x - bot.x, target.y - bot.y, target.z - bot.z);
+  const weapon = updateCpuWeapon(room, bot, distance, now);
+  const weaponRangeLimit = cpuWeaponMaxRange.get(weapon) || 34;
+  const reactionDelay = cpuReactionDelay(bot.botRole, distance, bot.botIndex);
+  if (!cpuCanFire({
+    now,
+    targetSeenAt: bot.targetSeenAt,
+    visible: awareness.visible,
+    distance,
+    range: weaponRangeLimit,
+    reactionDelay
+  }) || now < (bot.weaponReadyAt || 0)) {
+    bot.nextShotAt = now + 140 + (bot.botIndex % 3) * 35;
+    return false;
+  }
+  const origin = { x: bot.x, y: bot.y, z: bot.z };
+  const idealDirection = normalize({ x: target.x - bot.x, y: target.y - bot.y, z: target.z - bot.z });
+  const direction = applyCpuAimError(idealDirection, weapon, distance, bot.botIndex);
+  bot.yaw = Math.atan2(direction.x, direction.z);
+  bot.pitch = Math.asin(clamp(direction.y, -1, 1));
+  applyShot(room, bot, origin, direction, weapon);
+  broadcast(room, { type: "shot", shooter: bot.id, origin, direction, range: weaponRangeLimit, weapon });
+  bot.nextShotAt = now + cpuFireDelay(weapon, bot.botRole, bot.botIndex);
+  return true;
+}
+
 function updateCpuPlayers(room, now) {
   const samples = room.movementStats.samples || 0;
   const movingRatio = samples ? room.movementStats.moving / samples : 0;
   const airborneRatio = samples ? room.movementStats.airborne / samples : 0;
+  const activeCombatants = [...room.players.values()].filter((player) => (
+    !player.disconnectedAt && !player.creative && !player.eliminated && player.health > 0
+  ));
   for (const bot of room.players.values()) {
     if (!bot.isBot) continue;
     if (bot.eliminated || bot.health <= 0) {
       bot.lastSeen = now;
       continue;
     }
+    bot.botRole ||= cpuRoleForIndex(bot.botIndex);
     const phase = (now / 1000) * 0.34 + bot.botPhase;
-    const radius = 16 + bot.botIndex * 8.5;
     const attackCore = room.mode === "castle" ? room.castleCores?.[oppositeTeam(bot.color)] : null;
-    const coreOrbit = 13 + bot.botIndex * 1.8;
     const seekSafeZone = isOutsideSafeZone(bot, room.safeZone, 3.2);
-    const safeOrbit = Math.min(7, Math.max(2.5, (room.safeZone?.radius || 18) * 0.22));
-    const desiredX = seekSafeZone
-      ? clamp(room.safeZone.x + Math.cos(phase + bot.botIndex) * safeOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
+    const targets = activeCombatants.filter((player) => player.id !== bot.id && player.color !== bot.color);
+    const awareness = updateCpuAwareness(room, bot, targets, now);
+    const tactic = chooseCpuTactic({
+      role: bot.botRole,
+      healthRatio: bot.health / maxHealth,
+      distance: awareness.distance,
+      visible: awareness.visible,
+      targetAvailable: Boolean(awareness.target),
+      targetRemembered: awareness.remembered,
+      outnumbered: Boolean(bot.outnumbered),
+      outsideSafeZone: seekSafeZone,
+      objectiveActive: Boolean(attackCore?.health > 0)
+    });
+    bot.botTactic = tactic;
+    if (now >= (bot.nextStrafeFlipAt || 0)) {
+      bot.strafeDirection = (bot.strafeDirection || 1) * -1;
+      bot.nextStrafeFlipAt = now + 1500 + (bot.botIndex % 5) * 260;
+    }
+    const objective = seekSafeZone
+      ? { x: room.safeZone.x, z: room.safeZone.z }
       : attackCore?.health > 0
-      ? clamp(attackCore.x + Math.cos(phase + bot.botIndex) * coreOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
-      : clamp(Math.cos(phase) * radius, -arenaHalfSize + 2, arenaHalfSize - 2);
-    const desiredZ = seekSafeZone
-      ? clamp(room.safeZone.z + Math.sin(phase + bot.botIndex) * safeOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
-      : attackCore?.health > 0
-      ? clamp(attackCore.z + Math.sin(phase + bot.botIndex) * coreOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
-      : clamp(Math.sin(phase * 0.9) * radius, -arenaHalfSize + 2, arenaHalfSize - 2);
+        ? { x: attackCore.x, z: attackCore.z }
+        : null;
+    let destination = computeCpuDestination({
+      bot,
+      target: awareness.target,
+      objective,
+      tactic,
+      role: bot.botRole,
+      side: bot.strafeDirection,
+      phase: phase + bot.botIndex * 0.37,
+      arenaHalfSize
+    });
+    const wantsCover = awareness.target && !seekSafeZone && (tactic === "retreat" || (tactic === "hold" && bot.botRole === "marksman"));
+    if (wantsCover) {
+      if (now >= (bot.nextCoverSearchAt || 0)) {
+        bot.coverPoint = findCpuCoverPoint(room, bot, awareness.target);
+        bot.nextCoverSearchAt = now + 950 + (bot.botIndex % 5) * 130;
+      }
+      if (bot.coverPoint) destination = bot.coverPoint;
+    } else if (tactic !== "flank") {
+      bot.coverPoint = null;
+    }
+    destination = applyCpuSeparation(room, bot, destination);
     bot.learnedSpeedBoost = samples > 30 && movingRatio > 0.62 ? 0.38 : 0;
     bot.learnedAirborneBias = samples > 30 && airborneRatio > 0.16;
-    moveCpuAlongWalls(bot, desiredX, desiredZ, now, room);
+    moveCpuAlongWalls(bot, destination.x, destination.z, now, room);
     keepCpuOutOfWalls(bot, room.arena);
     bot.y = 1.6;
     bot.lastSeen = now;
-    const targets = [...room.players.values()].filter((player) => player.id !== bot.id && !player.disconnectedAt && !player.creative && !player.eliminated && player.health > 0 && player.color !== bot.color);
-    if ((targets.length > 0 || attackCore?.health > 0) && now >= bot.nextShotAt) {
-      if (attackCore?.health > 0) {
-        const distance = Math.hypot(attackCore.x - bot.x, attackCore.y - bot.y, attackCore.z - bot.z);
-        if (now >= (bot.nextWeaponSwitchAt || 0)) {
-          bot.botWeapon = chooseCpuWeapon(room, distance, bot.botIndex);
-          bot.nextWeaponSwitchAt = now + 2300 + bot.botIndex * 260;
-        }
-        const weapon = bot.botWeapon || "rifle";
-        const weaponRangeLimit = cpuWeaponMaxRange.get(weapon) || 34;
-        const origin = { x: bot.x, y: bot.y, z: bot.z };
-        const idealDirection = normalize({ x: attackCore.x - bot.x, y: attackCore.y - bot.y, z: attackCore.z - bot.z });
-        const direction = applyCpuAimError(idealDirection, weapon, distance, bot.botIndex);
-        const targetDistance = projectionToRay(attackCore, origin, direction);
-        const coreMissDistance = distanceToRay(attackCore, origin, direction, weaponRangeLimit);
-        bot.yaw = Math.atan2(direction.x, direction.z);
-        bot.pitch = Math.asin(clamp(direction.y, -1, 1));
-        if (targetDistance > 0 && targetDistance <= weaponRangeLimit && coreMissDistance <= castleCoreRadius * 0.82 && !lineBlocked(origin, direction, targetDistance, room.arena)) {
-          const baseDamage = weaponDamage.get(weapon) || 25;
-          const damage = Math.max(6, Math.ceil(baseDamage * cpuCastleDamageMultiplier));
-          applyCastleCoreDamage(room, bot, attackCore, damage);
-          broadcast(room, { type: "shot", shooter: bot.id, origin, direction, range: weaponRangeLimit, weapon });
-          bot.nextShotAt = now + cpuFireDelay(bot.botWeapon || "rifle") + bot.botIndex * 110;
-          continue;
-        }
-      }
-
-      if (targets.length === 0) {
-        bot.nextShotAt = now + 360 + bot.botIndex * 60;
-        continue;
-      }
-
-      const visibleTarget = targets
-        .map((player) => {
-          const distance = Math.hypot(player.x - bot.x, player.y - bot.y, player.z - bot.z);
-          const direction = normalize({ x: player.x - bot.x, y: player.y - bot.y, z: player.z - bot.z });
-          const targetDistance = projectionToRay(player, { x: bot.x, y: bot.y, z: bot.z }, direction);
-          return { player, distance, direction, targetDistance };
-        })
-        .filter((entry) => entry.targetDistance > 0 && !lineBlocked({ x: bot.x, y: bot.y, z: bot.z }, entry.direction, entry.targetDistance, room.arena))
-        .sort((a, b) => a.distance - b.distance)[0];
-      if (!visibleTarget) {
-        bot.nextShotAt = now + 280 + bot.botIndex * 45;
-        continue;
-      }
-      const target = visibleTarget.player;
-      const distance = Math.hypot(target.x - bot.x, target.y - bot.y, target.z - bot.z);
-      if (now >= (bot.nextWeaponSwitchAt || 0)) {
-        bot.botWeapon = chooseCpuWeapon(room, distance, bot.botIndex);
-        bot.nextWeaponSwitchAt = now + 2300 + bot.botIndex * 260;
-      }
-      const weapon = bot.botWeapon || "rifle";
-      const weaponRangeLimit = cpuWeaponMaxRange.get(weapon) || 34;
-      const origin = { x: bot.x, y: bot.y, z: bot.z };
-      const idealDirection = normalize({ x: target.x - bot.x, y: target.y - bot.y, z: target.z - bot.z });
-      const direction = applyCpuAimError(idealDirection, weapon, distance, bot.botIndex);
-      bot.yaw = Math.atan2(direction.x, direction.z);
-      bot.pitch = Math.asin(clamp(direction.y, -1, 1));
-      const targetDistance = projectionToRay(target, origin, direction);
-      const aimMissDistance = distanceToRay({ x: target.x, y: target.y, z: target.z }, origin, direction, weaponRangeLimit);
-      if (
-        targetDistance > 0 &&
-        targetDistance <= weaponRangeLimit &&
-        aimMissDistance < 0.62 &&
-        !lineBlocked(origin, direction, targetDistance, room.arena)
-      ) {
-        applyShot(room, bot, origin, direction, weapon);
-        broadcast(room, { type: "shot", shooter: bot.id, origin, direction, range: weaponRangeLimit, weapon });
-      }
-      bot.nextShotAt = now + cpuFireDelay(bot.botWeapon || "rifle") + bot.botIndex * 110;
-    } else if (targets.length > 0) {
-      const target = targets[0];
-      bot.yaw = Math.atan2(target.x - bot.x, target.z - bot.z);
+    if (room.winner) continue;
+    if (tryCpuCastleShot(room, bot, attackCore, now)) continue;
+    if (tryCpuPlayerShot(room, bot, awareness, now)) continue;
+    if (awareness.target) {
+      bot.yaw = Math.atan2(awareness.target.x - bot.x, awareness.target.z - bot.z);
+      bot.pitch = 0;
     } else {
-      bot.yaw = phase + Math.PI / 2;
+      bot.yaw = Math.atan2(destination.x - bot.x, destination.z - bot.z);
+      bot.pitch = 0;
     }
   }
 }
@@ -3747,20 +4017,15 @@ function dominantHumanWeapon(room) {
   return bestCount >= 8 ? bestWeapon : "";
 }
 
-function chooseCpuWeapon(room, distance, index = 0) {
+function chooseCpuWeapon(room, distance, index = 0, role = cpuRoleForIndex(index)) {
   const popular = dominantHumanWeapon(room);
   const samples = room.movementStats.samples || 0;
   const airborneRatio = samples ? room.movementStats.airborne / samples : 0;
-  if (distance > 78) return airborneRatio > 0.14 ? "awm" : "marksman";
-  if (distance > 58) return popular === "awm" ? "awm" : index % 2 === 0 ? "aug" : "marksman";
-  if (distance > 42) return popular === "aug" || popular === "type95" ? popular : index % 2 === 0 ? "ak47" : "aug";
-  if (distance < 16) return popular === "shotgun" ? "shotgun" : index % 2 === 0 ? "shotgun" : "smg";
-  if (popular === "ak47" || popular === "aug" || popular === "type95" || popular === "smg") return popular;
-  return index % 2 === 0 ? "type95" : "ak47";
+  return selectCpuWeapon({ role, distance, popularWeapon: popular, airborneRatio, index });
 }
 
-function cpuFireDelay(weapon) {
-  return {
+function cpuFireDelay(weapon, role = "assault", index = 0) {
+  const baseDelay = {
     rifle: 1180,
     ak47: 1260,
     aug: 1160,
@@ -3770,6 +4035,7 @@ function cpuFireDelay(weapon) {
     awm: 2600,
     type95: 1320
   }[weapon] || 1240;
+  return Math.round(baseDelay * cpuFireDelayMultiplier(role, index));
 }
 
 server.listen(port, "0.0.0.0", () => {

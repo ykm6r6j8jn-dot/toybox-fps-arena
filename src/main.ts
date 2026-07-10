@@ -88,6 +88,8 @@ type PlayerState = {
   lastSeen: number;
   isBot?: boolean;
   weapon?: string;
+  botRole?: "assault" | "support" | "flanker" | "marksman";
+  botTactic?: "patrol" | "objective" | "zone" | "push" | "hold" | "strafe" | "flank" | "retreat";
   level?: number;
   spawnProtectedUntil?: number;
   vehicleId?: string;

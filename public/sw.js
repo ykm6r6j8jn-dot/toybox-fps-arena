@@ -1,4 +1,4 @@
-const CACHE_NAME = "donpachi-pwa-v7";
+const CACHE_NAME = "donpachi-pwa-v8";
 const SHELL_ASSETS = [
   "/",
   "/manifest.webmanifest",
