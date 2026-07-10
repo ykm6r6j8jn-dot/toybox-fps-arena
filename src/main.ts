@@ -9,6 +9,8 @@ import Check from "lucide/dist/esm/icons/check.js";
 import ChevronsUp from "lucide/dist/esm/icons/chevrons-up.js";
 import Copy from "lucide/dist/esm/icons/copy.js";
 import Crosshair from "lucide/dist/esm/icons/crosshair.js";
+import HeartPulse from "lucide/dist/esm/icons/heart-pulse.js";
+import MapPin from "lucide/dist/esm/icons/map-pin.js";
 import Maximize2 from "lucide/dist/esm/icons/maximize-2.js";
 import MicOff from "lucide/dist/esm/icons/mic-off.js";
 import Minimize2 from "lucide/dist/esm/icons/minimize-2.js";
@@ -121,6 +123,33 @@ type VehicleSnapshot = {
   speed: number;
   driverId?: string;
   color?: "green" | "blue" | "yellow" | "red";
+  health?: number;
+  maxHealth?: number;
+  disabledUntil?: number;
+  repairing?: boolean;
+};
+
+type SafeZoneSnapshot = {
+  enabled: boolean;
+  phase: number;
+  stage: "inactive" | "waiting" | "shrinking" | "holding" | "final";
+  x: number;
+  z: number;
+  radius: number;
+  nextRadius: number;
+  damage: number;
+  endsAt: number;
+};
+
+type TeamPingSnapshot = {
+  id: string;
+  playerId: string;
+  name: string;
+  color: PlayerColor;
+  x: number;
+  y: number;
+  z: number;
+  expiresAt: number;
 };
 
 type BarrierSnapshot = {
@@ -269,6 +298,8 @@ const lucideIcons = {
   Check,
   Copy,
   Crosshair,
+  HeartPulse,
+  MapPin,
   Maximize2,
   MicOff,
   Minimize2,
@@ -369,9 +400,11 @@ const mobileGuideClose = $("#mobileGuideClose") as HTMLButtonElement;
 const mobileStick = $("#mobileStick");
 const mobileStickKnob = $("#mobileStickKnob");
 const mobileJump = $("#mobileJump") as HTMLButtonElement;
+const mobileHeal = $("#mobileHeal") as HTMLButtonElement;
 const mobileWeapon = $("#mobileWeapon") as HTMLButtonElement;
 const mobileReload = $("#mobileReload") as HTMLButtonElement;
 const mobileScope = $("#mobileScope") as HTMLButtonElement;
+const mobilePing = $("#mobilePing") as HTMLButtonElement;
 const mobileSkill = $("#mobileSkill") as HTMLButtonElement;
 const mobileInteract = $("#mobileInteract") as HTMLButtonElement;
 const interactionHint = $("#interactionHint");
@@ -390,6 +423,14 @@ const focusTaskLabel = $("#focusTaskLabel");
 const focusTaskText = $("#focusTaskText");
 const focusTaskMeta = $("#focusTaskMeta");
 const focusTaskBar = $("#focusTaskBar") as HTMLElement;
+const zoneStatus = $("#zoneStatus");
+const zonePhase = $("#zonePhase");
+const zoneTimer = $("#zoneTimer");
+const zoneDistance = $("#zoneDistance");
+const vehicleStatus = $("#vehicleStatus");
+const vehicleHealth = $("#vehicleHealth");
+const vehicleHealthBar = $("#vehicleHealthBar") as HTMLElement;
+const vehicleRepairState = $("#vehicleRepairState");
 const spectatorCard = $("#spectatorCard");
 const spectatorLabel = $("#spectatorLabel");
 const spectatorNext = $("#spectatorNext") as HTMLButtonElement;
@@ -549,6 +590,11 @@ const minimapBoxes: { x: number; z: number; w: number; h: number }[] = [];
 const keys = new Set<string>();
 const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "Space"]);
 const arenaHalfSize = 96;
+const vehicleRepairStations = [
+  { id: "repair-east", x: 52, z: -14, radius: 4.6 },
+  { id: "repair-south", x: 0, z: 70, radius: 4.6 },
+  { id: "repair-west", x: -52, z: 42, radius: 4.6 }
+] as const;
 const playerRadius = 0.24;
 const jumpVelocity = 7.2;
 const nameTagCanvasWidth = 256;
@@ -706,7 +752,14 @@ let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
 const vehicleSnapshots = new Map<string, VehicleSnapshot>();
-const vehicleMeshes = new Map<string, { group: THREE.Group; wheels: THREE.Mesh[]; wheelSpin: number }>();
+const vehicleMeshes = new Map<string, { group: THREE.Group; wheels: THREE.Mesh[]; wheelSpin: number; statusBeacon: THREE.Mesh }>();
+const teamPingMeshes = new Map<string, { group: THREE.Group; expiresAt: number; snapshot: TeamPingSnapshot }>();
+let safeZoneSnapshot: SafeZoneSnapshot = { enabled: false, phase: -1, stage: "inactive", x: 0, z: 0, radius: 92, nextRadius: 92, damage: 0, endsAt: 0 };
+let safeZoneVisual: { group: THREE.Group; ring: THREE.Mesh; wall: THREE.Mesh } | null = null;
+let serverClockOffsetMs = 0;
+let lastSafeZonePhase = -1;
+let wasOutsideSafeZone = false;
+let wasVehicleRepairing = false;
 const automaticDoors: { left: THREE.Mesh; right: THREE.Mesh; center: THREE.Vector3; closedLeftX: number; closedRightX: number; openness: number }[] = [];
 let bulletHoleTexture: THREE.CanvasTexture | null = null;
 let bulletHoleOwnMaterial: THREE.MeshBasicMaterial | null = null;
@@ -1148,6 +1201,8 @@ function clearArenaObjects() {
   for (const vehicle of vehicleMeshes.values()) scene.remove(vehicle.group);
   vehicleMeshes.clear();
   vehicleSnapshots.clear();
+  for (const ping of teamPingMeshes.values()) disposeGroup(ping.group);
+  teamPingMeshes.clear();
   automaticDoors.length = 0;
   activeVehicleId = "";
   nearestVehicleId = "";
@@ -2288,8 +2343,34 @@ function addToyboxVisualDecals() {
   addGroundDecal("outer red splat", 44, -28, decalTextures.redSplat, 5.8, 5.8, -0.2, 0.58);
 }
 
+function addVehicleRepairStation(station: (typeof vehicleRepairStations)[number]) {
+  const group = new THREE.Group();
+  group.name = station.id;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(station.radius - 0.72, station.radius - 0.28, 32),
+    new THREE.MeshBasicMaterial({ color: 0x65f2a0, transparent: true, opacity: 0.68, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.024;
+  const pad = new THREE.Mesh(
+    new THREE.CircleGeometry(station.radius - 0.82, 32),
+    new THREE.MeshStandardMaterial({ color: 0x173a35, roughness: 0.74, metalness: 0.18 })
+  );
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.y = 0.012;
+  const crossMaterial = new THREE.MeshBasicMaterial({ color: 0xd8ffe5, transparent: true, opacity: 0.92 });
+  const crossA = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.035, 2.7), crossMaterial);
+  const crossB = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.035, 0.72), crossMaterial);
+  crossA.position.y = 0.045;
+  crossB.position.y = 0.046;
+  group.add(pad, ring, crossA, crossB);
+  group.position.set(station.x, 0, station.z);
+  trackArenaObject(group);
+}
+
 function addToyboxArena() {
   addBox("floor", [0, -0.05, 0], [194, 0.1, 194], materials.floor, false);
+  for (const station of vehicleRepairStations) addVehicleRepairStation(station);
 
   addBox("north wall", [0, 1.2, -96.5], [194, 2.4, 1], materials.wall);
   addBox("south wall", [0, 1.2, 96.5], [194, 2.4, 1], materials.wall);
@@ -3004,6 +3085,10 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     toggleVehicleInteraction();
   }
+  if (event.code === "KeyP" && !event.repeat && self.joined) {
+    event.preventDefault();
+    sendTeamPing();
+  }
   if ((event.code === "ControlLeft" || event.code === "ControlRight" || event.code === "MetaLeft" || event.code === "MetaRight") && !event.repeat && self.joined) {
     event.preventDefault();
     useHealPack();
@@ -3053,6 +3138,10 @@ canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
+  }
+  if (event.button === 1) {
+    sendTeamPing();
+    return;
   }
   if (event.button === 2 && isScopedGun()) {
     scoped = !scoped;
@@ -3430,7 +3519,7 @@ updateFullscreenButton();
 
 function applyMobileTuning() {
   mobileAimSensitivityValue = THREE.MathUtils.clamp(Number(mobileSensitivity.value) || 1, 0.65, 1.65);
-  mobileFireSizeValue = THREE.MathUtils.clamp(Number(mobileFireSize.value) || 88, 72, 112);
+  mobileFireSizeValue = THREE.MathUtils.clamp(Number(mobileFireSize.value) || 88, 72, 96);
   mobileJumpOffsetValue = THREE.MathUtils.clamp(Number(mobileJumpOffset.value) || 128, 96, 176);
   localStorage.setItem("toybox-mobile-sensitivity", String(mobileAimSensitivityValue));
   localStorage.setItem("toybox-mobile-fire-size", String(mobileFireSizeValue));
@@ -3651,6 +3740,11 @@ const releaseMobileBrake = () => {
 mobileJump.addEventListener("pointerup", releaseMobileBrake);
 mobileJump.addEventListener("pointercancel", releaseMobileBrake);
 mobileJump.addEventListener("lostpointercapture", releaseMobileBrake);
+mobileHeal.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  useHealPack();
+});
 mobileWeapon.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
@@ -3670,6 +3764,11 @@ mobileScope.addEventListener("pointerdown", (event) => {
   }
   scoped = !scoped;
   document.body.classList.toggle("scoped", scoped);
+});
+mobilePing.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  sendTeamPing();
 });
 mobileSkill.addEventListener("pointerdown", (event) => {
   event.preventDefault();
@@ -3943,6 +4042,7 @@ function handleMessage(event: MessageEvent<string>) {
     return;
   }
   if (message.type === "snapshot") {
+    if (typeof message.now === "number") serverClockOffsetMs = Number(message.now) - Date.now();
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.partySize) setPartySize(Number(message.partySize));
     if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
@@ -3963,6 +4063,7 @@ function handleMessage(event: MessageEvent<string>) {
       roundSeconds = Math.max(0, (castleEndsAt - Number(message.now)) / 1000);
     }
     syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[]);
+    syncSafeZone(message.safeZone as SafeZoneSnapshot | undefined);
     const previousVehicleId = activeVehicleId;
     players.clear();
     for (const player of message.players as PlayerState[]) players.set(player.id, player);
@@ -4037,6 +4138,22 @@ function handleMessage(event: MessageEvent<string>) {
     addFlowReward(18, text);
   }
   if (message.type === "powerup") applyPowerupPickup(message.kind as PowerupKind);
+  if (message.type === "team_ping") addTeamPing(message.ping as TeamPingSnapshot | undefined);
+  if (message.type === "vehicle_damage") {
+    const damage = Number(message.damage) || 0;
+    showHitIndicator(true, damage, false);
+    pushDamageNotice("taken", damage, "ROADSTER", message.vehicleId, false);
+    playVehicleDamageSound();
+    pulseHaptic(34);
+  }
+  if (message.type === "vehicle_repair") {
+    playHealSound();
+    showToast("ロードスター修理中");
+  }
+  if (message.type === "vehicle_destroyed") {
+    spawnFireworkBurst(new THREE.Vector3(Number(message.x) || 0, Number(message.y) || 0.9, Number(message.z) || 0), 0xff8a3d);
+    playVehicleExplosionSound();
+  }
   if (message.type === "vehicle_status") {
     activeVehicleId = String(message.vehicleId || "");
     if (!activeVehicleId && message.spawn) {
@@ -4293,6 +4410,16 @@ function playNoiseHit(duration = 0.12, volume = 0.08, frequency = 360) {
 function playDamageSound() {
   playNoiseHit(0.16, 0.12, 260);
   playSweep(170, 74, 0.18, 0.05, "sawtooth");
+}
+
+function playVehicleDamageSound() {
+  playNoiseHit(0.11, 0.07, 510);
+  playSweep(240, 130, 0.12, 0.036, "square");
+}
+
+function playVehicleExplosionSound() {
+  playNoiseHit(0.32, 0.16, 190);
+  playSweep(110, 42, 0.34, 0.09, "sawtooth");
 }
 
 function playRunSound() {
@@ -4831,6 +4958,12 @@ function returnToLobbyAfterRound() {
   resultPanel.classList.remove("open");
   spectatorCard.classList.remove("show");
   killcamCard.classList.remove("show");
+  vehicleStatus.classList.remove("show", "repairing", "danger");
+  syncSafeZone(undefined);
+  lastSafeZonePhase = -1;
+  document.body.classList.remove("outside-zone");
+  for (const ping of teamPingMeshes.values()) disposeGroup(ping.group);
+  teamPingMeshes.clear();
   joinPanel.classList.remove("hidden");
   clearBulletDecals();
   endCelebration();
@@ -4895,6 +5028,10 @@ Object.assign(window, {
         pitch: self.pitch,
         joined: self.joined
       };
+    },
+    serverPose() {
+      const me = players.get(self.id);
+      return me ? { x: me.x, y: me.y, z: me.z, vehicleId: me.vehicleId || "" } : null;
     }
   }
 });
@@ -5008,11 +5145,16 @@ function createVehicleMesh(snapshot: VehicleSnapshot) {
   const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.35, 4.2), shadowMaterial);
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.02;
-  group.add(shadow);
+  const statusBeacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.115, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0x65f2a0, transparent: true, opacity: 0.9, depthWrite: false })
+  );
+  statusBeacon.position.set(0, 1.86, 1.16);
+  group.add(shadow, statusBeacon);
   group.position.set(snapshot.x, 0, snapshot.z);
   group.rotation.y = snapshot.yaw;
   scene.add(group);
-  return { group, wheels, wheelSpin: 0 };
+  return { group, wheels, wheelSpin: 0, statusBeacon };
 }
 
 function syncVehicleSnapshots(snapshots: VehicleSnapshot[]) {
@@ -5040,12 +5182,145 @@ function updateVehicleVisuals(delta: number) {
     visual.group.rotation.y += shortestAngleDelta(visual.group.rotation.y, snapshot.yaw) * blend;
     visual.wheelSpin += snapshot.speed * delta / 0.38;
     for (const wheel of visual.wheels) wheel.rotation.x = visual.wheelSpin;
+    const healthRatio = THREE.MathUtils.clamp((snapshot.health ?? 600) / Math.max(1, snapshot.maxHealth ?? 600), 0, 1);
+    const disabled = (snapshot.disabledUntil || 0) > Date.now() || healthRatio <= 0;
+    const beaconMaterial = visual.statusBeacon.material as THREE.MeshBasicMaterial;
+    beaconMaterial.color.setHex(disabled ? 0xff4d4d : snapshot.repairing ? 0x65f2a0 : healthRatio < 0.34 ? 0xff8a3d : 0xfff36b);
+    beaconMaterial.opacity = disabled ? 0.48 + Math.sin(performance.now() * 0.012) * 0.28 : snapshot.repairing ? 0.98 : 0.62;
+    visual.statusBeacon.scale.setScalar(snapshot.repairing ? 1.2 + Math.sin(performance.now() * 0.009) * 0.18 : 1);
   }
   const activeVisual = activeVehicleId ? vehicleMeshes.get(activeVehicleId) : null;
   if (activeVisual) {
     self.position.set(activeVisual.group.position.x, 1.82, activeVisual.group.position.z);
     self.velocity.set(0, 0, 0);
     lastSafePosition.copy(self.position);
+  }
+}
+
+function ensureSafeZoneVisual() {
+  if (safeZoneVisual) return safeZoneVisual;
+  const group = new THREE.Group();
+  group.name = "safe-zone";
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.985, 1.015, 72),
+    new THREE.MeshBasicMaterial({ color: 0x5fe8ff, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.075;
+  const wall = new THREE.Mesh(
+    new THREE.CylinderGeometry(1, 1, 10, 72, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x49b9ff, transparent: true, opacity: 0.075, depthWrite: false, side: THREE.DoubleSide })
+  );
+  wall.position.y = 5;
+  group.add(ring, wall);
+  group.visible = false;
+  scene.add(group);
+  safeZoneVisual = { group, ring, wall };
+  return safeZoneVisual;
+}
+
+function syncSafeZone(snapshot?: SafeZoneSnapshot) {
+  if (!snapshot || !Number.isFinite(snapshot.x) || !Number.isFinite(snapshot.z) || !Number.isFinite(snapshot.radius)) {
+    safeZoneSnapshot = { enabled: false, phase: -1, stage: "inactive", x: 0, z: 0, radius: 92, nextRadius: 92, damage: 0, endsAt: 0 };
+    return;
+  }
+  if (lastSafeZonePhase >= 0 && snapshot.phase > lastSafeZonePhase) {
+    showToast(snapshot.stage === "shrinking" ? "安全エリア縮小開始" : snapshot.stage === "final" ? "最終安全エリア" : "次の縮小まで待機");
+    playSweep(720, 360, 0.18, 0.035, "triangle");
+  }
+  lastSafeZonePhase = snapshot.phase;
+  safeZoneSnapshot = snapshot;
+}
+
+function updateSafeZoneVisual(delta: number) {
+  const visual = ensureSafeZoneVisual();
+  visual.group.visible = safeZoneSnapshot.enabled;
+  zoneStatus.classList.toggle("active", safeZoneSnapshot.enabled);
+  if (!safeZoneSnapshot.enabled) {
+    document.body.classList.remove("outside-zone");
+    wasOutsideSafeZone = false;
+    visual.group.userData.initialized = false;
+    return;
+  }
+
+  if (!visual.group.userData.initialized) {
+    visual.group.position.set(safeZoneSnapshot.x, 0, safeZoneSnapshot.z);
+    visual.group.scale.set(safeZoneSnapshot.radius, 1, safeZoneSnapshot.radius);
+    visual.group.userData.initialized = true;
+  }
+
+  visual.group.position.x = THREE.MathUtils.damp(visual.group.position.x, safeZoneSnapshot.x, 5.4, delta);
+  visual.group.position.z = THREE.MathUtils.damp(visual.group.position.z, safeZoneSnapshot.z, 5.4, delta);
+  const radius = THREE.MathUtils.damp(visual.group.scale.x || safeZoneSnapshot.radius, safeZoneSnapshot.radius, 6.2, delta);
+  visual.group.scale.set(radius, 1, radius);
+  const outside = safeZoneSnapshot.damage > 0
+    && Math.hypot(self.position.x - safeZoneSnapshot.x, self.position.z - safeZoneSnapshot.z) > safeZoneSnapshot.radius - 0.4;
+  document.body.classList.toggle("outside-zone", outside);
+  (visual.wall.material as THREE.MeshBasicMaterial).opacity = outside ? 0.13 : 0.065;
+  if (outside && !wasOutsideSafeZone) {
+    showToast("危険エリア外です");
+    pulseHaptic(38);
+  }
+  wasOutsideSafeZone = outside;
+}
+
+function createTeamPingMesh(snapshot: TeamPingSnapshot) {
+  const group = new THREE.Group();
+  group.name = `team-ping-${snapshot.id}`;
+  const color = snapshot.color === "red" ? 0xff8a70 : 0xfff36b;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.46, 0.065, 7, 22),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.92, depthWrite: false })
+  );
+  ring.rotation.x = Math.PI / 2;
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.025, 3.3, 6),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthWrite: false })
+  );
+  beam.position.y = 1.65;
+  const marker = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.2, 0),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
+  );
+  marker.position.y = 3.3;
+  group.add(ring, beam, marker);
+  group.position.set(snapshot.x, Math.max(0.1, snapshot.y), snapshot.z);
+  scene.add(group);
+  return group;
+}
+
+function addTeamPing(snapshot?: TeamPingSnapshot) {
+  if (!snapshot?.id || !Number.isFinite(snapshot.x) || !Number.isFinite(snapshot.y) || !Number.isFinite(snapshot.z)) return;
+  const existing = teamPingMeshes.get(snapshot.id);
+  if (existing) {
+    existing.expiresAt = snapshot.expiresAt;
+    existing.snapshot = snapshot;
+    return;
+  }
+  teamPingMeshes.set(snapshot.id, { group: createTeamPingMesh(snapshot), expiresAt: snapshot.expiresAt, snapshot });
+  while (teamPingMeshes.size > 4) {
+    const oldest = [...teamPingMeshes.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
+    if (!oldest) break;
+    disposeGroup(oldest[1].group);
+    teamPingMeshes.delete(oldest[0]);
+  }
+  showToast(`${snapshot.name || "味方"} がピン`);
+  pulseHaptic(14);
+}
+
+function updateTeamPings(delta: number) {
+  const now = Date.now();
+  for (const [id, ping] of teamPingMeshes) {
+    if (ping.expiresAt <= now) {
+      disposeGroup(ping.group);
+      teamPingMeshes.delete(id);
+      continue;
+    }
+    const marker = ping.group.children[2];
+    marker.rotation.y += delta * 2.8;
+    marker.position.y = 3.3 + Math.sin(performance.now() * 0.006 + ping.snapshot.x) * 0.14;
+    const pulse = 1 + Math.sin(performance.now() * 0.007 + ping.snapshot.z) * 0.06;
+    ping.group.children[0].scale.setScalar(pulse);
   }
 }
 
@@ -5074,7 +5349,7 @@ function updateVehicleInteraction(now = performance.now()) {
   let nearestDistance = Infinity;
   if (!activeVehicleId) {
     for (const vehicle of vehicleSnapshots.values()) {
-      if (vehicle.driverId) continue;
+      if (vehicle.driverId || (vehicle.health ?? 600) <= 0 || (vehicle.disabledUntil || 0) > Date.now()) continue;
       const distance = Math.hypot(vehicle.x - self.position.x, vehicle.z - self.position.z);
       if (distance < 3.35 && distance < nearestDistance) {
         nearestDistance = distance;
@@ -5090,6 +5365,51 @@ function updateVehicleInteraction(now = performance.now()) {
   interactionHintText.textContent = activeVehicleId ? "ロードスターから降りる" : "ロードスターに乗る";
   mobileInteract.setAttribute("aria-label", activeVehicleId ? "車から降りる" : "車に乗る");
   mobileJump.setAttribute("aria-label", activeVehicleId ? "ブレーキ" : "ジャンプ");
+}
+
+function updateVehicleHud() {
+  const vehicle = activeVehicleId ? vehicleSnapshots.get(activeVehicleId) : null;
+  vehicleStatus.classList.toggle("show", Boolean(vehicle));
+  if (!vehicle) {
+    wasVehicleRepairing = false;
+    return;
+  }
+  const maximum = Math.max(1, Math.round(vehicle.maxHealth || 600));
+  const current = Math.max(0, Math.round(vehicle.health ?? maximum));
+  const ratio = THREE.MathUtils.clamp(current / maximum, 0, 1);
+  vehicleHealth.textContent = String(current);
+  vehicleHealthBar.style.width = `${Math.round(ratio * 100)}%`;
+  vehicleRepairState.textContent = vehicle.repairing ? "REPAIR" : ratio < 0.34 ? "CRITICAL" : "READY";
+  vehicleStatus.classList.toggle("repairing", Boolean(vehicle.repairing));
+  vehicleStatus.classList.toggle("danger", ratio < 0.34);
+  if (vehicle.repairing && !wasVehicleRepairing) pulseHaptic(20);
+  wasVehicleRepairing = Boolean(vehicle.repairing);
+}
+
+function updateSafeZoneHud() {
+  if (!safeZoneSnapshot.enabled) {
+    zoneStatus.classList.remove("active", "danger", "shrinking");
+    return;
+  }
+  const serverNow = Date.now() + serverClockOffsetMs;
+  const remaining = safeZoneSnapshot.endsAt ? Math.max(0, safeZoneSnapshot.endsAt - serverNow) : 0;
+  const minutes = Math.floor(remaining / 60_000).toString().padStart(2, "0");
+  const seconds = Math.floor((remaining % 60_000) / 1000).toString().padStart(2, "0");
+  const centerDistance = Math.hypot(self.position.x - safeZoneSnapshot.x, self.position.z - safeZoneSnapshot.z);
+  const outsideDistance = Math.max(0, centerDistance - safeZoneSnapshot.radius);
+  const phaseLabels: Record<SafeZoneSnapshot["stage"], string> = {
+    inactive: "SAFE",
+    waiting: "準備",
+    shrinking: "縮小",
+    holding: "安定",
+    final: "FINAL"
+  };
+  zonePhase.textContent = phaseLabels[safeZoneSnapshot.stage] || "SAFE";
+  zoneTimer.textContent = safeZoneSnapshot.endsAt ? `${minutes}:${seconds}` : "FINAL";
+  zoneDistance.textContent = outsideDistance > 0 ? `OUT ${Math.ceil(outsideDistance)}m` : `R ${Math.ceil(safeZoneSnapshot.radius)}m`;
+  zoneStatus.classList.add("active");
+  zoneStatus.classList.toggle("danger", outsideDistance > 0 && safeZoneSnapshot.damage > 0);
+  zoneStatus.classList.toggle("shrinking", safeZoneSnapshot.stage === "shrinking");
 }
 
 function toggleVehicleInteraction() {
@@ -5134,6 +5454,29 @@ function firstObstacleDistance(origin: THREE.Vector3, direction: THREE.Vector3, 
     if (hit !== null && hit < best) best = hit;
   }
   return best;
+}
+
+function sendTeamPing() {
+  const me = players.get(self.id);
+  if (!self.joined || me?.eliminated || (me && me.health <= 0)) return;
+  const origin = self.position.clone();
+  const direction = getLookDirection();
+  const maxDistance = 90;
+  const obstacleDistance = firstObstacleDistance(origin, direction, maxDistance);
+  let distance = obstacleDistance < maxDistance - 0.1 ? obstacleDistance : 46;
+  if (obstacleDistance >= maxDistance - 0.1 && direction.y < -0.02) {
+    const groundDistance = (0.1 - origin.y) / direction.y;
+    if (groundDistance > 0 && groundDistance < maxDistance) distance = groundDistance;
+  }
+  const point = origin.add(direction.multiplyScalar(distance));
+  send({
+    type: "team_ping",
+    point: {
+      x: THREE.MathUtils.clamp(point.x, -arenaHalfSize + 1, arenaHalfSize - 1),
+      y: THREE.MathUtils.clamp(point.y, 0.1, 42),
+      z: THREE.MathUtils.clamp(point.z, -arenaHalfSize + 1, arenaHalfSize - 1)
+    }
+  });
 }
 
 function addTracer(
@@ -5577,6 +5920,8 @@ function updateHud(feed: FeedItem[]) {
     lastSelfHealth = me.health;
   }
   updateFocusTaskHud(me?.focusTask);
+  updateSafeZoneHud();
+  updateVehicleHud();
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
   ammoEl.textContent = reloadTimer > 0 ? "--" : String(self.ammo);
@@ -5908,6 +6253,43 @@ function drawMinimap() {
       box.h * mapScale
     );
   }
+  if (safeZoneSnapshot.enabled) {
+    minimap.strokeStyle = safeZoneSnapshot.damage > 0 ? "rgba(95,232,255,.92)" : "rgba(255,255,255,.48)";
+    minimap.lineWidth = safeZoneSnapshot.stage === "shrinking" ? 3.5 : 2.5;
+    minimap.beginPath();
+    minimap.arc(
+      110 + safeZoneSnapshot.x * mapScale,
+      110 + safeZoneSnapshot.z * mapScale,
+      safeZoneSnapshot.radius * mapScale,
+      0,
+      Math.PI * 2
+    );
+    minimap.stroke();
+  }
+  for (const station of vehicleRepairStations) {
+    const x = 110 + station.x * mapScale;
+    const z = 110 + station.z * mapScale;
+    minimap.strokeStyle = "rgba(101,242,160,.9)";
+    minimap.lineWidth = 2;
+    minimap.beginPath();
+    minimap.moveTo(x - 3.5, z);
+    minimap.lineTo(x + 3.5, z);
+    minimap.moveTo(x, z - 3.5);
+    minimap.lineTo(x, z + 3.5);
+    minimap.stroke();
+  }
+  for (const ping of teamPingMeshes.values()) {
+    const x = 110 + ping.snapshot.x * mapScale;
+    const z = 110 + ping.snapshot.z * mapScale;
+    minimap.fillStyle = ping.snapshot.color === "red" ? "#ff8a70" : "#fff36b";
+    minimap.beginPath();
+    minimap.moveTo(x, z - 5);
+    minimap.lineTo(x + 4, z);
+    minimap.lineTo(x, z + 5);
+    minimap.lineTo(x - 4, z);
+    minimap.closePath();
+    minimap.fill();
+  }
   const me = players.get(self.id);
   if (me || self.joined) {
     const selfX = 110 + self.position.x * mapScale;
@@ -6137,6 +6519,8 @@ function animate() {
   }
 
   updateVehicleVisuals(delta);
+  updateSafeZoneVisual(delta);
+  updateTeamPings(delta);
   updateAutomaticDoors(delta);
   if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);

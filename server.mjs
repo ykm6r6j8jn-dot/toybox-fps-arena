@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
@@ -32,6 +33,9 @@ const ashinagaDamage = 86;
 const barrierDurationMs = 7000;
 const barrierRespawnMs = 15000;
 const spawnProtectionMs = 2200;
+const vehicleMaxHealth = 600;
+const vehicleDisabledMs = 9000;
+const vehicleRepairPerSecond = 72;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
 const powerupRespawnMs = 18_000;
 const powerupDurationMs = 10_000;
@@ -750,6 +754,10 @@ function createVehicles(now = Date.now()) {
     throttle: 0,
     steer: 0,
     braking: false,
+    health: vehicleMaxHealth,
+    maxHealth: vehicleMaxHealth,
+    disabledUntil: 0,
+    repairing: false,
     lastInputAt: 0,
     updatedAt: now
   }]));
@@ -791,6 +799,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     relationMode: normalizeRelationMode(relationMode),
     partySize: size,
     matchStarted: false,
+    roundStartedAt: 0,
     maxHumanPlayers: maxPlayers,
     weaponStats: Object.create(null),
     movementStats: { samples: 0, moving: 0, airborne: 0 },
@@ -1531,7 +1540,11 @@ function publicVehicle(vehicle) {
     yaw: vehicle.yaw,
     speed: vehicle.speed,
     driverId: vehicle.driverId || "",
-    color: vehicle.color
+    color: vehicle.color,
+    health: Math.max(0, Math.round(vehicle.health || 0)),
+    maxHealth: vehicle.maxHealth || vehicleMaxHealth,
+    disabledUntil: vehicle.disabledUntil || 0,
+    repairing: Boolean(vehicle.repairing)
   };
 }
 
@@ -1808,7 +1821,13 @@ function releasePlayerVehicle(room, player, placeBeside = true) {
 function tryEnterVehicle(room, player, vehicleId) {
   if (!room?.vehicles || player.isBot || player.eliminated || player.health <= 0 || player.vehicleId) return;
   const vehicle = room.vehicles.get(String(vehicleId || ""));
-  if (!vehicle || vehicle.driverId || Math.hypot(vehicle.x - player.x, vehicle.z - player.z) > 3.35) return;
+  if (
+    !vehicle ||
+    vehicle.driverId ||
+    vehicle.health <= 0 ||
+    (vehicle.disabledUntil || 0) > Date.now() ||
+    Math.hypot(vehicle.x - player.x, vehicle.z - player.z) > 3.35
+  ) return;
   vehicle.driverId = player.id;
   vehicle.throttle = 0;
   vehicle.steer = 0;
@@ -1827,6 +1846,28 @@ function updateVehicles(room, now) {
   for (const vehicle of room.vehicles?.values?.() || []) {
     const delta = Math.min(0.14, Math.max(0.016, (now - (vehicle.updatedAt || now - 80)) / 1000));
     vehicle.updatedAt = now;
+    vehicle.maxHealth ||= vehicleMaxHealth;
+    if (!Number.isFinite(vehicle.health)) vehicle.health = vehicle.maxHealth;
+
+    if ((vehicle.disabledUntil || 0) > now || vehicle.health <= 0) {
+      vehicle.speed = 0;
+      vehicle.throttle = 0;
+      vehicle.steer = 0;
+      vehicle.braking = true;
+      vehicle.repairing = false;
+      if ((vehicle.disabledUntil || 0) > now) continue;
+      if (vehicleCollides(room, vehicle, vehicle.spawnX, vehicle.spawnZ)) {
+        vehicle.disabledUntil = now + 1000;
+        continue;
+      }
+      vehicle.x = vehicle.spawnX;
+      vehicle.z = vehicle.spawnZ;
+      vehicle.yaw = vehicle.spawnYaw;
+      vehicle.health = vehicle.maxHealth;
+      vehicle.disabledUntil = 0;
+      addFeed(room, "ロードスターが再起動", vehicle.color === "red" ? "red" : "blue");
+    }
+
     const driver = vehicle.driverId ? room.players.get(vehicle.driverId) : null;
     if (!driver || driver.eliminated || driver.health <= 0) {
       if (driver) releasePlayerVehicle(room, driver, false);
@@ -1849,6 +1890,14 @@ function updateVehicles(room, now) {
     if (vehicle.braking) vehicle.speed *= Math.max(0, 1 - delta * 7.5);
     else if (Math.abs(throttle) < 0.02) vehicle.speed *= Math.max(0, 1 - delta * 1.45);
     if (Math.abs(vehicle.speed) < 0.025) vehicle.speed = 0;
+
+    const wasRepairing = Boolean(vehicle.repairing);
+    const repairStation = vehicleRepairStations.find((station) => Math.hypot(vehicle.x - station.x, vehicle.z - station.z) <= station.radius);
+    vehicle.repairing = Boolean(repairStation && Math.abs(vehicle.speed) <= 1.2 && vehicle.health < vehicle.maxHealth);
+    if (vehicle.repairing) {
+      vehicle.health = Math.min(vehicle.maxHealth, vehicle.health + vehicleRepairPerSecond * delta);
+      if (!wasRepairing && driver && !driver.isBot) send(driver.ws, { type: "vehicle_repair", station: repairStation.id });
+    }
 
     const speedRatio = clamp(Math.abs(vehicle.speed) / 8, 0, 1);
     if (speedRatio > 0.025) {
@@ -1880,6 +1929,41 @@ function updateVehicles(room, now) {
       activeDriver.z = vehicle.z;
     }
   }
+}
+
+function updateSafeZone(room, now) {
+  if (room.matchStarted && !room.roundStartedAt) room.roundStartedAt = now;
+  const safeZone = computeSafeZone({
+    roundStartedAt: room.roundStartedAt,
+    now,
+    mode: room.mode,
+    matchStarted: room.matchStarted,
+    winner: room.winner
+  });
+  room.safeZone = safeZone;
+  if (!safeZone.enabled || safeZone.damage <= 0) return safeZone;
+
+  for (const player of room.players.values()) {
+    if (player.creative || player.eliminated || player.health <= 0 || !isOutsideSafeZone(player, safeZone, 0.4)) continue;
+    if (now < (player.nextZoneDamageAt || 0)) continue;
+    player.nextZoneDamageAt = now + 1000;
+    const damage = Math.min(player.health, safeZone.damage);
+    player.health = Math.max(0, player.health - safeZone.damage);
+    player.damageTaken = (player.damageTaken || 0) + damage;
+    broadcast(room, {
+      type: "hit",
+      shooter: "safe-zone",
+      shooterName: "危険エリア",
+      target: player.id,
+      damage,
+      weapon: "危険エリア"
+    });
+    if (player.health > 0) continue;
+    player.deaths = (player.deaths || 0) + 1;
+    addFeed(room, `${player.name} が危険エリアで脱落`, player.color);
+    handleDeath(room, null, player);
+  }
+  return safeZone;
 }
 
 wss.on("connection", (ws) => {
@@ -2019,7 +2103,9 @@ wss.on("connection", (ws) => {
       }
 
       const id = crypto.randomUUID();
-      const spawn = spawnPoint(room.players.size);
+      const spawn = room.safeZone?.enabled && room.safeZone.damage > 0
+        ? safeRespawnPoint(room)
+        : spawnPoint(room.players.size);
       if (room.relationMode === "coop" && !room.playerTeam) {
         room.playerTeam = teams.has(String(message.team || "")) ? String(message.team) : "blue";
       }
@@ -2062,6 +2148,8 @@ wss.on("connection", (ws) => {
         vehicleId: "",
         lastStateAt: Date.now(),
         nextImpactAt: 0,
+        nextTeamPingAt: 0,
+        nextZoneDamageAt: 0,
         yaw: 0,
         pitch: 0,
         lastSeen: Date.now(),
@@ -2150,12 +2238,39 @@ wss.on("connection", (ws) => {
 
     if (message.type === "vehicle_input") {
       const vehicle = currentRoom.vehicles?.get?.(currentPlayer.vehicleId || "");
-      if (!vehicle || vehicle.driverId !== currentPlayer.id) return;
+      if (!vehicle || vehicle.driverId !== currentPlayer.id || vehicle.health <= 0 || (vehicle.disabledUntil || 0) > Date.now()) return;
       vehicle.throttle = clamp(Number(message.throttle) || 0, -1, 1);
       vehicle.steer = clamp(Number(message.steer) || 0, -1, 1);
       vehicle.braking = Boolean(message.braking);
       vehicle.lastInputAt = Date.now();
       currentPlayer.lastSeen = vehicle.lastInputAt;
+      return;
+    }
+
+    if (message.type === "team_ping") {
+      if (currentPlayer.eliminated || currentPlayer.health <= 0) return;
+      const now = Date.now();
+      if (now < (currentPlayer.nextTeamPingAt || 0)) return;
+      currentPlayer.nextTeamPingAt = now + 900;
+      const requested = vectorFrom(message.point);
+      const deltaX = requested.x - currentPlayer.x;
+      const deltaY = requested.y - currentPlayer.y;
+      const deltaZ = requested.z - currentPlayer.z;
+      const distance = Math.hypot(deltaX, deltaY, deltaZ);
+      const scale = distance > 96 ? 96 / distance : 1;
+      const ping = {
+        id: crypto.randomUUID(),
+        playerId: currentPlayer.id,
+        name: currentPlayer.name,
+        color: currentPlayer.color,
+        x: clamp(currentPlayer.x + deltaX * scale, -arenaHalfSize + 1, arenaHalfSize - 1),
+        y: clamp(currentPlayer.y + deltaY * scale, 0.08, 42),
+        z: clamp(currentPlayer.z + deltaZ * scale, -arenaHalfSize + 1, arenaHalfSize - 1),
+        expiresAt: now + 8500
+      };
+      for (const teammate of currentRoom.players.values()) {
+        if (!teammate.isBot && teammate.color === currentPlayer.color) send(teammate.ws, { type: "team_ping", ping });
+      }
       return;
     }
 
@@ -2409,7 +2524,7 @@ setInterval(() => {
   for (const room of rooms.values()) {
     let removedHuman = false;
     for (const player of room.players.values()) {
-    if (!player.isBot && now - player.lastSeen > 45_000) {
+      if (!player.isBot && now - player.lastSeen > 45_000) {
         if (player.vehicleId) releasePlayerVehicle(room, player, false);
         player.ws.close();
         room.players.delete(player.id);
@@ -2426,6 +2541,7 @@ setInterval(() => {
     updatePowerups(room, now);
     updateDonPunchProjectiles(room, now);
     updateVehicles(room, now);
+    const safeZone = updateSafeZone(room, now);
     updateCpuPlayers(room, now);
     updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
@@ -2464,7 +2580,8 @@ setInterval(() => {
       vehicles: [...room.vehicles.values()].map(publicVehicle),
       barrier: room.barrier,
       healthPickup: room.healthPickup,
-      powerups: room.powerups
+      powerups: room.powerups,
+      safeZone
     });
   }
 }, 110);
@@ -2596,6 +2713,60 @@ function progressFocusTask(room, player, kind, amount = 1) {
   send(player.ws, { type: "sound", sound: "reload" });
 }
 
+function nearestVehicleHit(room, origin, direction, range) {
+  let best = null;
+  for (const vehicle of room.vehicles?.values?.() || []) {
+    const center = { x: vehicle.x, y: 0.86, z: vehicle.z };
+    const targetDistance = projectionToRay(center, origin, direction);
+    if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room.arena)) continue;
+    const missDistance = distanceToRay(center, origin, direction, range);
+    if (missDistance > 1.45) continue;
+    if (!best || targetDistance < best.targetDistance) best = { vehicle, targetDistance };
+  }
+  return best;
+}
+
+function applyVehicleDamage(room, shooter, vehicle, damage, weapon) {
+  if (!vehicle || vehicle.health <= 0 || (vehicle.disabledUntil || 0) > Date.now()) return;
+  const scaledDamage = Math.max(4, Math.round(damage * 0.72));
+  vehicle.health = Math.max(0, vehicle.health - scaledDamage);
+  vehicle.repairing = false;
+  broadcast(room, {
+    type: "hit",
+    shooter: shooter.id,
+    shooterName: shooter.name,
+    target: `vehicle:${vehicle.id}`,
+    damage: scaledDamage,
+    weapon: `${weapon} / 車両`
+  });
+  const driver = vehicle.driverId ? room.players.get(vehicle.driverId) : null;
+  if (driver && !driver.isBot) {
+    send(driver.ws, { type: "vehicle_damage", vehicleId: vehicle.id, damage: scaledDamage, health: vehicle.health });
+  }
+  if (vehicle.health > 0) return;
+
+  const destroyedAt = Date.now();
+  if (driver) {
+    releasePlayerVehicle(room, driver, true);
+    send(driver.ws, { type: "vehicle_status", vehicleId: "", spawn: { x: driver.x, y: driver.y, z: driver.z } });
+  }
+  vehicle.driverId = "";
+  vehicle.speed = 0;
+  vehicle.throttle = 0;
+  vehicle.steer = 0;
+  vehicle.braking = true;
+  vehicle.disabledUntil = destroyedAt + vehicleDisabledMs;
+  addFeed(room, `${shooter.name} がロードスターを停止`, shooter.color);
+  broadcast(room, {
+    type: "vehicle_destroyed",
+    vehicleId: vehicle.id,
+    x: vehicle.x,
+    y: 0.9,
+    z: vehicle.z,
+    respawnAt: vehicle.disabledUntil
+  });
+}
+
 function applyShot(room, shooter, origin, direction, weapon = "rifle") {
   const baseDamage = weaponDamage.get(weapon) || 25;
   const boosted = !shooter.isBot && Date.now() < (shooter.damageBoostUntil || 0);
@@ -2617,7 +2788,14 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle") {
     }
   }
 
+  const vehicleHit = nearestVehicleHit(room, origin, direction, range);
   const coreHit = room.mode === "castle" ? nearestCastleCoreHit(room, shooter, origin, direction, range) : null;
+  const nearestActorDistance = Math.min(bestTargetDistance, coreHit?.targetDistance ?? Infinity);
+  if (vehicleHit && vehicleHit.targetDistance <= nearestActorDistance + 0.22) {
+    const damage = weaponDamageAtDistance(weapon, rawDamage, vehicleHit.targetDistance, range);
+    applyVehicleDamage(room, shooter, vehicleHit.vehicle, damage, weapon);
+    return { hit: "vehicle", targetDistance: vehicleHit.targetDistance };
+  }
   if (coreHit && (!best || coreHit.targetDistance < bestTargetDistance)) {
     const damage = weaponDamageAtDistance(weapon, rawDamage, coreHit.targetDistance, range);
     applyCastleCoreDamage(room, shooter, coreHit.core, damage);
@@ -2730,16 +2908,16 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
   broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage, weapon });
 }
 
-function handleDeath(room, shooter, target) {
+function handleDeath(room, _shooter, target) {
   if (target.vehicleId) releasePlayerVehicle(room, target, true);
   if (room.mode === "practice") {
     addFeed(room, `${target.name} 復帰練習`, target.color);
-    respawnPlayer(target);
+    respawnPlayer(target, room);
     return;
   }
 
   if (room.mode === "castle") {
-    respawnPlayer(target);
+    respawnPlayer(target, room);
     return;
   }
 
@@ -2749,10 +2927,10 @@ function handleDeath(room, shooter, target) {
       target.eliminated = true;
       target.health = 0;
       addFeed(room, `${target.name} ライフ終了`, target.color);
-      checkSurvivalWinner(room, shooter);
+      checkSurvivalWinner(room);
       return;
     }
-    respawnPlayer(target);
+    respawnPlayer(target, room);
     addFeed(room, `${target.name} 残りライフ${target.lives}`, target.color);
     return;
   }
@@ -2761,16 +2939,38 @@ function handleDeath(room, shooter, target) {
   target.health = 0;
   target.lives = 0;
   addFeed(room, `${target.name} 脱落`, target.color);
-  checkSurvivalWinner(room, shooter);
+  checkSurvivalWinner(room);
 }
 
-function respawnPlayer(player) {
-  const spawn = spawnPoint(Math.floor(Math.random() * 16));
-  Object.assign(player, spawn, { health: maxHealth, eliminated: false, spawnProtectedUntil: Date.now() + spawnProtectionMs, vehicleId: "" });
+function safeRespawnPoint(room) {
+  const safeZone = room?.safeZone;
+  if (!safeZone?.enabled || safeZone.damage <= 0) return spawnPoint(Math.floor(Math.random() * 20));
+  const usableRadius = Math.max(4, safeZone.radius - 4.5);
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * usableRadius;
+    const x = clamp(safeZone.x + Math.cos(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
+    const z = clamp(safeZone.z + Math.sin(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
+    if (cpuCollides(x, z, 0.72, room.arena)) continue;
+    return { x, y: 1.6, z, yaw: Math.atan2(x - safeZone.x, z - safeZone.z) };
+  }
+  const fallback = findNearestCpuSafeSpot(safeZone.x, safeZone.z, 0.72, room.arena);
+  return { x: fallback.x, y: 1.6, z: fallback.z, yaw: Math.atan2(fallback.x - safeZone.x, fallback.z - safeZone.z) };
+}
+
+function respawnPlayer(player, room) {
+  const spawn = safeRespawnPoint(room);
+  Object.assign(player, spawn, {
+    health: maxHealth,
+    eliminated: false,
+    spawnProtectedUntil: Date.now() + spawnProtectionMs,
+    nextZoneDamageAt: Date.now() + 1200,
+    vehicleId: ""
+  });
   if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
 }
 
-function checkSurvivalWinner(room, shooter) {
+function checkSurvivalWinner(room) {
   if (room.winner || room.mode === "practice") return;
   const aliveTeams = new Set([...room.players.values()]
     .filter((player) => !player.eliminated && player.health > 0)
@@ -2783,7 +2983,7 @@ function checkSurvivalWinner(room, shooter) {
     name: color === "blue" ? "ブルーチーム" : "レッドチーム",
     at: Date.now()
   };
-  addFeed(room, `${room.winner.name} 勝利！`, shooter.color);
+  addFeed(room, `${room.winner.name} 勝利！`, color);
   broadcast(room, { type: "celebration", winner: room.winner });
 }
 
@@ -2827,7 +3027,9 @@ function setCpuCount(room, count) {
   for (let i = 0; i < target; i += 1) {
     const id = `cpu-${room.code}-${i}`;
     if (room.players.has(id)) continue;
-    const spawn = spawnPoint(i + 3);
+    const spawn = room.safeZone?.enabled && room.safeZone.damage > 0
+      ? safeRespawnPoint(room)
+      : spawnPoint(i + 3);
     room.players.set(id, {
       id,
       ws: null,
@@ -2860,6 +3062,8 @@ function setCpuCount(room, count) {
       spawnProtectedUntil: Date.now() + spawnProtectionMs,
       vehicleId: "",
       nextImpactAt: 0,
+      nextTeamPingAt: 0,
+      nextZoneDamageAt: 0,
       yaw: spawn.yaw,
       pitch: 0,
       lastSeen: Date.now(),
@@ -2876,7 +3080,9 @@ function setCpuCount(room, count) {
 }
 
 function createCpuPlayer(room, id, index, team) {
-  const spawn = spawnPoint(index + 3);
+  const spawn = room.safeZone?.enabled && room.safeZone.damage > 0
+    ? safeRespawnPoint(room)
+    : spawnPoint(index + 3);
   return {
     id,
     ws: null,
@@ -2909,6 +3115,8 @@ function createCpuPlayer(room, id, index, team) {
     spawnProtectedUntil: Date.now() + spawnProtectionMs,
     vehicleId: "",
     nextImpactAt: 0,
+    nextTeamPingAt: 0,
+    nextZoneDamageAt: 0,
     yaw: spawn.yaw,
     pitch: 0,
     lastSeen: Date.now(),
@@ -3024,6 +3232,7 @@ function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, r
 
 function resetRoomScores(room) {
   room.winner = null;
+  room.roundStartedAt = room.matchStarted ? Date.now() : 0;
   room.weaponStats = Object.create(null);
   room.movementStats = { samples: 0, moving: 0, airborne: 0 };
   if (room.mode === "castle" && !room.playerTeam) {
@@ -3058,6 +3267,8 @@ function resetRoomScores(room) {
     player.vehicleId = "";
     player.lastStateAt = Date.now();
     player.nextImpactAt = 0;
+    player.nextZoneDamageAt = 0;
+    player.nextTeamPingAt = 0;
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
@@ -3071,6 +3282,13 @@ function resetRoomScores(room) {
   room.barrier = { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 };
   room.healthPickup = { ...randomPickupSpawn(room.arena), available: false, respawnAt: room.mode === "oneLife" ? nextHealthPickupAt() : 0 };
   room.powerups = createPowerups();
+  room.safeZone = computeSafeZone({
+    roundStartedAt: room.roundStartedAt,
+    now: Date.now(),
+    mode: room.mode,
+    matchStarted: room.matchStarted,
+    winner: room.winner
+  });
 }
 
 function tryPickupBarrier(room, player) {
@@ -3262,10 +3480,16 @@ function updateCpuPlayers(room, now) {
     const radius = 16 + bot.botIndex * 8.5;
     const attackCore = room.mode === "castle" ? room.castleCores?.[oppositeTeam(bot.color)] : null;
     const coreOrbit = 13 + bot.botIndex * 1.8;
-    const desiredX = attackCore?.health > 0
+    const seekSafeZone = isOutsideSafeZone(bot, room.safeZone, 3.2);
+    const safeOrbit = Math.min(7, Math.max(2.5, (room.safeZone?.radius || 18) * 0.22));
+    const desiredX = seekSafeZone
+      ? clamp(room.safeZone.x + Math.cos(phase + bot.botIndex) * safeOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
+      : attackCore?.health > 0
       ? clamp(attackCore.x + Math.cos(phase + bot.botIndex) * coreOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
       : clamp(Math.cos(phase) * radius, -arenaHalfSize + 2, arenaHalfSize - 2);
-    const desiredZ = attackCore?.health > 0
+    const desiredZ = seekSafeZone
+      ? clamp(room.safeZone.z + Math.sin(phase + bot.botIndex) * safeOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
+      : attackCore?.health > 0
       ? clamp(attackCore.z + Math.sin(phase + bot.botIndex) * coreOrbit, -arenaHalfSize + 2, arenaHalfSize - 2)
       : clamp(Math.sin(phase * 0.9) * radius, -arenaHalfSize + 2, arenaHalfSize - 2);
     bot.learnedSpeedBoost = samples > 30 && movingRatio > 0.62 ? 0.38 : 0;

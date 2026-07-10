@@ -1090,6 +1090,8 @@ body.driving .mobile-jump {
 .mobile-weapon,
 .mobile-reload,
 .mobile-scope,
+.mobile-heal,
+.mobile-ping,
 .mobile-skill {
   width: 52px;
   height: 52px;
@@ -1108,6 +1110,12 @@ body.driving .mobile-jump {
 .mobile-scope {
   right: max(166px, calc(env(safe-area-inset-right) + 166px));
   bottom: max(92px, calc(env(safe-area-inset-bottom) + 92px));
+}
+
+.mobile-ping {
+  right: max(224px, calc(env(safe-area-inset-right) + 224px));
+  bottom: max(112px, calc(env(safe-area-inset-bottom) + 112px));
+  color: #fff36b;
 }
 
 .mobile-skill {
@@ -4018,7 +4026,7 @@ body.celebrating::after {
     height: max(var(--mobile-fire-size), 96px);
   }
 
-  .mobile-jump {
+.mobile-jump {
     right: max(126px, calc(env(safe-area-inset-right) + 126px));
     bottom: max(38px, calc(env(safe-area-inset-bottom) + 38px));
     width: 74px;
@@ -4329,6 +4337,13 @@ body.celebrating::after {
   }
 }
 
+.mobile-heal {
+  left: max(144px, calc(env(safe-area-inset-left) + 144px));
+  bottom: max(86px, calc(env(safe-area-inset-bottom) + 86px));
+  color: #d8ffe5;
+  background: rgba(30, 102, 72, 0.82);
+}
+
 @media (pointer: coarse), (max-width: 560px), (max-height: 520px) and (orientation: landscape) {
   .mobile-fullscreen-guide {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -4378,7 +4393,6 @@ body.celebrating::after {
   body.game-active .top-left,
   body.game-active #resetButton,
   body.game-active #scoreboardToggle,
-  body.game-active .latency,
   body.game-active .chat-panel,
   body.game-active .feed,
   body.game-active .flow-card,
@@ -4395,6 +4409,22 @@ body.celebrating::after {
     right: max(8px, env(safe-area-inset-right));
     gap: 0;
     background: transparent;
+  }
+
+  body.game-active .latency {
+    display: flex;
+    min-width: 84px;
+    min-height: 48px;
+    padding: 0 7px;
+    justify-content: center;
+    background: rgba(8, 21, 30, 0.7);
+    border: 1px solid rgba(214, 248, 255, 0.16);
+    font-size: 10px;
+  }
+
+  body.game-active .latency svg {
+    width: 15px;
+    height: 15px;
   }
 
   body.game-active #settingsButton {
@@ -4590,8 +4620,8 @@ body.celebrating::after {
   }
 
   body.game-active .fire-button {
-    width: 68px;
-    height: 68px;
+    width: var(--mobile-fire-size);
+    height: var(--mobile-fire-size);
     opacity: 0.68;
     background: rgba(255, 90, 82, 0.72);
   }
@@ -4702,5 +4732,181 @@ body.celebrating::after {
   *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+
+.zone-status,
+.vehicle-status {
+  position: fixed;
+  z-index: 8;
+  display: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(8, 25, 37, 0.8);
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(3, 14, 23, 0.24);
+  pointer-events: none;
+}
+
+.zone-status.active {
+  top: 326px;
+  left: 28px;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 2px 10px;
+  min-width: 148px;
+  padding: 8px 11px;
+  transform: none;
+  border-color: rgba(95, 232, 255, 0.42);
+}
+
+.zone-status span {
+  color: #75eaff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.zone-status strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.zone-status small {
+  grid-column: 1 / -1;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 10px;
+}
+
+.zone-status.shrinking {
+  border-color: rgba(255, 243, 107, 0.62);
+}
+
+.zone-status.danger {
+  border-color: rgba(255, 92, 82, 0.9);
+  background: rgba(82, 21, 25, 0.9);
+}
+
+.zone-status.danger span,
+.zone-status.danger small {
+  color: #ffb3a9;
+}
+
+.vehicle-status.show {
+  left: 50%;
+  bottom: 122px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  width: 224px;
+  min-height: 58px;
+  padding: 9px 12px;
+  transform: translateX(-50%);
+}
+
+.vehicle-status > span,
+.vehicle-status em {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.vehicle-status strong {
+  justify-self: end;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vehicle-status strong small {
+  margin-left: 2px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 10px;
+}
+
+.vehicle-status > div {
+  grid-column: 1 / -1;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.vehicle-status > div i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #65f2a0;
+  transition: width 0.16s linear, background-color 0.16s ease;
+}
+
+.vehicle-status em {
+  grid-column: 3;
+  grid-row: 1;
+  color: #fff36b;
+}
+
+.vehicle-status.repairing {
+  border-color: rgba(101, 242, 160, 0.76);
+}
+
+.vehicle-status.repairing > div i {
+  background: #65f2a0;
+}
+
+.vehicle-status.danger {
+  border-color: rgba(255, 92, 82, 0.78);
+}
+
+.vehicle-status.danger > div i {
+  background: #ff5c52;
+}
+
+.zone-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  opacity: 0;
+  box-shadow: inset 0 0 108px 20px rgba(38, 171, 255, 0.72);
+  background: rgba(38, 128, 210, 0.08);
+  transition: opacity 0.16s ease;
+  pointer-events: none;
+}
+
+body.outside-zone .zone-vignette {
+  opacity: 1;
+}
+
+@media (pointer: coarse), (max-width: 860px) {
+  body.game-active .zone-status.active {
+    top: max(58px, calc(env(safe-area-inset-top) + 56px));
+    left: max(108px, calc(env(safe-area-inset-left) + 108px));
+    grid-template-columns: auto auto;
+    min-width: 122px;
+    padding: 5px 8px;
+    transform: none;
+    background: rgba(8, 25, 37, 0.68);
+  }
+
+  body.game-active .zone-status strong {
+    font-size: 14px;
+  }
+
+  body.game-active .vehicle-status.show {
+    bottom: max(12px, calc(env(safe-area-inset-bottom) + 12px));
+    width: 206px;
+    min-height: 50px;
+    padding: 6px 9px;
+    background: rgba(8, 25, 37, 0.7);
+  }
+
+  body.game-active .vehicle-status strong {
+    font-size: 15px;
+  }
+
+  body.game-active .mobile-ping {
+    right: max(224px, calc(env(safe-area-inset-right) + 224px));
+    bottom: max(112px, calc(env(safe-area-inset-bottom) + 112px));
   }
 }

@@ -5,7 +5,7 @@ const endpoint = process.env.SMOKE_WS || "ws://localhost:5188/ws";
 function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
-    const state = { name, id: "", room: "", snapshots: [], respawns: [], hits: [] };
+    const state = { name, id: "", room: "", snapshots: [], respawns: [], hits: [], teamPings: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 5000);
 
     ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
@@ -20,6 +20,7 @@ function openClient(name, room = "", options = {}) {
       if (message.type === "snapshot") state.snapshots.push(message);
       if (message.type === "respawn") state.respawns.push(message);
       if (message.type === "hit") state.hits.push(message);
+      if (message.type === "team_ping") state.teamPings.push(message.ping);
     });
     ws.on("error", reject);
   });
@@ -109,25 +110,47 @@ async function shootUntilHit(shooter, targetId, label) {
 const roomCode = testRoomCode();
 const alpha = await openClient("Alpha", roomCode, { cpuFill: false });
 const beta = await openClient("Beta", alpha.state.room, { cpuFill: false });
+const gamma = await openClient("Gamma", alpha.state.room, { cpuFill: false });
 
 await waitFor(
   () => alpha.state.snapshots.some((snapshot) =>
     snapshot.players?.some((player) => player.name === "Alpha") &&
     snapshot.players?.some((player) => player.name === "Beta") &&
+    snapshot.players?.some((player) => player.name === "Gamma") &&
     !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
   ) &&
     beta.state.snapshots.some((snapshot) =>
       snapshot.players?.some((player) => player.name === "Alpha") &&
       snapshot.players?.some((player) => player.name === "Beta") &&
+      snapshot.players?.some((player) => player.name === "Gamma") &&
+      !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
+    ) &&
+    gamma.state.snapshots.some((snapshot) =>
+      snapshot.players?.some((player) => player.name === "Alpha") &&
+      snapshot.players?.some((player) => player.name === "Beta") &&
+      snapshot.players?.some((player) => player.name === "Gamma") &&
       !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
     ),
-  "both clients see each other without CP fill"
+  "three clients see each other without CP fill"
 );
 
 await waitFor(
-  () => latestSnapshot(alpha)?.vehicles?.length === 4 && latestSnapshot(beta)?.vehicles?.length === 4,
-  "both clients receive shared vehicles"
+  () => [alpha, beta, gamma].every((client) =>
+    latestSnapshot(client)?.vehicles?.length === 4 &&
+    latestSnapshot(client)?.vehicles?.every((vehicle) => vehicle.health === 600 && vehicle.maxHealth === 600) &&
+    latestSnapshot(client)?.safeZone?.enabled === true &&
+    latestSnapshot(client)?.safeZone?.stage === "waiting"
+  ),
+  "clients receive shared vehicle durability and safe-zone state"
 );
+
+send(alpha.ws, { type: "team_ping", point: { x: 6, y: 0.1, z: 6 } });
+await waitFor(
+  () => alpha.state.teamPings.length > 0 && gamma.state.teamPings.length > 0,
+  "same-team clients receive a shared ping"
+);
+await delay(420);
+if (beta.state.teamPings.length > 0) throw new Error("enemy client received a team-only ping");
 
 await moveAlong(beta, beta.state.id, [
   { x: 32, z: -16 },
@@ -158,6 +181,29 @@ await waitFor(() => {
 
 send(beta.ws, { type: "vehicle_exit" });
 await waitFor(() => !latestPlayer(beta, beta.state.id)?.vehicleId, "target exits roadster");
+
+const damagedVehicleBefore = latestSnapshot(beta).vehicles.find((vehicle) => vehicle.id === "roadster-west");
+const betaAfterExit = latestPlayer(beta, beta.state.id);
+const vehicleShotDirection = {
+  x: damagedVehicleBefore.x - betaAfterExit.x,
+  y: 0.86 - betaAfterExit.y,
+  z: damagedVehicleBefore.z - betaAfterExit.z
+};
+const vehicleShotLength = Math.hypot(vehicleShotDirection.x, vehicleShotDirection.y, vehicleShotDirection.z) || 1;
+send(beta.ws, {
+  type: "shoot",
+  origin: { x: betaAfterExit.x, y: betaAfterExit.y, z: betaAfterExit.z },
+  direction: {
+    x: vehicleShotDirection.x / vehicleShotLength,
+    y: vehicleShotDirection.y / vehicleShotLength,
+    z: vehicleShotDirection.z / vehicleShotLength
+  },
+  weapon: "rifle"
+});
+await waitFor(
+  () => latestSnapshot(beta)?.vehicles?.find((vehicle) => vehicle.id === "roadster-west")?.health < damagedVehicleBefore.health,
+  "roadster takes server-authoritative weapon damage"
+);
 
 await moveAlong(beta, beta.state.id, [
   { x: -66, z: 10 },
@@ -195,4 +241,5 @@ await waitFor(
 
 alpha.ws.close();
 beta.ws.close();
-console.log(`smoke passed: room ${alpha.state.room}, clients synced, roadster driven, hit resolved`);
+gamma.ws.close();
+console.log(`smoke passed: room ${alpha.state.room}, team ping isolated, safe zone synced, roadster driven/damaged, hit resolved`);
