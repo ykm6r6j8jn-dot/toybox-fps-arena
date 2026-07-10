@@ -10,6 +10,7 @@
 - RESILIENCE reconnect screenshot: `/tmp/donpachi-resilience-reconnecting.png`
 - RESILIENCE mobile reconnect screenshot: `/tmp/donpachi-resilience-mobile-reconnecting.png`
 - clean mobile lobby screenshot: `/tmp/donpachi-resilience-mobile-lobby.png`
+- RESILIENCE public mobile screenshot: `/tmp/donpachi-resilience-public-mobile.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
 - state: FPS match active in global room `DONPCH`, one-life mode, CP fill disabled for frame-budget QA
@@ -77,7 +78,7 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Build, controls, gameplay-systems, network-systems, and three-client multiplayer smoke tests: passed. Multiplayer smoke verifies same-id reconnect, bounded spawn protection, lag-compensated historical hit resolution, team-only ping delivery, synchronized safe-zone state, four vehicle durability snapshots, exclusive ownership, movement replication, weapon damage to a roadster, exit, player damage, and one-life elimination.
 - Bundle: main gameplay JS `149.32 kB` (`53.33 kB` gzip), CSS `75.21 kB` (`15.67 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: SAFE DISTRICT release passed against `https://toybox-fps-arena.onrender.com`; RESILIENCE deployment verification is pending the current Render publish.
+- Public verification: RESILIENCE passed against `https://toybox-fps-arena.onrender.com` on Render commit `ca77063`. The published HTML referenced `index-DGLvA2nP.js` and `index-CAkLFCuz.css`; the public smartphone browser held `60fps`, showed adaptive `165ms` interpolation at roughly `187ms` RTT, resumed the same session after a forced WebSocket close, and logged no console errors.
 - `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
