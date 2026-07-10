@@ -11,9 +11,11 @@
 - RESILIENCE mobile reconnect screenshot: `/tmp/donpachi-resilience-mobile-reconnecting.png`
 - clean mobile lobby screenshot: `/tmp/donpachi-resilience-mobile-lobby.png`
 - RESILIENCE public mobile screenshot: `/tmp/donpachi-resilience-public-mobile.png`
+- COMBAT 2.0 desktop screenshot: `/tmp/donpachi-combat-desktop.png`
+- COMBAT 2.0 mobile screenshot: `/tmp/donpachi-combat-mobile.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
-- state: FPS match active in global room `DONPCH`, one-life mode, CP fill disabled for frame-budget QA
+- state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for COMBAT 2.0 browser QA
 
 ## Full-view comparison evidence
 
@@ -39,6 +41,9 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - Network resilience: unexpected disconnects preserve the server-owned player state for 15 seconds. The client reconnects with a session-only resume token, freezes combat input while disconnected, and restores the same player id, health, score, equipment, and match state.
 - Network rendering: remote players and shared vehicles use timestamped interpolation, capped short extrapolation, teleport-history resets, yaw-wrap handling, measured packet jitter, and an adaptive 122-220ms interpolation window.
 - Shot fairness: the client sends the server timestamp of the rendered target state and the server applies a bounded 220ms rewind while retaining authoritative weapon range and wall blocking.
+- Combat precision: player hits use server-owned head, torso, and limb volumes after lag rewind. Head damage is `1.38x`, torso damage is `1.0x`, limb damage is `0.82x`, and the reported damage is capped to the target's actual remaining health.
+- Weapon handling: every gun has independent shot bloom, bloom ceiling, and recovery speed. Movement and airborne states widen aim, sneak reduces movement bloom, and DMR/AWM scope plus touch compensation tighten it; the four-part reticle reflects the live spread.
+- Damage readability: rapid hits from one attack aggregate for 160ms, so the Type 95 three-round head burst displays as `!-75` instead of three cards. Incoming attacks show a camera-relative direction arc, hit zone, weapon, attacker, and exact damage.
 
 ## Comparison history
 
@@ -57,6 +62,11 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 13. P1: the mobile lobby showed movement, firing, score, and combat HUD behind the scrollable join surface. Those controls now remain hidden until a match is active, while the full lobby still scrolls to poker, online players, and update history.
 14. P2: the mobile settings content could scroll visually above its sticky title. Removed the negative top offset; the close control and title now stay cleanly fixed while all settings remain reachable.
 15. P1: multiplayer smoke tests could inherit players from the shared local `DONPCH` room and become spawn-order dependent. The test now starts and stops its own isolated production server, so reconnect, vehicle, safe-zone, ping, shot, and elimination checks are deterministic.
+16. P1: the former single `0.8m` player hit radius made shots above the torso count as hits and prevented meaningful precision. Replaced it with server-authoritative skin-aware head, torso, and limb intersections while preserving wall, range, vehicle, castle-core, and lag-rewind ordering.
+17. P1: mobile auto-aim targeted `0.65m` above the network pose, which only worked because the old hit sphere was oversized. It now targets the rendered torso center and keeps automatic fire body-biased rather than granting assisted headshots.
+18. P1: Type 95 and shotgun pellets generated repeated damage cards and repeated non-fatal feed rows. Damage cards now aggregate for 160ms, hit-marker totals accumulate, hit confirmation audio is rate-limited, and non-fatal server feed rows are throttled to one per 220ms.
+19. P1: mobile damage cards could cover the ammo panel. They now occupy a centered `180px` lane below the score; measured bounds were `x332-512`, while ammo stayed at `x754-834`, settings at `x788-836`, and fire/jump remained in the lower-right control area.
+20. P2: managed or embedded Chromium could reject Pointer Lock and leave an unhandled error. Both synchronous rejection and Promise rejection are now contained while normal click-to-fire continues.
 
 ## Findings
 
@@ -75,10 +85,10 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Desktop render: `58-60fps` observed after settle in the in-app browser.
 - Mobile render: `60fps` observed at `844 x 390`; the actual latency/FPS text remained visible.
 - Interaction: mobile settings opened a `320px`-high scrollable panel with `706px` content; active controls measured at `48px` or larger, the fire target honored its `88px` setting, and pairwise button-overlap/document-overflow checks returned zero.
-- Build, controls, gameplay-systems, network-systems, and three-client multiplayer smoke tests: passed. Multiplayer smoke verifies same-id reconnect, bounded spawn protection, lag-compensated historical hit resolution, team-only ping delivery, synchronized safe-zone state, four vehicle durability snapshots, exclusive ownership, movement replication, weapon damage to a roadster, exit, player damage, and one-life elimination.
-- Bundle: main gameplay JS `149.32 kB` (`53.33 kB` gzip), CSS `75.21 kB` (`15.67 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+- Build, controls, gameplay-systems, network-systems, combat-systems, and three-client multiplayer smoke tests: passed. Combat tests cover head/torso/limb intersections, exact damage multipliers, aim spread/recovery, constant-time direction normalization, same-id reconnect, a lag-compensated headshot, and an exact `200` total applied-damage cap.
+- Bundle: main gameplay JS `152.80 kB` (`54.62 kB` gzip), CSS `76.62 kB` (`15.97 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: RESILIENCE passed against `https://toybox-fps-arena.onrender.com` on Render commit `ca77063`. The published HTML referenced `index-DGLvA2nP.js` and `index-CAkLFCuz.css`; the public smartphone browser held `60fps`, showed adaptive `165ms` interpolation at roughly `187ms` RTT, resumed the same session after a forced WebSocket close, and logged no console errors.
+- Public verification: RESILIENCE remains live at `https://toybox-fps-arena.onrender.com`; COMBAT 2.0 deployment verification is pending this pass.
 - `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed

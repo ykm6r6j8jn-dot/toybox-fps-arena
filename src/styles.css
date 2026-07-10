@@ -18,6 +18,7 @@
   --muted: rgba(247, 251, 255, 0.72);
   --mobile-fire-size: 88px;
   --mobile-jump-right: 128px;
+  --reticle-gap: 8px;
   --app-width: 100vw;
   --app-height: 100vh;
   --keyboard-offset: 0px;
@@ -670,7 +671,7 @@ body.audio-needs-unlock .audio-unlock-button {
 }
 
 .hit-marker.show {
-  animation: hit-pop 0.48s ease-out;
+  animation: hit-pop 0.8s ease-out;
 }
 
 .hit-marker.danger {
@@ -681,6 +682,46 @@ body.audio-needs-unlock .audio-unlock-button {
 .hit-marker.blocked {
   background: rgba(255, 210, 58, 0.94);
   color: #111;
+}
+
+.hit-marker.headshot {
+  background: #ffd84d;
+  color: #101820;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.42), 0 0 24px rgba(255, 190, 77, 0.52);
+}
+
+.damage-direction {
+  --damage-angle: 0rad;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 5;
+  width: 154px;
+  height: 154px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(var(--damage-angle));
+}
+
+.damage-direction i {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 44px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, #ff5a52 24%, #fff 50%, #ff5a52 76%, transparent);
+  box-shadow: 0 0 16px rgba(255, 69, 69, 0.72);
+  transform: translateX(-50%);
+}
+
+.damage-direction.headshot i {
+  background: linear-gradient(90deg, transparent, #ffd84d 24%, #fff 50%, #ffd84d 76%, transparent);
+  box-shadow: 0 0 18px rgba(255, 216, 77, 0.8);
+}
+
+.damage-direction.show {
+  animation: damage-direction-pop 1.05s ease-out;
 }
 
 .damage-feed {
@@ -705,7 +746,7 @@ body.audio-needs-unlock .audio-unlock-button {
   border-radius: 7px;
   background: rgba(12, 22, 32, 0.78);
   box-shadow: 0 10px 24px rgba(8, 18, 28, 0.18);
-  animation: damage-card-pop 2.1s ease-out forwards;
+  animation: damage-card-pop 2.9s ease-out forwards;
 }
 
 .damage-card.taken {
@@ -715,6 +756,16 @@ body.audio-needs-unlock .audio-unlock-button {
 
 .damage-card.blocked {
   border-left-color: var(--yellow);
+}
+
+.damage-card.headshot {
+  border-left-color: #ffd84d;
+  background: rgba(52, 39, 12, 0.88);
+  box-shadow: 0 10px 24px rgba(8, 18, 28, 0.18), inset 0 0 0 1px rgba(255, 216, 77, 0.2);
+}
+
+.damage-card.stacked {
+  animation: damage-card-restack 2.9s ease-out forwards;
 }
 
 .damage-card strong {
@@ -918,6 +969,40 @@ body.flowing .center-reticle span {
   }
 }
 
+@keyframes damage-direction-pop {
+  0% {
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 0.86;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes damage-card-restack {
+  0% {
+    opacity: 1;
+    transform: translateX(6px) scale(0.97);
+  }
+  10% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  82% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(10px) scale(0.98);
+  }
+}
+
 @keyframes damage-card-pop {
   0% {
     opacity: 0;
@@ -964,11 +1049,11 @@ body.flowing .center-reticle span {
 }
 
 .center-reticle span:nth-child(1) {
-  top: 4px;
+  bottom: calc(50% + var(--reticle-gap));
 }
 
 .center-reticle span:nth-child(2) {
-  bottom: 4px;
+  top: calc(50% + var(--reticle-gap));
 }
 
 .center-reticle span:nth-child(3),
@@ -980,11 +1065,11 @@ body.flowing .center-reticle span {
 }
 
 .center-reticle span:nth-child(3) {
-  left: 4px;
+  right: calc(50% + var(--reticle-gap));
 }
 
 .center-reticle span:nth-child(4) {
-  right: 4px;
+  left: calc(50% + var(--reticle-gap));
 }
 
 body.scoped .center-reticle {
@@ -4597,11 +4682,13 @@ body.celebrating::after {
   }
 
   body.game-active .damage-feed {
-    top: max(54px, calc(env(safe-area-inset-top) + 54px));
-    right: max(8px, env(safe-area-inset-right));
-    width: 132px;
+    left: 50%;
+    top: max(62px, calc(env(safe-area-inset-top) + 62px));
+    right: auto;
+    width: 180px;
     gap: 4px;
     pointer-events: none;
+    transform: translateX(-50%);
   }
 
   body.game-active .damage-card {

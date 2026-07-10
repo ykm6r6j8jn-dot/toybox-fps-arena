@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
 import { appendMotionSample, rewindPose } from "./network-systems.mjs";
+import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
@@ -2880,19 +2881,17 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle", viewedAt 
   const rawDamage = shooter.isBot ? Math.max(6, Math.ceil(baseDamage * cpuDamageMultiplier)) : Math.ceil(baseDamage * damageMultiplier);
   const range = weaponRange.get(weapon) || 70;
   let best;
-  let bestDistance = Infinity;
+  let bestHit = null;
   let bestTargetDistance = Infinity;
   for (const target of room.players.values()) {
     if (target.id === shooter.id || target.disconnectedAt || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
     const rewound = rewindPose(target.poseHistory || [], viewedAt, now, lagCompensationMs) || target;
-    const targetPoint = { x: rewound.x, y: rewound.y, z: rewound.z };
-    const targetDistance = projectionToRay(targetPoint, origin, direction);
-    if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room.arena)) continue;
-    const distance = distanceToRay(targetPoint, origin, direction, range);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestTargetDistance = targetDistance;
+    const hit = resolveHumanoidHit(origin, direction, rewound, range, target.skin);
+    if (!hit || lineBlocked(origin, direction, hit.distance, room.arena)) continue;
+    if (hit.distance < bestTargetDistance) {
+      bestTargetDistance = hit.distance;
       best = target;
+      bestHit = hit;
     }
   }
 
@@ -2910,10 +2909,11 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle", viewedAt 
     return { hit: "castle", targetDistance: coreHit.targetDistance };
   }
 
-  if (!best || bestDistance >= 0.8) return null;
-  const damage = weaponDamageAtDistance(weapon, rawDamage, bestTargetDistance, range);
-  applyDirectDamage(room, shooter, best, damage, weapon);
-  return { hit: "player", targetDistance: bestTargetDistance };
+  if (!best || !bestHit) return null;
+  const rangedDamage = weaponDamageAtDistance(weapon, rawDamage, bestTargetDistance, range);
+  const damage = hitZoneDamage(rangedDamage, bestHit.zone);
+  applyDirectDamage(room, shooter, best, damage, weapon, { hitZone: bestHit.zone });
+  return { hit: "player", targetDistance: bestTargetDistance, hitZone: bestHit.zone };
 }
 
 function nearestCastleCoreHit(room, shooter, origin, direction, range) {
@@ -2972,23 +2972,26 @@ function resolveCastleRoundByTimer(room, now) {
   broadcast(room, { type: "celebration", winner: room.winner });
 }
 
-function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメージ") {
+function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメージ", metadata = {}) {
   if (target.disconnectedAt) return;
+  const hitZone = ["head", "torso", "limbs"].includes(metadata.hitZone) ? metadata.hitZone : "";
+  const source = { x: shooter.x, y: shooter.y, z: shooter.z };
   if (target.creative) {
-    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
+    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon, hitZone, source });
     return;
   }
   if ((target.spawnProtectedUntil || 0) > Date.now()) {
-    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon: "スポーン保護" });
+    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon: "スポーン保護", hitZone, source });
     return;
   }
   if ((target.shieldUntil || 0) > Date.now()) {
     addFeed(room, `${target.name} がバリアで防いだ`, target.color);
-    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon });
+    broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon, hitZone, source });
     return;
   }
   const appliedDamage = Math.min(target.health, damage);
-  target.health = Math.max(0, target.health - damage);
+  target.health = Math.max(0, target.health - appliedDamage);
+  const headshot = hitZone === "head" && appliedDamage > 0;
   shooter.hits = (shooter.hits || 0) + 1;
   shooter.damageDealt = (shooter.damageDealt || 0) + appliedDamage;
   target.damageTaken = (target.damageTaken || 0) + appliedDamage;
@@ -3000,21 +3003,28 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
     shooter.donPunchCharge = Math.min(8, (shooter.donPunchCharge || 0) + 1);
     awardCombatGrowth(room, shooter);
     target.deaths += 1;
-    addFeed(room, `${shooter.name} が ${target.name} をヒット`, shooter.color);
+    addFeed(room, headshot ? `${shooter.name} が ${target.name} をヘッドショット` : `${shooter.name} が ${target.name} をヒット`, shooter.color);
     if (!target.isBot) {
       send(target.ws, {
         type: "death_info",
         shooter: shooter.name,
         weapon,
+        hitZone,
+        headshot,
         from: { x: shooter.x, y: shooter.y, z: shooter.z }
       });
     }
     handleDeath(room, shooter, target);
   } else {
     awardCombatGrowth(room, shooter);
-    addFeed(room, `${shooter.name} -> ${target.name}`, shooter.color);
+    const now = Date.now();
+    if (shooter.lastHitFeedTarget !== target.id || now >= (shooter.nextHitFeedAt || 0)) {
+      addFeed(room, `${shooter.name} -> ${target.name}`, shooter.color);
+      shooter.lastHitFeedTarget = target.id;
+      shooter.nextHitFeedAt = now + 220;
+    }
   }
-  broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage, weapon });
+  broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: appliedDamage, weapon, hitZone, headshot, source });
 }
 
 function handleDeath(room, _shooter, target) {

@@ -27,6 +27,8 @@ import X from "lucide/dist/esm/icons/x.js";
 import Zap from "lucide/dist/esm/icons/zap.js";
 import { appendMotionSample, sampleMotion } from "../network-systems.mjs";
 import type { MotionSample, SampledMotion } from "../network-systems.mjs";
+import { computeAimSpread, damageDirectionAngle, recoverShotBloom } from "../combat-systems.mjs";
+import type { HitZone } from "../combat-systems.mjs";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -413,6 +415,7 @@ const mobileInteract = $("#mobileInteract") as HTMLButtonElement;
 const interactionHint = $("#interactionHint");
 const interactionHintText = $("#interactionHintText");
 const hitMarker = $("#hitMarker");
+const damageDirection = $("#damageDirection");
 const damageFeed = $("#damageFeed");
 const killcamCard = $("#killcamCard");
 const killcamTitle = $("#killcamTitle");
@@ -618,17 +621,20 @@ type Gun = {
   recoilYaw: number;
   recoilDrift: number;
   kick: number;
+  bloomPerShot: number;
+  maxBloom: number;
+  bloomRecovery: number;
   tracerColor: number;
 };
 const guns: Gun[] = [
-  { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, recoilPitch: 0.008, recoilYaw: 0.007, recoilDrift: 0.0008, kick: 0.2, tracerColor: 0xfff36b },
-  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, recoilPitch: 0.016, recoilYaw: 0.015, recoilDrift: 0.0032, kick: 0.31, tracerColor: 0xffb347 },
-  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, recoilPitch: 0.005, recoilYaw: 0.004, recoilDrift: -0.0006, kick: 0.17, tracerColor: 0x78f5ff },
-  { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, recoilPitch: 0.0045, recoilYaw: 0.014, recoilDrift: -0.0015, kick: 0.16, tracerColor: 0x44d7ff },
-  { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, recoilPitch: 0.042, recoilYaw: 0.026, recoilDrift: 0.004, kick: 0.48, tracerColor: 0xff8a3d },
-  { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, recoilPitch: 0.024, recoilYaw: 0.007, recoilDrift: -0.001, kick: 0.36, tracerColor: 0xdfff7a },
-  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, recoilPitch: 0.058, recoilYaw: 0.019, recoilDrift: 0.0024, kick: 0.64, tracerColor: 0xffffff },
-  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, recoilPitch: 0.012, recoilYaw: 0.011, recoilDrift: 0.002, kick: 0.26, tracerColor: 0xff4dff }
+  { kind: "rifle", name: "AR", magSize: 30, fireDelay: 115, pelletCount: 1, spread: 0.006, range: 72, recoilPitch: 0.008, recoilYaw: 0.007, recoilDrift: 0.0008, kick: 0.2, bloomPerShot: 0.0015, maxBloom: 0.011, bloomRecovery: 0.018, tracerColor: 0xfff36b },
+  { kind: "ak47", name: "AK47", magSize: 30, fireDelay: 135, pelletCount: 1, spread: 0.011, range: 78, recoilPitch: 0.016, recoilYaw: 0.015, recoilDrift: 0.0032, kick: 0.31, bloomPerShot: 0.0027, maxBloom: 0.019, bloomRecovery: 0.022, tracerColor: 0xffb347 },
+  { kind: "aug", name: "AUG", magSize: 30, fireDelay: 118, pelletCount: 1, spread: 0.004, range: 86, recoilPitch: 0.005, recoilYaw: 0.004, recoilDrift: -0.0006, kick: 0.17, bloomPerShot: 0.001, maxBloom: 0.007, bloomRecovery: 0.016, tracerColor: 0x78f5ff },
+  { kind: "smg", name: "SMG", magSize: 40, fireDelay: 72, pelletCount: 1, spread: 0.014, range: 44, recoilPitch: 0.0045, recoilYaw: 0.014, recoilDrift: -0.0015, kick: 0.16, bloomPerShot: 0.0022, maxBloom: 0.023, bloomRecovery: 0.03, tracerColor: 0x44d7ff },
+  { kind: "shotgun", name: "SG", magSize: 8, fireDelay: 520, pelletCount: 6, spread: 0.055, range: 26, recoilPitch: 0.042, recoilYaw: 0.026, recoilDrift: 0.004, kick: 0.48, bloomPerShot: 0.01, maxBloom: 0.034, bloomRecovery: 0.055, tracerColor: 0xff8a3d },
+  { kind: "marksman", name: "DMR", magSize: 12, fireDelay: 310, pelletCount: 1, spread: 0.002, range: 105, recoilPitch: 0.024, recoilYaw: 0.007, recoilDrift: -0.001, kick: 0.36, bloomPerShot: 0.004, maxBloom: 0.011, bloomRecovery: 0.024, tracerColor: 0xdfff7a },
+  { kind: "awm", name: "AWM", magSize: 5, fireDelay: 1180, pelletCount: 1, spread: 0.0008, range: 135, recoilPitch: 0.058, recoilYaw: 0.019, recoilDrift: 0.0024, kick: 0.64, bloomPerShot: 0.007, maxBloom: 0.012, bloomRecovery: 0.018, tracerColor: 0xffffff },
+  { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, recoilPitch: 0.012, recoilYaw: 0.011, recoilDrift: 0.002, kick: 0.26, bloomPerShot: 0.002, maxBloom: 0.014, bloomRecovery: 0.02, tracerColor: 0xff4dff }
 ];
 let currentGunIndex = 0;
 const currentGun = () => guns[currentGunIndex];
@@ -693,6 +699,12 @@ let celebrationSeenWinner = "";
 let weaponView: THREE.Group | null = null;
 let scoped = false;
 let weaponKick = 0;
+let shotBloom = 0;
+let lastReticleGap = -1;
+let lastHitConfirmAt = 0;
+let hitMarkerTotal = 0;
+let lastHitMarkerAt = 0;
+let lastHitMarkerMode = "";
 let weaponSwayClock = 0;
 let muzzleFlashMesh: THREE.Group | null = null;
 let muzzleFlashLight: THREE.PointLight | null = null;
@@ -770,6 +782,7 @@ const vehicleMotionTracks = new Map<string, MotionSample[]>();
 const renderedPlayerMotion = new Map<string, SampledMotion>();
 const vehicleMeshes = new Map<string, { group: THREE.Group; wheels: THREE.Mesh[]; wheelSpin: number; statusBeacon: THREE.Mesh }>();
 const teamPingMeshes = new Map<string, { group: THREE.Group; expiresAt: number; snapshot: TeamPingSnapshot }>();
+const damageNoticeGroups = new Map<string, { card: HTMLDivElement; value: HTMLElement; total: number; at: number; timer: number; headshot: boolean; blocked: boolean; kind: "dealt" | "taken" }>();
 let safeZoneSnapshot: SafeZoneSnapshot = { enabled: false, phase: -1, stage: "inactive", x: 0, z: 0, radius: 92, nextRadius: 92, damage: 0, endsAt: 0 };
 let safeZoneVisual: { group: THREE.Group; ring: THREE.Mesh; wall: THREE.Mesh } | null = null;
 let serverClockOffsetMs = 0;
@@ -3161,7 +3174,12 @@ canvas.addEventListener("pointerdown", (event) => {
   if (event.pointerType === "touch") return;
   event.preventDefault();
   if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock();
+    try {
+      const lockResult = (canvas.requestPointerLock as unknown as () => void | Promise<void>).call(canvas);
+      if (lockResult instanceof Promise) void lockResult.catch(() => undefined);
+    } catch {
+      // Embedded and managed browsers can deny pointer lock; shooting still works.
+    }
   }
   if (event.button === 1) {
     sendTeamPing();
@@ -4161,6 +4179,7 @@ function handleMessage(event: MessageEvent<string>) {
       lastSnapshotArrivalAt = 0;
       snapshotJitterMs = 0;
       networkInterpolationDelayMs = 132;
+      shotBloom = 0;
     }
     self.id = message.id;
     self.room = message.room;
@@ -4317,8 +4336,12 @@ function handleMessage(event: MessageEvent<string>) {
     const damagedSelf = message.target === self.id;
     const damage = Number(message.damage) || 0;
     const blocked = Boolean(message.blocked);
-    showHitIndicator(damagedSelf, damage, blocked);
-    pushDamageNotice(damagedSelf ? "taken" : "dealt", damage, message.weapon, damagedSelf ? message.shooter : message.target, blocked);
+    const hitZone = normalizeHitZone(message.hitZone);
+    const headshot = Boolean(message.headshot) && hitZone === "head";
+    showHitIndicator(damagedSelf, damage, blocked, hitZone);
+    pushDamageNotice(damagedSelf ? "taken" : "dealt", damage, message.weapon, damagedSelf ? message.shooter : message.target, blocked, hitZone);
+    if (damagedSelf && message.source) showDamageDirection(message.source, headshot);
+    if (!damagedSelf && damage > 0) playHitConfirmSound(headshot);
     pulseHaptic(blocked ? 12 : damagedSelf ? 32 : 16);
     if (damagedSelf && damage > 0) playDamageSound();
   }
@@ -4366,6 +4389,7 @@ function handleMessage(event: MessageEvent<string>) {
     self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : self.yaw;
     self.pitch = 0;
     self.velocity.set(0, 0, 0);
+    shotBloom = 0;
     self.health = maxHealth;
     spectatorCard.classList.remove("show");
     showToast("リスポーン");
@@ -4613,6 +4637,18 @@ function playNoiseHit(duration = 0.12, volume = 0.08, frequency = 360) {
 function playDamageSound() {
   playNoiseHit(0.16, 0.12, 260);
   playSweep(170, 74, 0.18, 0.05, "sawtooth");
+}
+
+function playHitConfirmSound(headshot = false) {
+  const now = performance.now();
+  if (now - lastHitConfirmAt < 55) return;
+  lastHitConfirmAt = now;
+  if (headshot) {
+    playTone(1240, 0.055, 0.026);
+    window.setTimeout(() => playTone(1780, 0.07, 0.022), 42);
+    return;
+  }
+  playTone(760, 0.045, 0.018);
 }
 
 function playVehicleDamageSound() {
@@ -4962,6 +4998,20 @@ function collides(position: THREE.Vector3) {
   return false;
 }
 
+function currentAimSpread(gun = currentGun()) {
+  const moving = mobileMoveIntensity > 0.08 || keys.has("KeyW") || keys.has("KeyA") || keys.has("KeyS") || keys.has("KeyD");
+  const sneaking = keys.has("ShiftLeft");
+  const groundY = groundHeightAt(self.position.x, self.position.z, self.position.y);
+  const airborne = Math.abs(self.position.y - groundY) > 0.42;
+  return computeAimSpread(gun.spread, shotBloom, {
+    moving,
+    sneaking,
+    airborne,
+    scoped: scoped && isScopedGun(gun),
+    touch: isCoarsePointer()
+  });
+}
+
 function shoot() {
   if (fpsConnectionRecovering) return;
   const me = players.get(self.id);
@@ -4977,11 +5027,12 @@ function shoot() {
   self.ammo -= 1;
   applyShotRecoil(gun);
   flashMuzzle();
+  const spread = currentAimSpread(gun);
   for (let i = 0; i < gun.pelletCount; i += 1) {
     const direction = getLookDirection();
-    direction.x += (Math.random() - 0.5) * gun.spread;
-    direction.y += (Math.random() - 0.5) * gun.spread;
-    direction.z += (Math.random() - 0.5) * gun.spread;
+    direction.x += (Math.random() - 0.5) * spread;
+    direction.y += (Math.random() - 0.5) * spread;
+    direction.z += (Math.random() - 0.5) * spread;
     direction.normalize();
     send({
       type: "shoot",
@@ -4992,6 +5043,7 @@ function shoot() {
       direction: { x: direction.x, y: direction.y, z: direction.z }
     });
   }
+  shotBloom = Math.min(gun.maxBloom, shotBloom + gun.bloomPerShot);
 }
 
 function applyShotRecoil(gun: Gun) {
@@ -5023,6 +5075,7 @@ function switchGun(index: number) {
   const next = (index + guns.length) % guns.length;
   if (next === currentGunIndex) return;
   currentGunIndex = next;
+  shotBloom = 0;
   scoped = false;
   document.body.classList.remove("scoped");
   self.ammo = currentGun().magSize;
@@ -5033,6 +5086,12 @@ function switchGun(index: number) {
 
 function updateWeaponMotion(delta: number) {
   if (!weaponView) return;
+  shotBloom = recoverShotBloom(shotBloom, currentGun().bloomRecovery, delta);
+  const reticleGap = THREE.MathUtils.clamp(5 + currentAimSpread() * 520, 6, 24);
+  if (Math.abs(reticleGap - lastReticleGap) > 0.2) {
+    lastReticleGap = reticleGap;
+    document.documentElement.style.setProperty("--reticle-gap", `${reticleGap.toFixed(1)}px`);
+  }
   weaponView.visible = !activeVehicleId;
   if (activeVehicleId) {
     if (muzzleFlashMesh) muzzleFlashMesh.visible = false;
@@ -5106,14 +5165,14 @@ spectatorNext.addEventListener("click", () => {
   spectatorLabel.textContent = target ? `観戦中 ${target.name}` : "観戦待機";
 });
 
-function showKillcam(message: { shooter?: string; weapon?: string; from?: { x: number; y: number; z: number } }) {
+function showKillcam(message: { shooter?: string; weapon?: string; hitZone?: string; headshot?: boolean; from?: { x: number; y: number; z: number } }) {
   const from = message.from;
   const distance = from ? Math.hypot(from.x - self.position.x, from.y - self.position.y, from.z - self.position.z) : 0;
-  const angle = from ? Math.atan2(from.x - self.position.x, from.z - self.position.z) : 0;
-  const relative = THREE.MathUtils.radToDeg(THREE.MathUtils.euclideanModulo(angle - self.yaw + Math.PI, Math.PI * 2) - Math.PI);
+  const relative = from ? THREE.MathUtils.radToDeg(damageDirectionAngle(self.yaw, self.position, from)) : 0;
   const side = Math.abs(relative) < 35 ? "正面" : Math.abs(relative) > 145 ? "背後" : relative > 0 ? "右側" : "左側";
   killcamTitle.textContent = `${message.shooter || "敵"} に倒された`;
-  killcamDetail.textContent = `${message.weapon || "攻撃"} / ${side}${distance ? ` / 約${Math.round(distance)}m` : ""}`;
+  const zone = message.headshot || message.hitZone === "head" ? "HEADSHOT / " : message.hitZone === "limbs" ? "脚部 / " : "";
+  killcamDetail.textContent = `${zone}${weaponDisplayName(message.weapon)} / ${side}${distance ? ` / 約${Math.round(distance)}m` : ""}`;
   killcamUntil = performance.now() + 2000;
   killcamCard.classList.add("show");
 }
@@ -6274,6 +6333,10 @@ function weaponDisplayName(weapon: unknown) {
   return guns.find((gun) => gun.kind === key)?.name || sanitizeTextInput(key, 12, "銃");
 }
 
+function normalizeHitZone(value: unknown): HitZone | "" {
+  return value === "head" || value === "torso" || value === "limbs" ? value : "";
+}
+
 function combatTargetName(targetId: unknown) {
   const id = String(targetId || "");
   if (id.includes("castle-core")) return "城コア";
@@ -6281,33 +6344,96 @@ function combatTargetName(targetId: unknown) {
   return sanitizeTextInput(player?.name, 14, "相手").replace(/[<>]/g, "") || "相手";
 }
 
-function pushDamageNotice(kind: "dealt" | "taken", damage: number, weapon: unknown, targetId: unknown, blocked = false) {
+function damageNoticeValue(total: number, kind: "dealt" | "taken", blocked: boolean, headshot: boolean) {
+  if (blocked) return "防御";
+  return `${headshot ? "!" : ""}${kind === "taken" ? "-" : "+"}${Math.max(0, Math.round(total))}`;
+}
+
+function scheduleDamageNoticeRemoval(key: string, group: { card: HTMLDivElement; value: HTMLElement; total: number; at: number; timer: number; headshot: boolean; blocked: boolean; kind: "dealt" | "taken" }) {
+  if (group.timer) window.clearTimeout(group.timer);
+  group.timer = window.setTimeout(() => {
+    group.card.remove();
+    if (damageNoticeGroups.get(key) === group) damageNoticeGroups.delete(key);
+  }, 3000);
+}
+
+function pushDamageNotice(kind: "dealt" | "taken", damage: number, weapon: unknown, targetId: unknown, blocked = false, hitZone: HitZone | "" = "") {
   const roundedDamage = Math.max(0, Math.round(damage));
+  const headshot = hitZone === "head" && !blocked && roundedDamage > 0;
+  const key = `${kind}:${String(weapon || "")}:${String(targetId || "")}:${hitZone}:${blocked}`;
+  const now = performance.now();
+  const existing = damageNoticeGroups.get(key);
+  if (existing && existing.card.isConnected && now - existing.at <= 160) {
+    existing.total += roundedDamage;
+    existing.at = now;
+    existing.value.textContent = damageNoticeValue(existing.total, kind, blocked, headshot);
+    existing.card.classList.remove("stacked");
+    void existing.card.offsetWidth;
+    existing.card.classList.add("stacked");
+    damageFeed.prepend(existing.card);
+    scheduleDamageNoticeRemoval(key, existing);
+    return;
+  }
   const card = document.createElement("div");
-  card.className = `damage-card ${kind}${blocked ? " blocked" : ""}`;
+  card.className = `damage-card ${kind}${blocked ? " blocked" : ""}${headshot ? " headshot" : ""}`;
 
   const value = document.createElement("strong");
-  value.textContent = blocked ? "防御" : `${kind === "taken" ? "-" : "+"}${roundedDamage}`;
+  value.textContent = damageNoticeValue(roundedDamage, kind, blocked, headshot);
 
   const detail = document.createElement("span");
   const title = document.createElement("b");
-  title.textContent = kind === "taken" ? "被ダメージ" : "与ダメージ";
-  detail.append(title, document.createTextNode(`${weaponDisplayName(weapon)} / ${combatTargetName(targetId)}`));
+  title.textContent = headshot ? "ヘッドショット" : hitZone === "limbs" && !blocked ? "脚部命中" : kind === "taken" ? "被ダメージ" : "与ダメージ";
+  const zoneLabel = blocked ? "" : hitZone === "torso" ? "BODY / " : hitZone === "limbs" ? "LIMB / " : "";
+  detail.append(title, document.createTextNode(`${zoneLabel}${weaponDisplayName(weapon)} / ${combatTargetName(targetId)}`));
 
   card.append(value, detail);
   damageFeed.prepend(card);
   while (damageFeed.childElementCount > 4) damageFeed.lastElementChild?.remove();
-  window.setTimeout(() => card.remove(), 2200);
+  const group = { card, value, total: roundedDamage, at: now, timer: 0, headshot, blocked, kind };
+  damageNoticeGroups.set(key, group);
+  scheduleDamageNoticeRemoval(key, group);
 }
 
-function showHitIndicator(damagedSelf: boolean, damage: number, blocked = false) {
-  hitMarker.textContent = blocked ? (damagedSelf ? "BARRIER" : "BLOCK") : damagedSelf ? `DAMAGE -${damage}` : damage ? `HIT +${damage}` : "HIT";
+function showHitIndicator(damagedSelf: boolean, damage: number, blocked = false, hitZone: HitZone | "" = "") {
+  const headshot = hitZone === "head" && !blocked && damage > 0;
+  const now = performance.now();
+  const mode = `${damagedSelf}:${blocked}:${hitZone}`;
+  if (!blocked && damage > 0 && mode === lastHitMarkerMode && now - lastHitMarkerAt <= 160) hitMarkerTotal += damage;
+  else hitMarkerTotal = damage;
+  lastHitMarkerMode = mode;
+  lastHitMarkerAt = now;
+  const displayDamage = Math.max(0, Math.round(hitMarkerTotal));
+  hitMarker.textContent = blocked
+    ? (damagedSelf ? "BARRIER" : "BLOCK")
+    : headshot
+      ? `HEADSHOT ${damagedSelf ? "-" : "+"}${displayDamage}`
+      : damagedSelf
+        ? `DAMAGE -${displayDamage}`
+        : displayDamage
+          ? `HIT +${displayDamage}`
+          : "HIT";
   hitMarker.classList.toggle("danger", damagedSelf);
   hitMarker.classList.toggle("blocked", blocked);
+  hitMarker.classList.toggle("headshot", headshot);
   hitMarker.classList.remove("show");
   void hitMarker.offsetWidth;
   hitMarker.classList.add("show");
-  if (!damagedSelf && damage > 0) addFlowReward(Math.min(22, 8 + damage / 5), damage >= 70 ? "大ダメージ" : "命中継続");
+  if (!damagedSelf && damage > 0) {
+    addFlowReward(headshot ? Math.min(30, 14 + damage / 4) : Math.min(22, 8 + damage / 5), headshot ? "HEADSHOT" : damage >= 70 ? "大ダメージ" : "命中継続");
+  }
+}
+
+function showDamageDirection(source: { x?: number; y?: number; z?: number }, headshot = false) {
+  const angle = damageDirectionAngle(self.yaw, self.position, {
+    x: Number(source.x) || 0,
+    y: Number(source.y) || 0,
+    z: Number(source.z) || 0
+  });
+  damageDirection.style.setProperty("--damage-angle", `${angle}rad`);
+  damageDirection.classList.toggle("headshot", headshot);
+  damageDirection.classList.remove("show");
+  void damageDirection.offsetWidth;
+  damageDirection.classList.add("show");
 }
 
 function addFlowReward(amount: number, label: string) {
@@ -6753,7 +6879,7 @@ function findMobileAimTarget() {
     const targetY = rendered?.y ?? target.y;
     const targetZ = rendered?.z ?? target.z;
     const dx = targetX - self.position.x;
-    const dy = targetY + 0.65 - self.position.y;
+    const dy = targetY - 0.68 - self.position.y;
     const dz = targetZ - self.position.z;
     const distance = Math.hypot(dx, dy, dz);
     if (distance <= 0.1 || distance > maxDistance) continue;

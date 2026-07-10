@@ -144,7 +144,7 @@ async function shootUntilHit(shooter, targetId, label) {
     });
     try {
       await waitFor(
-        () => shooter.state.hits?.some((hit) => hit.target === targetId && hit.damage === 25),
+        () => shooter.state.hits?.some((hit) => hit.target === targetId && hit.damage === 35 && hit.hitZone === "head" && hit.headshot),
         label,
         450
       );
@@ -309,7 +309,7 @@ send(alpha.ws, {
   weapon: "rifle"
 });
 await waitFor(
-  () => alpha.state.hits.slice(hitsBeforeRewindShot).some((hit) => hit.target === beta.state.id && hit.damage === 25),
+  () => alpha.state.hits.slice(hitsBeforeRewindShot).some((hit) => hit.target === beta.state.id && hit.damage === 35 && hit.hitZone === "head" && hit.headshot),
   "bounded lag compensation resolves the historical hit"
 );
 send(beta.ws, { type: "state", x: -44, y: 1.6, z: 16, yaw: 0, pitch: 0 });
@@ -340,11 +340,15 @@ await waitFor(
   ),
   "target is eliminated in one-life mode"
 );
+const appliedPlayerDamage = alpha.state.hits
+  .filter((hit) => hit.target === beta.state.id && !hit.blocked)
+  .reduce((total, hit) => total + Number(hit.damage || 0), 0);
+if (appliedPlayerDamage !== 200) throw new Error(`reported applied damage must equal target health, received ${appliedPlayerDamage}`);
 
 for (const client of [alpha, beta, gamma]) send(client.ws, { type: "leave" });
 await delay(80);
 for (const client of [alpha, beta, gamma]) client.ws.close(1000, "leave");
-console.log(`smoke passed: room ${alpha.state.room}, reconnect resumed, lag-compensated hit resolved, team ping isolated, safe zone synced, roadster driven/damaged`);
+console.log(`smoke passed: room ${alpha.state.room}, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/damaged`);
 } finally {
   await stopManagedServer();
 }
