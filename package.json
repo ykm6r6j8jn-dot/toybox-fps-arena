@@ -20,6 +20,7 @@
     "test:systems": "node scripts/gameplay-systems-test.mjs",
     "test:network": "node scripts/network-systems-test.mjs",
     "test:combat": "node scripts/combat-systems-test.mjs",
+    "test:movement": "node scripts/movement-systems-test.mjs",
     "verify:public": "node scripts/verify-public-url.mjs"
   },
   "dependencies": {

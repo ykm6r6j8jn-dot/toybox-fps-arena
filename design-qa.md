@@ -14,9 +14,12 @@
 - COMBAT 2.0 desktop screenshot: `/tmp/donpachi-combat-desktop.png`
 - COMBAT 2.0 mobile screenshot: `/tmp/donpachi-combat-mobile.png`
 - COMBAT 2.0 public mobile screenshot: `/tmp/donpachi-combat-public-mobile.png`
+- MOTION 2.0 desktop screenshot: `/tmp/donpachi-motion-desktop.jpg`
+- MOTION 2.0 mobile screenshot: `/tmp/donpachi-motion-mobile.jpg`
+- MOTION 2.0 remote runner screenshot: `/tmp/donpachi-motion-mobile-runner.jpg`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
-- state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for COMBAT 2.0 browser QA
+- state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for MOTION 2.0 browser QA
 
 ## Full-view comparison evidence
 
@@ -45,6 +48,9 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - Combat precision: player hits use server-owned head, torso, and limb volumes after lag rewind. Head damage is `1.38x`, torso damage is `1.0x`, limb damage is `0.82x`, and the reported damage is capped to the target's actual remaining health.
 - Weapon handling: every gun has independent shot bloom, bloom ceiling, and recovery speed. Movement and airborne states widen aim, sneak reduces movement bloom, and DMR/AWM scope plus touch compensation tighten it; the four-part reticle reflects the live spread.
 - Damage readability: rapid hits from one attack aggregate for 160ms, so the Type 95 three-round head burst displays as `!-75` instead of three cards. Incoming attacks show a camera-relative direction arc, hit zone, weapon, attacker, and exact damage.
+- Movement authority: the server normalizes unlimited yaw rotations, bounds horizontal and vertical state changes, preserves the shared high-force trampoline envelope, validates walls, and returns a targeted correction only when the requested pose is invalid.
+- Movement feel: desktop and touch input use responsive acceleration/deceleration, touch input has a radial dead zone plus low-speed response curve, full-forward touch hold sustains auto sprint, and 170ms jump buffering plus 135ms coyote time prevents dropped edge inputs without enabling repeat air jumps.
+- Character motion: remote bodies use measured network speed and vertical speed for interpolated leg, arm, and airborne poses. First-person walk and landing motion is reduced on touch devices and disabled by the operating system's reduced-motion preference.
 
 ## Comparison history
 
@@ -68,6 +74,13 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 18. P1: Type 95 and shotgun pellets generated repeated damage cards and repeated non-fatal feed rows. Damage cards now aggregate for 160ms, hit-marker totals accumulate, hit confirmation audio is rate-limited, and non-fatal server feed rows are throttled to one per 220ms.
 19. P1: mobile damage cards could cover the ammo panel. They now occupy a centered `180px` lane below the score; measured bounds were `x332-512`, while ammo stayed at `x754-834`, settings at `x788-836`, and fire/jump remained in the lower-right control area.
 20. P2: managed or embedded Chromium could reject Pointer Lock and leave an unhandled error. Both synchronous rejection and Promise rejection are now contained while normal click-to-fire continues.
+21. P1: rejected wall or speed movement previously remained visible on the client until a later state change, while the server silently used a different shooting origin. The server now returns a rate-limited authoritative correction and the client applies a short reconciliation or immediate large-error snap.
+22. P1: vertical state updates accepted an immediate request up to the arena ceiling. Normal movement now has a strict upward/downward envelope, while shared trampoline locations receive a separate envelope large enough for the `10x` launch stage.
+23. P1: yaw was clamped at two full rotations, so repeated turning could leave the remote model pinned at the boundary. Client input, recoil, aim assist, respawn, debug poses, and server state now normalize continuously to `[-PI, PI)`.
+24. P2: keyboard and touch jump requests lived for one render frame, making low-frame-rate or just-before-landing presses unreliable. A tested input buffer and short grounded grace now consume the request on the first legal frame.
+25. P2: touch auto sprint was extended only by pointer-move events, so holding the stick still could drop back to walking. The initial full-forward timestamp now drives sustained sprint independently of later pointer movement.
+26. P2: mobile aim target selection ran twice per firing frame and camera motion added redundant ground scans. The animation loop now reuses one target result and cached contact state, and reuses a movement scratch vector to avoid extra frame allocations.
+27. P2: the ground sweep allowed a surface up to `0.75-0.9m` above the current eye reference even while rising, which could classify an overhead edge as ground. Rising motion now accepts only surfaces at or below the current pose; descending and stair motion keep their normal landing tolerance.
 
 ## Findings
 
@@ -80,16 +93,16 @@ No actionable P0, P1, or P2 findings remain for this pass.
 
 ## Verification
 
-- Browser page identity and nonblank canvas: passed.
+- Browser page identity and nonblank canvas: passed for MOTION 2.0 at desktop `1440 x 900` and mobile `844 x 390`.
 - Framework overlay: none.
 - Console errors and warnings: none in desktop and mobile checks.
 - Desktop render: `58-60fps` observed after settle in the in-app browser.
-- Mobile render: `60fps` observed at `844 x 390`; the actual latency/FPS text remained visible.
-- Interaction: mobile settings opened a `320px`-high scrollable panel with `706px` content; active controls measured at `48px` or larger, the fire target honored its `88px` setting, and pairwise button-overlap/document-overflow checks returned zero.
-- Build, controls, gameplay-systems, network-systems, combat-systems, and three-client multiplayer smoke tests: passed. Combat tests cover head/torso/limb intersections, exact damage multipliers, aim spread/recovery, constant-time direction normalization, same-id reconnect, a lag-compensated headshot, and an exact `200` total applied-damage cap.
-- Bundle: main gameplay JS `152.80 kB` (`54.62 kB` gzip), CSS `76.62 kB` (`15.97 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+- Mobile render: `60fps` observed at `844 x 390`; the actual latency/FPS text remained visible. A 100ms-sampled mobile jump rose through `1.2m`, peaked at `1.9m`, fell back through `1.2m`, and returned to `0.0m` without a second jump by the first `900ms` HUD sample; desktop jump also completed normally.
+- Interaction: mobile settings opened a `320px`-high scrollable panel with `706px` content; active controls measured at `48px` or larger, the fire target remained `88px`, and pairwise button-overlap/document-overflow checks returned zero. A real second WebSocket player ran through the collision route and rendered with its name, weapon, and motion rig at `60fps`.
+- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, and three-client multiplayer smoke tests: passed. MOTION tests cover radial analog input, diagonal normalization, acceleration/deceleration, sustained auto sprint, buffered jumps, coyote timing, normal/trampoline authority envelopes, excessive horizontal/vertical warp rejection, yaw normalization, correction delivery, and unauthorized team-edit rejection.
+- Bundle: main gameplay JS `157.31 kB` (`56.35 kB` gzip), CSS `76.62 kB` (`15.97 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: COMBAT 2.0 is live at `https://toybox-fps-arena.onrender.com` from Render commit `ab0502d`. The public browser loaded `index-C-tgZEIX.js` and `index-BIae-yIk.css`; an ordinary WebSocket client reached the browser target through the collision-checked arena route and produced three server-authoritative Type 95 head hits for exactly `75` damage. At `844 x 390`, a later lethal hit rendered `!-50`, `ヘッドショット`, `95式`, attacker name, and the source-direction arc at `60fps`; the `180px` damage card remained separate from the ammo and settings controls with zero document overflow.
+- Public verification: COMBAT 2.0 remains live at `https://toybox-fps-arena.onrender.com`; MOTION 2.0 deployment verification is pending this pass.
 - `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
 
-final result: passed
+local result: passed; public deployment pending

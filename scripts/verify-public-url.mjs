@@ -27,7 +27,7 @@ if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.
 const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
-if (!pageHtml.includes("COMBAT 2.0 戦闘精度更新")) throw new Error("public page is missing the COMBAT 2.0 update marker");
+if (!pageHtml.includes("MOTION 2.0 操作・物理更新")) throw new Error("public page is missing the MOTION 2.0 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 

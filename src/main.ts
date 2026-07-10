@@ -29,6 +29,15 @@ import { appendMotionSample, sampleMotion } from "../network-systems.mjs";
 import type { MotionSample, SampledMotion } from "../network-systems.mjs";
 import { computeAimSpread, damageDirectionAngle, recoverShotBloom } from "../combat-systems.mjs";
 import type { HitZone } from "../combat-systems.mjs";
+import {
+  approachPlanarVelocity,
+  canConsumeBufferedJump,
+  curveStickInput,
+  groundSurfaceReach,
+  shouldAutoSprint,
+  toyboxTrampolinePads,
+  wrapAngle
+} from "../movement-systems.mjs";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -557,6 +566,7 @@ function inviteShareUrl(room: string, play: "fps" | "poker" = "fps") {
 }
 
 const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const dynamicShadowsAllowed = new URLSearchParams(location.search).get("ultra") === "1"
   && !coarsePointerQuery.matches
   && navigator.maxTouchPoints === 0
@@ -763,7 +773,21 @@ let scoreboardSignature = "";
 let feedSignature = "";
 let chatSignature = "";
 let lastToastAt = 0;
-let jumpQueued = false;
+let jumpBufferedUntil = 0;
+let coyoteGroundedUntil = 0;
+let movementSprinting = false;
+const planarVelocity = new THREE.Vector3();
+const movementStepScratch = new THREE.Vector3();
+const movementCorrectionTarget = new THREE.Vector3();
+let movementCorrectionActive = false;
+let movementCorrectionCount = 0;
+let lastMovementCorrectionReason = "";
+let wasGrounded = true;
+let localGrounded = true;
+let landingCameraKick = 0;
+let cameraBobPhase = 0;
+let cameraBobOffset = 0;
+let cameraStrafeOffset = 0;
 let lastDonPunchReady = false;
 let flowScore = 0;
 let flowCombo = 0;
@@ -778,6 +802,7 @@ let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
 const vehicleSnapshots = new Map<string, VehicleSnapshot>();
 const playerMotionTracks = new Map<string, MotionSample[]>();
+const playerAnimationPhases = new Map<string, number>();
 const vehicleMotionTracks = new Map<string, MotionSample[]>();
 const renderedPlayerMotion = new Map<string, SampledMotion>();
 const vehicleMeshes = new Map<string, { group: THREE.Group; wheels: THREE.Mesh[]; wheelSpin: number; statusBeacon: THREE.Mesh }>();
@@ -814,6 +839,7 @@ let mobileStickOriginY = 0;
 let mobileMoveIntensity = 0;
 let mobileMoveX = 0;
 let mobileMoveY = 0;
+let mobileSprintStartedAt = 0;
 let mobileBraking = false;
 let mobileFirePointer: number | null = null;
 let mobileFireLastX = 0;
@@ -2536,10 +2562,9 @@ function addToyboxArena() {
   addStairs("west highrise stairs", [-88, 0.15, -74], 31, 0.82, 0.78, Math.PI / 2);
   addStairs("east highrise stairs", [86, 0.15, 75], 34, 0.82, 0.78, -Math.PI / 2);
   addStairs("parking deck stairs", [-17, 0.15, 82], 12, 0.5, 1.0, Math.PI / 2);
-  addTrampoline("trampoline center", 0, 8, 2.4, 14.8);
-  addTrampoline("trampoline west", -18, -14, 2.2, 13.6);
-  addTrampoline("trampoline east", 20, 12, 2.2, 13.6);
-  addTrampoline("trampoline roof", -12.8, 20.2, 1.8, 12.8);
+  for (const trampoline of toyboxTrampolinePads) {
+    addTrampoline(trampoline.name, trampoline.x, trampoline.z, trampoline.radius, trampoline.force);
+  }
   addBarrierPowerup();
   addHealthPickupMesh();
 
@@ -2895,6 +2920,7 @@ function createPlayerMesh(player: PlayerState) {
   shield.position.y = 0.98;
   shield.visible = false;
   group.add(body, head, marker, weapon, shield, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove);
+  group.userData.motionRig = { body, leftArm, rightArm, leftLeg, rightLeg };
   if (skinId === "bee") {
     const stripeMaterial = makeMaterial(0x111820, 0.7);
     const stripeA = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.45), stripeMaterial);
@@ -3014,6 +3040,7 @@ function applyPlayerMeshColor(mesh: THREE.Group, player: PlayerState) {
     replacement.rotation.copy(mesh.rotation);
     playerMeshes.set(player.id, replacement);
     scene.remove(mesh);
+    playerAnimationPhases.delete(mesh.uuid);
     mesh.traverse((child) => {
       disposeObjectResources(child);
     });
@@ -3100,6 +3127,10 @@ switchArena(arenaChoice);
 addSky();
 addWeapon();
 
+function queueJump() {
+  jumpBufferedUntil = performance.now() + 170;
+}
+
 document.addEventListener("keydown", (event) => {
   if (qaReconnectShortcutEnabled && event.code === "F10" && !event.repeat) {
     event.preventDefault();
@@ -3113,7 +3144,7 @@ document.addEventListener("keydown", (event) => {
     if (now - lastWDownAt < 320) sprintUntil = now + 2400;
     lastWDownAt = now;
   }
-  if (event.code === "Space" && !event.repeat) jumpQueued = true;
+  if (event.code === "Space" && !event.repeat) queueJump();
   if (event.code === "KeyQ" && !event.repeat && self.joined) {
     event.preventDefault();
     triggerDonPunch();
@@ -3136,6 +3167,8 @@ document.addEventListener("keydown", (event) => {
     if (me?.name === "こーた" || nameInput.value.trim() === "こーた") {
       creativeMode = !creativeMode;
       self.velocity.set(0, 0, 0);
+      planarVelocity.set(0, 0, 0);
+      movementCorrectionActive = false;
       send({ type: "creative_toggle", enabled: creativeMode });
       showToast(creativeMode ? "CREATIVE ON" : "CREATIVE OFF");
     } else {
@@ -3158,7 +3191,7 @@ document.addEventListener("keyup", (event) => {
 
 document.addEventListener("mousemove", (event) => {
   if (document.pointerLockElement !== canvas || !self.joined) return;
-  self.yaw -= event.movementX * 0.0024;
+  self.yaw = wrapAngle(self.yaw - event.movementX * 0.0024);
   self.pitch -= event.movementY * 0.002;
   self.pitch = THREE.MathUtils.clamp(self.pitch, -1.15, 1.1);
 });
@@ -3586,7 +3619,7 @@ function applyMobileAimDelta(dx: number, dy: number, scale = 1) {
   const scopeScale = scoped ? 0.7 : 1;
   mobileAimVelocityX = THREE.MathUtils.lerp(mobileAimVelocityX, filteredX, 0.38);
   mobileAimVelocityY = THREE.MathUtils.lerp(mobileAimVelocityY, filteredY, 0.38);
-  self.yaw -= mobileAimVelocityX * 0.0038 * mobileAimSensitivityValue * accel * scopeScale * scale;
+  self.yaw = wrapAngle(self.yaw - mobileAimVelocityX * 0.0038 * mobileAimSensitivityValue * accel * scopeScale * scale);
   self.pitch -= mobileAimVelocityY * 0.0033 * mobileAimSensitivityValue * accel * scopeScale * scale;
   self.pitch = THREE.MathUtils.clamp(self.pitch, -1.15, 1.1);
 }
@@ -3673,17 +3706,22 @@ function updateMobileStick(event: PointerEvent) {
   const y = Math.sin(angle) * distance;
   const nx = x / max;
   const ny = y / max;
+  const curved = curveStickInput(nx, ny, { deadZone: 0.11, exponent: 1.22 });
 
-  mobileMoveIntensity = THREE.MathUtils.clamp(distance / max, 0, 1);
-  mobileMoveX = Math.abs(nx) < 0.12 ? 0 : nx;
-  mobileMoveY = Math.abs(ny) < 0.12 ? 0 : ny;
+  mobileMoveIntensity = curved.intensity;
+  mobileMoveX = curved.x;
+  mobileMoveY = curved.z;
   mobileStickKnob.style.transform = `translate(${x}px, ${y}px)`;
   clearMobileMoveKeys();
-  if (ny < -0.18) keys.add("KeyW");
-  if (ny > 0.25) keys.add("KeyS");
-  if (nx < -0.22) keys.add("KeyA");
-  if (nx > 0.22) keys.add("KeyD");
-  if (ny < -0.76 && mobileMoveIntensity > 0.82) sprintUntil = performance.now() + 420;
+  if (mobileMoveY < -0.08) keys.add("KeyW");
+  if (mobileMoveY > 0.08) keys.add("KeyS");
+  if (mobileMoveX < -0.08) keys.add("KeyA");
+  if (mobileMoveX > 0.08) keys.add("KeyD");
+  if (mobileMoveY < -0.72 && mobileMoveIntensity > 0.78) {
+    if (!mobileSprintStartedAt) mobileSprintStartedAt = performance.now();
+  } else {
+    mobileSprintStartedAt = 0;
+  }
 }
 
 function releaseMobileStick() {
@@ -3693,6 +3731,7 @@ function releaseMobileStick() {
   mobileMoveIntensity = 0;
   mobileMoveX = 0;
   mobileMoveY = 0;
+  mobileSprintStartedAt = 0;
   clearMobileMoveKeys();
   mobileStickKnob.style.transform = "translate(0, 0)";
   mobileStick.classList.remove("floating");
@@ -3772,7 +3811,7 @@ mobileJump.addEventListener("pointerdown", (event) => {
   event.stopPropagation();
   if (activeVehicleId) mobileBraking = true;
   else {
-    jumpQueued = true;
+    queueJump();
     pulseHaptic(12);
   }
 });
@@ -3906,7 +3945,8 @@ function setConnectionRecovery(active: boolean, detail = "試合状態を保持�
   if (active) {
     desktopFiring = false;
     mobileFiring = false;
-    jumpQueued = false;
+    jumpBufferedUntil = 0;
+    planarVelocity.set(0, 0, 0);
   }
 }
 
@@ -4191,8 +4231,14 @@ function handleMessage(event: MessageEvent<string>) {
     resultWinnerSeen = "";
     resultPanel.classList.remove("open");
     self.position.set(message.spawn.x, message.spawn.y, message.spawn.z);
+    self.velocity.set(0, 0, 0);
+    planarVelocity.set(0, 0, 0);
+    movementCorrectionActive = false;
+    jumpBufferedUntil = 0;
+    coyoteGroundedUntil = 0;
+    localGrounded = true;
     lastSafePosition.copy(self.position);
-    self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z);
+    self.yaw = wrapAngle(typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z));
     self.pitch = 0;
     if (!resumed) {
       flowScore = 0;
@@ -4285,6 +4331,8 @@ function handleMessage(event: MessageEvent<string>) {
       if (!activeVehicleId && previousVehicleId) {
         self.position.set(me.x, me.y, me.z);
         self.velocity.set(0, 0, 0);
+        planarVelocity.set(0, 0, 0);
+        movementCorrectionActive = false;
         lastSafePosition.copy(self.position);
       }
       setTeamChoice(me.color);
@@ -4374,11 +4422,25 @@ function handleMessage(event: MessageEvent<string>) {
     if (!activeVehicleId && message.spawn) {
       self.position.set(Number(message.spawn.x) || 0, Number(message.spawn.y) || 1.6, Number(message.spawn.z) || 0);
       self.velocity.set(0, 0, 0);
+      planarVelocity.set(0, 0, 0);
+      movementCorrectionActive = false;
       lastSafePosition.copy(self.position);
       showToast("ロードスターから降りました");
     } else if (activeVehicleId) {
       showToast("ロードスターに乗りました");
     }
+  }
+  if (message.type === "movement_correction" && message.position && !activeVehicleId && !creativeMode) {
+    movementCorrectionTarget.set(
+      Number(message.position.x) || 0,
+      Number(message.position.y) || 1.6,
+      Number(message.position.z) || 0
+    );
+    movementCorrectionActive = true;
+    movementCorrectionCount += 1;
+    lastMovementCorrectionReason = String(message.reason || "authority");
+    planarVelocity.multiplyScalar(0.2);
+    if (message.reason === "vertical") self.velocity.y = Math.min(0, self.velocity.y);
   }
   if (message.type === "impact") addBulletDecal(message.point, message.normal, message.shooter === self.id);
   if (message.type === "ashinaga") addAshinagaBurst(message.origin, message.target, message.shooter === self.id);
@@ -4386,9 +4448,14 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "respawn" && message.target === self.id) {
     self.position.set(message.spawn.x, message.spawn.y, message.spawn.z);
     lastSafePosition.copy(self.position);
-    self.yaw = typeof message.spawn.yaw === "number" ? message.spawn.yaw : self.yaw;
+    self.yaw = wrapAngle(typeof message.spawn.yaw === "number" ? message.spawn.yaw : self.yaw);
     self.pitch = 0;
     self.velocity.set(0, 0, 0);
+    planarVelocity.set(0, 0, 0);
+    movementCorrectionActive = false;
+    jumpBufferedUntil = 0;
+    coyoteGroundedUntil = 0;
+    localGrounded = true;
     shotBloom = 0;
     self.health = maxHealth;
     spectatorCard.classList.remove("show");
@@ -4675,6 +4742,12 @@ function playJumpSound() {
   playSweep(180, 430, 0.13, 0.042, "triangle");
 }
 
+function playLandingSound(intensity = 0.35) {
+  const amount = THREE.MathUtils.clamp(intensity, 0.1, 1);
+  playNoiseHit(0.055 + amount * 0.045, 0.018 + amount * 0.028, 118);
+  playSweep(82, 46, 0.07 + amount * 0.05, 0.012 + amount * 0.02, "triangle");
+}
+
 function playBarrierSound() {
   playSweep(420, 1080, 0.18, 0.048, "sine");
   window.setTimeout(() => playSweep(620, 1480, 0.22, 0.034, "triangle"), 55);
@@ -4745,18 +4818,45 @@ function ping() {
   pingTimer = window.setTimeout(ping, 2500);
 }
 
+function applyMovementCorrection(delta: number) {
+  if (!movementCorrectionActive) return;
+  const distance = self.position.distanceTo(movementCorrectionTarget);
+  if (distance > 2.4) {
+    self.position.copy(movementCorrectionTarget);
+  } else {
+    self.position.lerp(movementCorrectionTarget, 1 - Math.exp(-delta * 20));
+  }
+  planarVelocity.multiplyScalar(Math.max(0, 1 - delta * 11));
+  if (self.position.distanceToSquared(movementCorrectionTarget) <= 0.0025) {
+    self.position.copy(movementCorrectionTarget);
+    movementCorrectionActive = false;
+  }
+  if (!collides(self.position)) lastSafePosition.copy(self.position);
+}
+
 function move(delta: number) {
   if (fpsConnectionRecovering) {
     self.velocity.set(0, 0, 0);
-    jumpQueued = false;
+    planarVelocity.set(0, 0, 0);
+    movementSprinting = false;
+    localGrounded = true;
+    jumpBufferedUntil = 0;
     return;
   }
   const me = players.get(self.id);
   if (me?.creative && !creativeMode) creativeMode = true;
-  if (me?.eliminated || (me && me.health <= 0)) return;
+  if (me?.eliminated || (me && me.health <= 0)) {
+    planarVelocity.set(0, 0, 0);
+    movementSprinting = false;
+    localGrounded = true;
+    return;
+  }
   if (activeVehicleId) {
-    jumpQueued = false;
+    jumpBufferedUntil = 0;
     self.velocity.set(0, 0, 0);
+    planarVelocity.set(0, 0, 0);
+    movementSprinting = false;
+    localGrounded = true;
     return;
   }
   if (creativeMode) {
@@ -4778,18 +4878,23 @@ function move(delta: number) {
     self.position.z = THREE.MathUtils.clamp(self.position.z, -arenaHalfSize + 1, arenaHalfSize - 1);
     self.position.y = THREE.MathUtils.clamp(self.position.y, 1.6, 80);
     self.velocity.set(0, 0, 0);
+    planarVelocity.set(0, 0, 0);
+    movementSprinting = false;
     lastSafePosition.copy(self.position);
-    jumpQueued = false;
+    jumpBufferedUntil = 0;
     return;
   }
+  applyMovementCorrection(delta);
   recoverIfStuck();
 
   const now = performance.now();
   const sneaking = keys.has("ShiftLeft");
-  const sprinting = now < sprintUntil && keys.has("KeyW") && !sneaking;
+  const touchAutoSprint = shouldAutoSprint(now, mobileSprintStartedAt, mobileMoveY, mobileMoveIntensity);
+  const sprinting = (now < sprintUntil || touchAutoSprint) && keys.has("KeyW") && !sneaking;
+  movementSprinting = sprinting;
   const boosted = Date.now() < ((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0));
-  const touchMoving = mobileMoveIntensity > 0;
-  const touchScale = touchMoving ? 0.42 + mobileMoveIntensity * 0.42 : 1;
+  const touchMoving = mobileMoveIntensity > 0.001;
+  const touchScale = touchMoving ? 0.22 + mobileMoveIntensity * 0.68 : 1;
   const baseSpeed = sneaking ? 2.8 : sprinting ? (touchMoving ? 8.0 : 10.2) : 5.5;
   const speed = baseSpeed * (boosted ? 1.18 : 1) * touchScale;
   const forward = getLookDirection();
@@ -4806,25 +4911,39 @@ function move(delta: number) {
     if (keys.has("KeyD")) wish.add(right);
     if (keys.has("KeyA")) wish.sub(right);
   }
-  if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed * delta);
-
-  moveWithSlide(wish);
+  if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed);
+  const nextVelocity = approachPlanarVelocity(
+    { x: planarVelocity.x, z: planarVelocity.z },
+    { x: wish.x, z: wish.z },
+    delta,
+    {
+      acceleration: sneaking ? 30 : sprinting ? 32 : touchMoving ? 25 : 29,
+      deceleration: touchMoving ? 34 : 40
+    }
+  );
+  planarVelocity.set(nextVelocity.x, 0, nextVelocity.z);
+  const movement = moveWithSlide(movementStepScratch.copy(planarVelocity).multiplyScalar(delta));
+  if (!movement.movedX) planarVelocity.x = 0;
+  if (!movement.movedZ) planarVelocity.z = 0;
   if (!collides(self.position)) {
     lastSafePosition.copy(self.position);
   }
 
-  const groundY = groundHeightAt(self.position.x, self.position.z, self.position.y);
+  const groundY = groundHeightAt(self.position.x, self.position.z, self.position.y, self.velocity.y > 0.5);
   const grounded = Math.abs(self.position.y - groundY) < 0.34 && self.velocity.y <= 0.35;
-  if (sprinting && wish.lengthSq() > 0 && grounded && now - lastRunSoundAt > 255) {
+  if (grounded) coyoteGroundedUntil = now + 135;
+  if (sprinting && planarVelocity.lengthSq() > 1 && grounded && now - lastRunSoundAt > 255) {
     lastRunSoundAt = now;
     playRunSound();
   }
   if (grounded && self.position.y < groundY) self.position.y = groundY;
-  if (jumpQueued && grounded) {
+  if (canConsumeBufferedJump(now, jumpBufferedUntil, coyoteGroundedUntil) && self.velocity.y <= 1.2) {
     self.velocity.y = jumpVelocity;
+    jumpBufferedUntil = 0;
+    coyoteGroundedUntil = 0;
+    wasGrounded = false;
     playJumpSound();
   }
-  jumpQueued = false;
   for (const trampoline of trampolines) {
     const dx = self.position.x - trampoline.x;
     const dz = self.position.z - trampoline.z;
@@ -4833,20 +4952,34 @@ function move(delta: number) {
       trampolineChainActive = true;
       const trampolineBoost = trampolineBoostSteps[trampolineBoostStep];
       self.velocity.y = trampoline.force * trampolineBoost;
+      wasGrounded = false;
       showToast(`トランポリン x${trampolineBoost.toFixed(1)}`);
       break;
     }
   }
   self.velocity.y -= 13 * delta;
   self.position.y += self.velocity.y * delta;
-  const landingY = groundHeightAt(self.position.x, self.position.z, self.position.y);
+  const landingY = groundHeightAt(self.position.x, self.position.z, self.position.y, self.velocity.y > 0.5);
   if (self.position.y < landingY) {
+    const impactVelocity = self.velocity.y;
     self.position.y = landingY;
     self.velocity.y = 0;
+    if (!wasGrounded && impactVelocity < -3.8) {
+      const intensity = THREE.MathUtils.clamp((-impactVelocity - 3.8) / 20, 0.12, 1);
+      landingCameraKick = Math.max(landingCameraKick, intensity);
+      playLandingSound(intensity);
+      pulseHaptic(Math.round(10 + intensity * 18));
+    }
+    wasGrounded = true;
+    localGrounded = true;
+    coyoteGroundedUntil = now + 135;
     if (!isOverTrampoline(self.position.x, self.position.z)) {
       trampolineBoostStep = 0;
       trampolineChainActive = false;
     }
+  } else {
+    wasGrounded = false;
+    localGrounded = false;
   }
 
   if (reloadTimer > 0) {
@@ -4861,8 +4994,11 @@ function move(delta: number) {
   }
 }
 
-function groundHeightAt(x: number, z: number, currentY = 1.6) {
+function groundHeightAt(x: number, z: number, currentY = 1.6, ascending = false) {
   let ground = 1.6;
+  const stairReach = groundSurfaceReach(ascending, 0.85);
+  const spiralReach = groundSurfaceReach(ascending, 0.9);
+  const surfaceReach = groundSurfaceReach(ascending, 0.75);
   for (const zone of stairZones) {
     const dx = x - zone.origin.x;
     const dz = z - zone.origin.z;
@@ -4872,7 +5008,7 @@ function groundHeightAt(x: number, z: number, currentY = 1.6) {
     if (along < -0.5 || along > zone.count * zone.run + 0.5) continue;
     const stepIndex = THREE.MathUtils.clamp(Math.floor((along + 0.2) / zone.run), 0, zone.count - 1);
     const stepY = 1.6 + (stepIndex + 1) * zone.rise;
-    if (stepY <= currentY + 0.85) ground = Math.max(ground, stepY);
+    if (stepY <= currentY + stairReach) ground = Math.max(ground, stepY);
   }
   for (const zone of spiralStairZones) {
     const dx = x - zone.center.x;
@@ -4887,17 +5023,17 @@ function groundHeightAt(x: number, z: number, currentY = 1.6) {
     const progress = THREE.MathUtils.clamp(delta / zone.totalAngle, 0, 1);
     const stepIndex = THREE.MathUtils.clamp(Math.floor(progress * zone.count), 0, zone.count - 1);
     const stepY = 1.6 + zone.baseY + (stepIndex + 1) * zone.rise;
-    if (stepY <= currentY + 0.9) ground = Math.max(ground, stepY);
+    if (stepY <= currentY + spiralReach) ground = Math.max(ground, stepY);
   }
   for (const surface of walkSurfaces) {
     if (x < surface.minX || x > surface.maxX || z < surface.minZ || z > surface.maxZ) continue;
-    if (surface.y <= currentY + 0.75) ground = Math.max(ground, surface.y);
+    if (surface.y <= currentY + surfaceReach) ground = Math.max(ground, surface.y);
   }
   for (const box of colliders) {
     if (x < box.min.x - playerRadius || x > box.max.x + playerRadius) continue;
     if (z < box.min.z - playerRadius || z > box.max.z + playerRadius) continue;
     const surfaceY = box.max.y + 1.6;
-    if (surfaceY <= currentY + 0.75) ground = Math.max(ground, surfaceY);
+    if (surfaceY <= currentY + surfaceReach) ground = Math.max(ground, surfaceY);
   }
   return ground;
 }
@@ -4907,10 +5043,14 @@ function recoverIfStuck() {
   if (!collides(lastSafePosition)) {
     self.position.copy(lastSafePosition);
     self.velocity.set(0, 0, 0);
+    planarVelocity.set(0, 0, 0);
+    movementCorrectionActive = false;
     return;
   }
   self.position.set(0, 1.6, 10);
   self.velocity.set(0, 0, 0);
+  planarVelocity.set(0, 0, 0);
+  movementCorrectionActive = false;
   lastSafePosition.copy(self.position);
 }
 
@@ -4920,6 +5060,10 @@ function resetSelf() {
   document.body.classList.remove("driving");
   self.position.set(0, 1.6, 10);
   self.velocity.set(0, 0, 0);
+  planarVelocity.set(0, 0, 0);
+  movementCorrectionActive = false;
+  jumpBufferedUntil = 0;
+  coyoteGroundedUntil = 0;
   self.pitch = 0;
   self.yaw = 0;
   self.health = maxHealth;
@@ -4959,19 +5103,24 @@ function resetSelf() {
 }
 
 function moveWithSlide(wish: THREE.Vector3) {
-  if (wish.lengthSq() === 0) return;
+  if (wish.lengthSq() === 0) return { movedX: true, movedZ: true };
 
+  let movedX = false;
+  let movedZ = false;
   const nextX = self.position.clone();
   nextX.x = THREE.MathUtils.clamp(nextX.x + wish.x, -arenaHalfSize + 0.7, arenaHalfSize - 0.7);
   if (!collides(nextX)) {
     self.position.x = nextX.x;
+    movedX = true;
   }
 
   const nextZ = self.position.clone();
   nextZ.z = THREE.MathUtils.clamp(nextZ.z + wish.z, -arenaHalfSize + 0.7, arenaHalfSize - 0.7);
   if (!collides(nextZ)) {
     self.position.z = nextZ.z;
+    movedZ = true;
   }
+  return { movedX, movedZ };
 }
 
 function isOverTrampoline(x: number, z: number) {
@@ -5001,8 +5150,7 @@ function collides(position: THREE.Vector3) {
 function currentAimSpread(gun = currentGun()) {
   const moving = mobileMoveIntensity > 0.08 || keys.has("KeyW") || keys.has("KeyA") || keys.has("KeyS") || keys.has("KeyD");
   const sneaking = keys.has("ShiftLeft");
-  const groundY = groundHeightAt(self.position.x, self.position.z, self.position.y);
-  const airborne = Math.abs(self.position.y - groundY) > 0.42;
+  const airborne = !localGrounded;
   return computeAimSpread(gun.spread, shotBloom, {
     moving,
     sneaking,
@@ -5051,7 +5199,7 @@ function applyShotRecoil(gun: Gun) {
   const pitchKick = gun.recoilPitch * scopeScale;
   const yawKick = ((Math.random() - 0.5) * gun.recoilYaw + gun.recoilDrift * (0.75 + Math.random() * 0.5)) * scopeScale;
   self.pitch = THREE.MathUtils.clamp(self.pitch + pitchKick, -1.15, 1.1);
-  self.yaw += yawKick;
+  self.yaw = wrapAngle(self.yaw + yawKick);
   weaponKick = Math.min(1, weaponKick + gun.kick);
 }
 
@@ -5246,7 +5394,7 @@ function returnToLobbyAfterRound() {
   void refreshOnlinePlayers();
 }
 
-function updateCamera() {
+function updateCamera(delta: number) {
   const spectated = updateSpectatorState();
   if (spectated) {
     const rendered = renderedPlayerMotion.get(spectated.id);
@@ -5262,6 +5410,23 @@ function updateCamera() {
     camera.lookAt(targetX, targetY + 0.85, targetZ);
   } else {
     camera.position.copy(self.position);
+    const grounded = localGrounded;
+    const horizontalSpeed = planarVelocity.length();
+    const motionScale = reducedMotionQuery.matches ? 0 : isCoarsePointer() ? 0.46 : 1;
+    if (grounded && horizontalSpeed > 0.35 && motionScale > 0) {
+      cameraBobPhase += delta * (5.2 + horizontalSpeed * 0.82);
+    }
+    const bobAmplitude = (movementSprinting ? 0.042 : 0.025) * motionScale * THREE.MathUtils.clamp(horizontalSpeed / 4.6, 0, 1);
+    const targetBob = grounded ? Math.sin(cameraBobPhase * 2) * bobAmplitude : 0;
+    const targetStrafe = grounded ? Math.cos(cameraBobPhase) * bobAmplitude * 0.45 : 0;
+    const cameraBlend = 1 - Math.exp(-delta * 13);
+    cameraBobOffset = THREE.MathUtils.lerp(cameraBobOffset, targetBob, cameraBlend);
+    cameraStrafeOffset = THREE.MathUtils.lerp(cameraStrafeOffset, targetStrafe, cameraBlend);
+    const landingOffset = landingCameraKick * 0.075 * motionScale;
+    landingCameraKick *= Math.exp(-delta * 8.5);
+    camera.position.y += cameraBobOffset - landingOffset;
+    camera.position.x += Math.cos(self.yaw) * cameraStrafeOffset;
+    camera.position.z -= Math.sin(self.yaw) * cameraStrafeOffset;
     camera.rotation.order = "YXZ";
     camera.rotation.y = self.yaw;
     camera.rotation.x = self.pitch;
@@ -5287,12 +5452,17 @@ Object.assign(window, {
     clearKeys() {
       for (const code of movementKeys) keys.delete(code);
     },
+    jump() {
+      queueJump();
+    },
     setPose(x: number, z: number, yaw = 0, pitch = 0) {
       self.position.set(x, 1.6, z);
       lastSafePosition.copy(self.position);
-      self.yaw = yaw;
+      self.yaw = wrapAngle(yaw);
       self.pitch = pitch;
       self.velocity.set(0, 0, 0);
+      planarVelocity.set(0, 0, 0);
+      movementCorrectionActive = false;
     },
     pose() {
       return {
@@ -5317,6 +5487,17 @@ Object.assign(window, {
         interpolationMs: Math.round(networkInterpolationDelayMs),
         jitterMs: Math.round(snapshotJitterMs),
         socketState: socket?.readyState ?? WebSocket.CLOSED
+      };
+    },
+    motion() {
+      return {
+        planarSpeed: planarVelocity.length(),
+        verticalSpeed: self.velocity.y,
+        sprinting: movementSprinting,
+        jumpBuffered: performance.now() <= jumpBufferedUntil,
+        correctionActive: movementCorrectionActive,
+        correctionCount: movementCorrectionCount,
+        correctionReason: lastMovementCorrectionReason
       };
     },
     dropConnection() {
@@ -5373,7 +5554,35 @@ function syncPlayerMotionSnapshots(snapshots: PlayerState[], snapshotAt: number)
   }
 }
 
-function updateRemotePlayers() {
+function animateRemotePlayer(mesh: THREE.Group, track: MotionSample[], delta: number) {
+  const rig = mesh.userData.motionRig as {
+    body: THREE.Mesh;
+    leftArm: THREE.Mesh;
+    rightArm: THREE.Mesh;
+    leftLeg: THREE.Mesh;
+    rightLeg: THREE.Mesh;
+  } | undefined;
+  if (!rig) return;
+  const latest = track.at(-1);
+  const previous = track.at(-2);
+  const sampleSeconds = latest && previous ? Math.max(0.001, (latest.at - previous.at) / 1000) : 0;
+  const speed = sampleSeconds > 0 ? Math.hypot(latest!.x - previous!.x, latest!.z - previous!.z) / sampleSeconds : 0;
+  const verticalSpeed = sampleSeconds > 0 ? (latest!.y - previous!.y) / sampleSeconds : 0;
+  const stride = THREE.MathUtils.clamp(speed / 5.5, 0, 1);
+  const phase = (playerAnimationPhases.get(mesh.uuid) || 0) + delta * (3.8 + speed * 1.05);
+  playerAnimationPhases.set(mesh.uuid, phase);
+  const airborne = Math.abs(verticalSpeed) > 1.1;
+  const legSwing = airborne ? -0.38 : Math.sin(phase) * 0.68 * stride;
+  const oppositeLegSwing = airborne ? -0.38 : -Math.sin(phase) * 0.68 * stride;
+  const blend = 1 - Math.exp(-delta * 15);
+  rig.leftLeg.rotation.x = THREE.MathUtils.lerp(rig.leftLeg.rotation.x, legSwing, blend);
+  rig.rightLeg.rotation.x = THREE.MathUtils.lerp(rig.rightLeg.rotation.x, oppositeLegSwing, blend);
+  rig.leftArm.rotation.x = THREE.MathUtils.lerp(rig.leftArm.rotation.x, Math.sin(phase + Math.PI) * 0.16 * stride, blend);
+  rig.rightArm.rotation.x = THREE.MathUtils.lerp(rig.rightArm.rotation.x, -0.34 + Math.sin(phase) * 0.09 * stride, blend);
+  rig.body.rotation.z = THREE.MathUtils.lerp(rig.body.rotation.z, Math.sin(phase) * 0.025 * stride, blend);
+}
+
+function updateRemotePlayers(delta: number) {
   const renderAt = Date.now() + serverClockOffsetMs - networkInterpolationDelayMs;
   renderedPlayerMotion.clear();
   for (const [id, mesh] of playerMeshes) {
@@ -5381,6 +5590,7 @@ function updateRemotePlayers() {
     if (!player || id === self.id || player.connected === false) {
       scene.remove(mesh);
       playerMeshes.delete(id);
+      playerAnimationPhases.delete(mesh.uuid);
     }
   }
 
@@ -5399,8 +5609,10 @@ function updateRemotePlayers() {
       playerMeshes.set(player.id, mesh);
     }
     applyPlayerMeshColor(mesh, player);
+    mesh = playerMeshes.get(player.id) || mesh;
     mesh.position.set(sampled.x, Math.max(0, sampled.y - 1.6), sampled.z);
     mesh.rotation.y = sampled.yaw;
+    animateRemotePlayer(mesh, playerMotionTracks.get(player.id) || [], delta);
     mesh.children[4].visible = Math.max(player.shieldUntil || 0, player.spawnProtectedUntil || 0) > Date.now();
     mesh.visible = player.health > 0;
   }
@@ -6274,7 +6486,7 @@ function updateHud(feed: FeedItem[]) {
     : reloadTimer > 0
     ? `リロード中 / MED ${me?.healPacks ?? 0}${gearText}`
     : `${currentGun().name} · ${currentGun().range}m · MED ${me?.healPacks ?? 0}${gearText}`;
-  const movingMode = keys.has("ShiftLeft") ? "SNEAK" : now < sprintUntil && keys.has("KeyW") ? "RUN" : "WALK";
+  const movingMode = keys.has("ShiftLeft") ? "SNEAK" : movementSprinting ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
   const spawnSafeLeft = Math.max(0, ((me?.spawnProtectedUntil || 0) - Date.now()) / 1000);
   const speedLeft = Math.max(0, (((me?.speedBoostUntil || 0) || (me?.comebackUntil || 0)) - Date.now()) / 1000);
@@ -6898,14 +7110,15 @@ function findMobileAimTarget() {
 
 function applyMobileAimAssist(delta: number) {
   const target = findMobileAimTarget();
-  if (!target) return;
+  if (!target) return false;
   const strength = THREE.MathUtils.clamp(delta * (mobileFiring ? 2.4 : scoped ? 1.25 : 1.05), 0, mobileFiring ? 0.075 : scoped ? 0.045 : 0.034);
-  self.yaw += target.yawDelta * strength;
+  self.yaw = wrapAngle(self.yaw + target.yawDelta * strength);
   self.pitch = THREE.MathUtils.clamp(self.pitch + target.pitchDelta * strength, -1.15, 1.1);
   const autoFireCone = scoped ? 0.064 : 0.082;
   if (!mobileFiring && target.score <= autoFireCone && Math.abs(target.yawDelta) <= 0.075 && Math.abs(target.pitchDelta) <= 0.07) {
     shoot();
   }
+  return true;
 }
 
 function animate() {
@@ -6934,14 +7147,14 @@ function animate() {
   updateSafeZoneVisual(delta);
   updateTeamPings(delta);
   updateAutomaticDoors(delta);
-  updateRemotePlayers();
+  updateRemotePlayers(delta);
   if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);
-  if (self.joined) applyMobileAimAssist(delta);
+  const mobileAimLocked = self.joined ? applyMobileAimAssist(delta) : false;
   if (self.joined && desktopFiring) shoot();
-  if (self.joined && mobileFiring && findMobileAimTarget()) shoot();
+  if (self.joined && mobileFiring && mobileAimLocked) shoot();
   updateKillcam();
-  updateCamera();
+  updateCamera(delta);
   updateWeaponMotion(delta);
   updateTracers(delta);
   updateDonPunches(delta);

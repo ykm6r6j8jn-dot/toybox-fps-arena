@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
 import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
+import { clampMovementRequest, isNearToyboxTrampoline, wrapAngle } from "./movement-systems.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
@@ -2260,23 +2261,31 @@ wss.on("connection", (ws) => {
       const previousX = currentPlayer.x;
       const previousY = currentPlayer.y;
       const previousZ = currentPlayer.z;
-      currentPlayer.yaw = clamp(Number(message.yaw), -Math.PI * 2, Math.PI * 2);
+      currentPlayer.yaw = wrapAngle(Number(message.yaw));
       currentPlayer.pitch = clamp(Number(message.pitch), -1.35, 1.35);
       currentPlayer.lastSeen = now;
       if (currentPlayer.vehicleId) return;
 
-      let nextX = clamp(Number(message.x), -arenaHalfSize + 1, arenaHalfSize - 1);
-      const nextY = clamp(Number(message.y), 1.4, 80);
-      let nextZ = clamp(Number(message.z), -arenaHalfSize + 1, arenaHalfSize - 1);
+      const requested = {
+        x: clamp(Number(message.x), -arenaHalfSize + 1, arenaHalfSize - 1),
+        y: clamp(Number(message.y), 1.4, 80),
+        z: clamp(Number(message.z), -arenaHalfSize + 1, arenaHalfSize - 1)
+      };
       const stateElapsed = Math.min(0.45, Math.max(0.04, (now - (currentPlayer.lastStateAt || now - 80)) / 1000));
       currentPlayer.lastStateAt = now;
-      const horizontalDistance = Math.hypot(nextX - previousX, nextZ - previousZ);
-      const maxHorizontalDistance = currentPlayer.creative ? Infinity : Math.min(5.5, 0.9 + stateElapsed * 15);
-      if (horizontalDistance > maxHorizontalDistance) {
-        const scale = maxHorizontalDistance / horizontalDistance;
-        nextX = previousX + (nextX - previousX) * scale;
-        nextZ = previousZ + (nextZ - previousZ) * scale;
-      }
+      const constrained = clampMovementRequest(
+        { x: previousX, y: previousY, z: previousZ },
+        requested,
+        stateElapsed,
+        {
+          creative: currentPlayer.creative,
+          boosted: now < Math.max(currentPlayer.speedBoostUntil || 0, currentPlayer.comebackUntil || 0),
+          trampoline: isNearToyboxTrampoline({ x: previousX, y: previousY, z: previousZ }, 0.65)
+        }
+      );
+      let nextX = constrained.x;
+      const nextY = constrained.y;
+      let nextZ = constrained.z;
 
       if (currentPlayer.creative || !playerCollides(nextX, nextY, nextZ, currentRoom.arena)) {
         currentPlayer.x = nextX;
@@ -2286,6 +2295,27 @@ wss.on("connection", (ws) => {
         if (!playerCollides(nextX, nextY, previousZ, currentRoom.arena)) currentPlayer.x = nextX;
         if (!playerCollides(currentPlayer.x, nextY, nextZ, currentRoom.arena)) currentPlayer.z = nextZ;
         if (!playerCollides(currentPlayer.x, nextY, currentPlayer.z, currentRoom.arena)) currentPlayer.y = nextY;
+      }
+      const correctionDistance = Math.hypot(
+        currentPlayer.x - requested.x,
+        currentPlayer.y - requested.y,
+        currentPlayer.z - requested.z
+      );
+      if (
+        !currentPlayer.creative &&
+        (constrained.correctedHorizontal || constrained.correctedVertical || correctionDistance > 0.08) &&
+        now >= (currentPlayer.nextMovementCorrectionAt || 0)
+      ) {
+        currentPlayer.nextMovementCorrectionAt = now + 120;
+        send(currentPlayer.ws, {
+          type: "movement_correction",
+          position: { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z },
+          reason: constrained.correctedVertical
+            ? "vertical"
+            : constrained.correctedHorizontal
+              ? "speed"
+              : "collision"
+        });
       }
       const horizontalMove = Math.hypot(currentPlayer.x - previousX, currentPlayer.z - previousZ);
       currentRoom.movementStats.samples += 1;
@@ -2417,6 +2447,10 @@ wss.on("connection", (ws) => {
       if (!teams.has(requestedTeam)) return;
       const targetPlayer = currentRoom.players.get(String(message.targetId || currentPlayer.id));
       if (!targetPlayer) return;
+      if (targetPlayer.id !== currentPlayer.id && currentPlayer.name !== "ひでお") {
+        send(currentPlayer.ws, { type: "error", message: "他プレイヤーのチーム変更はホストのみ可能です。" });
+        return;
+      }
       targetPlayer.color = requestedTeam;
       targetPlayer.cosmeticColor = targetPlayer.cosmeticColor || (requestedTeam === "blue" ? "#1598f0" : "#ff4d4d");
       syncMatchCpuFill(currentRoom);

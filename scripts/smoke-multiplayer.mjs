@@ -52,7 +52,7 @@ async function stopManagedServer() {
 function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
-    const state = { name, id: "", room: "", resumeToken: "", resumed: false, snapshots: [], respawns: [], hits: [], teamPings: [] };
+    const state = { name, id: "", room: "", resumeToken: "", resumed: false, snapshots: [], respawns: [], hits: [], teamPings: [], movementCorrections: [], errors: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 5000);
 
     ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
@@ -70,6 +70,8 @@ function openClient(name, room = "", options = {}) {
       if (message.type === "respawn") state.respawns.push(message);
       if (message.type === "hit") state.hits.push(message);
       if (message.type === "team_ping") state.teamPings.push(message.ping);
+      if (message.type === "movement_correction") state.movementCorrections.push(message);
+      if (message.type === "error") state.errors.push(message.message);
     });
     ws.on("error", reject);
   });
@@ -195,6 +197,27 @@ await waitFor(
   "clients receive shared vehicle durability and safe-zone state"
 );
 
+const gammaBeforeWarp = latestPlayer(gamma, gamma.state.id);
+send(gamma.ws, {
+  type: "state",
+  x: gammaBeforeWarp.x + 90,
+  y: 80,
+  z: gammaBeforeWarp.z + 90,
+  yaw: Math.PI * 13,
+  pitch: 0
+});
+await waitFor(() => gamma.state.movementCorrections.length > 0, "server returns an authoritative movement correction");
+await waitFor(() => {
+  const corrected = latestPlayer(alpha, gamma.state.id);
+  return corrected && corrected.lastSeen > gammaBeforeWarp.lastSeen;
+}, "corrected movement reaches peers");
+const gammaAfterWarp = latestPlayer(alpha, gamma.state.id);
+if (Math.hypot(gammaAfterWarp.x - gammaBeforeWarp.x, gammaAfterWarp.z - gammaBeforeWarp.z) > 6.3) {
+  throw new Error("server accepted an excessive horizontal warp");
+}
+if (gammaAfterWarp.y - gammaBeforeWarp.y > 6.3) throw new Error("server accepted an excessive vertical warp");
+if (gammaAfterWarp.yaw < -Math.PI || gammaAfterWarp.yaw >= Math.PI) throw new Error("server did not normalize player yaw");
+
 send(alpha.ws, { type: "team_ping", point: { x: 6, y: 0.1, z: 6 } });
 await waitFor(
   () => alpha.state.teamPings.length > 0 && gamma.state.teamPings.length > 0,
@@ -202,6 +225,12 @@ await waitFor(
 );
 await delay(420);
 if (beta.state.teamPings.length > 0) throw new Error("enemy client received a team-only ping");
+
+const gammaTeamBefore = latestPlayer(alpha, gamma.state.id).color;
+send(beta.ws, { type: "change_team", targetId: gamma.state.id, team: gammaTeamBefore === "blue" ? "red" : "blue" });
+await waitFor(() => beta.state.errors.includes("他プレイヤーのチーム変更はホストのみ可能です。"), "non-host team edit is rejected");
+await delay(180);
+if (latestPlayer(alpha, gamma.state.id).color !== gammaTeamBefore) throw new Error("non-host changed another player's team");
 
 const gammaIdBeforeReconnect = gamma.state.id;
 const gammaResumeToken = gamma.state.resumeToken;
@@ -348,7 +377,7 @@ if (appliedPlayerDamage !== 200) throw new Error(`reported applied damage must e
 for (const client of [alpha, beta, gamma]) send(client.ws, { type: "leave" });
 await delay(80);
 for (const client of [alpha, beta, gamma]) client.ws.close(1000, "leave");
-console.log(`smoke passed: room ${alpha.state.room}, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/damaged`);
+console.log(`smoke passed: room ${alpha.state.room}, movement warp corrected, yaw normalized, team edits protected, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/damaged`);
 } finally {
   await stopManagedServer();
 }
