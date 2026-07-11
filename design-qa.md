@@ -28,6 +28,7 @@
 - WORLD 3.0 public settings screenshot: `/tmp/donpachi-world3-public-settings.png`
 - WORLD 3.0 public desktop screenshot: `/tmp/donpachi-world3-public-desktop.png`
 - VERTICAL 4.0 local AURORA landing screenshot: `/tmp/donpachi-vertical4-final.jpg`
+- VERTICAL 4.0 public clean-spawn screenshot: `/tmp/donpachi-vertical4-public.jpg`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
 - state: FPS match active in global room `DONPCH`; local VERTICAL 4.0 browser QA used an isolated practice room and QA-only creative positioning
@@ -127,6 +128,7 @@ No actionable P0, P1, or P2 findings remain for this pass.
 
 - Browser page identity and nonblank canvas: WORLD 3.0 passed locally and publicly at desktop `1440 x 900` and mobile `844 x 390`; the final desktop canvas backing size exactly matched `1440 x 900`.
 - VERTICAL 4.0 local browser proof: the AURORA lift carried the player smoothly through sampled heights `0.4m`, `1.9m`, `4.4m`, `5.6m`, and `5.7m`; the final scene held `51-56fps` with zero console messages. A `1280 x 720` central canvas sample contained `1,633` unique colors and a `5.61%` near-black ratio, proving a nonblank, varied render.
+- VERTICAL 4.0 public browser proof: the production page entered `DONPCH`, rendered a `2035 x 1144` backing canvas in the live viewport, and reported no console warnings or errors. A forced vacated-slot sequence kept the replacement player `91.21m` from the occupied spawn; the follow-up screenshot confirms the prior camera-filling name tag is absent.
 - Framework overlay: none.
 - Console errors and warnings: none in desktop and mobile checks.
 - Desktop render: local WORLD 3.0 held `58-60fps`; public WORLD 3.0 held `60fps` at `1440 x 900`, with zero horizontal overflow and zero console errors/warnings.
@@ -136,7 +138,7 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, AI systems, world systems, vertical systems, 19-CP production live test, world live test, vertical live test, and three-client multiplayer smoke tests: passed. The vertical live test rejected remote lift use, synchronized both lifts, observed arrival and projectile collision, and confirmed 19 CPs climbed without warping.
 - Bundle: main gameplay JS `171.49 kB` (`61.18 kB` gzip), CSS `77.39 kB` (`16.11 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: WORLD 3.0 commit `fc58a02` is `live` at `https://toybox-fps-arena.onrender.com`. The public page loaded `index-BjGqTeNe.js`, `index-CKhItUiK.css`, and `three-cAQsBUvP.js`; the WebSocket snapshot reported `worldVersion: WORLD 3.0`, six valid door states, and `aiVersion: TACTICS 2.0`. The verifier also received an authoritative movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
+- Public verification: VERTICAL 4.0 implementation commit `ed9992d` is `live` at `https://toybox-fps-arena.onrender.com`. The public page loaded `index-2rNljmA_.js`, `index-DKlM9KuW.css`, and `three-cAQsBUvP.js`; the WebSocket snapshot reported `worldVersion: VERTICAL 4.0`, two valid elevator states, six valid door states, no QA-only CP route fields, and `aiVersion: TACTICS 2.0`. The verifier also received an authoritative movement correction and the production spawn probe rejected occupied-slot reuse.
 - `tsc --noEmit`: stopped after it made no progress for 30 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
