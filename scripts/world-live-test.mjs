@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const port = 52_000 + Math.floor(Math.random() * 4_000);
+const port = 52_000 + Math.floor(Math.random() * 1_000);
 const endpoint = `ws://127.0.0.1:${port}/ws`;
 let serverOutput = "";
 const server = spawn(process.execPath, ["server.mjs"], {
@@ -99,6 +99,8 @@ try {
   const observer = await openClient("WorldObserver");
 
   await waitFor(() => [alpha, observer].every((client) => latestSnapshot(client)?.doors?.length === 6), "both clients receive six shared doors");
+  for (const client of [alpha, observer]) send(client, { type: "ready", ready: true });
+  await waitFor(() => [alpha, observer].every((client) => latestSnapshot(client)?.matchPhase === "active"), "world clients enter active combat", 7000);
   if (latestSnapshot(alpha).doors.some((door) => door.openness !== 0)) throw new Error("doors must begin closed away from players");
 
   send(alpha, { type: "door_interact", doorId: "metro-entry" });

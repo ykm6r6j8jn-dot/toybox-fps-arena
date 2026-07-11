@@ -6,6 +6,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
+import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from "./match-systems.mjs";
 import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
 import { clampMovementRequest, isNearToyboxTrampoline, wrapAngle } from "./movement-systems.mjs";
@@ -67,6 +68,7 @@ const maxHealth = 200;
 const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
 const worldVersion = "VERTICAL 4.0";
+const matchVersion = "MATCH 5.0";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -909,6 +911,10 @@ function humanPlayers(room) {
   return [...room.players.values()].filter((player) => !player.isBot);
 }
 
+function connectedHumanPlayers(room) {
+  return humanPlayers(room).filter((player) => !player.disconnectedAt);
+}
+
 function assignMatchTeam(room) {
   if (room.relationMode === "coop") return room.playerTeam || "blue";
   const counts = { blue: 0, red: 0 };
@@ -1016,7 +1022,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     cpuFill: normalizeCpuFill(cpuFill),
     relationMode: normalizeRelationMode(relationMode),
     partySize: size,
-    matchStarted: false,
+    ...createMatchLifecycle(),
     roundStartedAt: 0,
     maxHumanPlayers: maxPlayers,
     weaponStats: Object.create(null),
@@ -1028,7 +1034,7 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     chat: [],
     winner: null,
     playerTeam: gameMode === "castle" ? "" : null,
-    castleEndsAt: gameMode === "castle" ? Date.now() + castleRoundMs : 0,
+    castleEndsAt: 0,
     cpuCount: 0,
     donPunches: new Map(),
     vehicles: createVehicles(),
@@ -1811,6 +1817,7 @@ function fpsWelcomePayload(player, room, profile, resumed = false) {
     relationMode: room.relationMode,
     targetScore: room.targetScore,
     maxPlayers: room.maxHumanPlayers || maxPlayers,
+    ...publicMatchLifecycle(room),
     spawn: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
     profile: profile ? publicProfile(profile) : null,
     resumeToken: player.resumeToken,
@@ -2885,8 +2892,10 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "ready") {
+      if (currentRoom.matchPhase === "active" || currentRoom.matchPhase === "result") return;
       currentPlayer.ready = Boolean(message.ready);
       addFeed(currentRoom, `${currentPlayer.name} ${currentPlayer.ready ? "準備完了" : "準備解除"}`, currentPlayer.color);
+      updateMatchLifecycle(currentRoom);
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
       return;
     }
@@ -3008,6 +3017,8 @@ wss.on("connection", (ws) => {
     if (message.type === "set_cpu") {
       if (currentRoom.matchmaking) {
         currentRoom.cpuFill = Number(message.count) !== 0;
+        resetMatchToWaiting(currentRoom);
+        resetRoomScores(currentRoom);
         syncMatchCpuFill(currentRoom);
         addFeed(currentRoom, currentRoom.cpuFill ? "CP補充 ON" : "CP補充 OFF", currentPlayer.color);
         broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
@@ -3020,20 +3031,22 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "reset_room") {
+      resetMatchToWaiting(currentRoom);
       resetRoomScores(currentRoom);
-      addFeed(currentRoom, "点数をリセット", currentPlayer.color);
+      syncMatchCpuFill(currentRoom);
+      addFeed(currentRoom, "点数をリセットしてマッチ待機", currentPlayer.color);
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
       return;
     }
 
     if (message.type === "hadeon_burst") {
-      if (currentPlayer.name !== "こーた") return;
+      if (!currentRoom.matchStarted || currentRoom.winner || currentPlayer.name !== "こーた") return;
       applyHadeonBurst(currentRoom, currentPlayer);
       return;
     }
 
     if (message.type === "donpunch") {
-      if (currentPlayer.eliminated || currentPlayer.health <= 0) return;
+      if (!currentRoom.matchStarted || currentRoom.winner || currentPlayer.eliminated || currentPlayer.health <= 0) return;
       const charge = currentPlayer.donPunchCharge || 0;
       if (charge >= 8) {
         const target = nearestEnemy(currentRoom, currentPlayer);
@@ -3063,7 +3076,7 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "shoot") {
-      if (currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.vehicleId) return;
+      if (!currentRoom.matchStarted || currentRoom.winner || currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.vehicleId) return;
       const weapon = normalizeWeapon(message.weapon);
       const now = Date.now();
       if (!consumeShotBudget(currentPlayer, weapon, now)) return;
@@ -3173,6 +3186,7 @@ setInterval(() => {
       syncMatchCpuFill(room);
       checkSurvivalWinner(room);
     }
+    updateMatchLifecycle(room, now);
     updateBarrierRespawn(room, now);
     updateHealthPickup(room, now);
     updatePowerups(room, now);
@@ -3181,7 +3195,7 @@ setInterval(() => {
     updateElevators(room, now);
     updateVehicles(room, now);
     const safeZone = updateSafeZone(room, now);
-    updateCpuPlayers(room, now);
+    if (room.matchPhase === "active" && !room.winner) updateCpuPlayers(room, now);
     updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
     for (const player of room.players.values()) {
@@ -3204,6 +3218,7 @@ setInterval(() => {
       type: "snapshot",
       aiVersion: cpuAiVersion,
       worldVersion,
+      ...publicMatchLifecycle(room),
       players,
       blueScore,
       redScore,
@@ -3483,7 +3498,7 @@ function applyCastleCoreDamage(room, shooter, core, damage) {
 }
 
 function resolveCastleRoundByTimer(room, now) {
-  if (room.mode !== "castle" || room.winner || !room.castleEndsAt || now < room.castleEndsAt) return;
+  if (!room.matchStarted || room.mode !== "castle" || room.winner || !room.castleEndsAt || now < room.castleEndsAt) return;
   const blueHp = room.castleCores?.blue?.health || 0;
   const redHp = room.castleCores?.red?.health || 0;
   let winnerColor = blueHp > redHp ? "blue" : redHp > blueHp ? "red" : "";
@@ -3632,7 +3647,7 @@ function respawnPlayer(player, room) {
 }
 
 function checkSurvivalWinner(room) {
-  if (room.winner || room.mode === "practice") return;
+  if (!room.matchStarted || room.winner || room.mode === "practice") return;
   const aliveTeams = new Set([...room.players.values()]
     .filter((player) => !player.eliminated && player.health > 0)
     .map((player) => player.color));
@@ -3939,6 +3954,54 @@ function createCpuPlayer(room, id, index, team) {
   };
 }
 
+function resetMatchToWaiting(room) {
+  Object.assign(room, createMatchLifecycle());
+  room.roundStartedAt = 0;
+  room.castleEndsAt = 0;
+  room.winner = null;
+}
+
+function publicMatchLifecycle(room) {
+  const humans = connectedHumanPlayers(room);
+  return {
+    matchVersion,
+    matchPhase: room.matchPhase || "waiting",
+    matchStarted: Boolean(room.matchStarted),
+    phaseEndsAt: Number(room.phaseEndsAt) || 0,
+    roundStartedAt: Number(room.roundStartedAt) || 0,
+    humanCount: humans.length,
+    readyHumans: humans.filter((player) => player.ready).length,
+    minimumHumans: minimumHumansForMatch(room.mode, room.cpuFill)
+  };
+}
+
+function updateMatchLifecycle(room, now = Date.now()) {
+  const humans = connectedHumanPlayers(room);
+  const next = stepMatchLifecycle(room, {
+    mode: room.mode,
+    cpuFill: room.cpuFill,
+    humanCount: humans.length,
+    readyHumans: humans.filter((player) => player.ready).length,
+    winner: room.winner
+  }, now);
+  room.matchPhase = next.matchPhase;
+  room.phaseEndsAt = next.phaseEndsAt;
+  room.matchStarted = next.matchStarted;
+
+  if (next.transition === "countdown") {
+    addFeed(room, "マッチ開始カウントダウン", "blue");
+  } else if (next.transition === "start") {
+    resetRoomScores(room, now);
+    room.matchPhase = "active";
+    room.phaseEndsAt = 0;
+    room.matchStarted = true;
+    room.roundStartedAt = now;
+    room.castleEndsAt = room.mode === "castle" ? now + castleRoundMs : 0;
+    addFeed(room, `${modeLabel(room.mode)} BATTLE START`, "blue");
+  }
+  return next;
+}
+
 function syncMatchCpuFill(room) {
   if (!room.matchmaking) return;
   for (const player of [...room.players.values()]) {
@@ -3946,10 +4009,6 @@ function syncMatchCpuFill(room) {
   }
   if (!room.cpuFill) {
     room.cpuCount = 0;
-    if (!room.matchStarted && humanPlayers(room).length > 0) {
-      room.matchStarted = true;
-      addFeed(room, "CPなしバトル開始", "blue");
-    }
     return;
   }
   const humans = humanPlayers(room);
@@ -3968,10 +4027,6 @@ function syncMatchCpuFill(room) {
       botIndex += 1;
     }
     room.cpuCount = botIndex;
-    if (!room.matchStarted && humans.length > 0) {
-      room.matchStarted = true;
-      addFeed(room, `協力バトル開始 人間 vs CP`, room.playerTeam);
-    }
     return;
   }
   const teamTarget = matchTeamSize;
@@ -3989,10 +4044,6 @@ function syncMatchCpuFill(room) {
     }
   }
   room.cpuCount = botIndex;
-  if (!room.matchStarted && humanPlayers(room).length > 0) {
-    room.matchStarted = true;
-    addFeed(room, `自動マッチ開始 ${teamTarget}対${teamTarget}`, "blue");
-  }
 }
 
 function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, relationMode = room.relationMode) {
@@ -4026,6 +4077,7 @@ function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, r
     }
   }
 
+  resetMatchToWaiting(room);
   resetRoomScores(room);
   if (room.matchmaking) {
     syncMatchCpuFill(room);
@@ -4038,9 +4090,9 @@ function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, r
   }
 }
 
-function resetRoomScores(room) {
+function resetRoomScores(room, now = Date.now()) {
   room.winner = null;
-  room.roundStartedAt = room.matchStarted ? Date.now() : 0;
+  room.roundStartedAt = room.matchStarted ? now : 0;
   room.weaponStats = Object.create(null);
   room.movementStats = { samples: 0, moving: 0, airborne: 0 };
   if (room.mode === "castle" && !room.playerTeam) {
@@ -4050,6 +4102,7 @@ function resetRoomScores(room) {
   let index = 0;
   for (const player of room.players.values()) {
     player.score = 0;
+    player.ready = false;
     player.kills = 0;
     player.deaths = 0;
     player.damageDealt = 0;
@@ -4064,16 +4117,16 @@ function resetRoomScores(room) {
     player.healPacks = initialHealPacks;
     player.equipmentTier = 0;
     player.focusTask = null;
-    player.nextFocusTaskAt = Date.now() + 2400;
+    player.nextFocusTaskAt = now + 2400;
     player.donPunchCharge = 0;
     player.health = maxHealth;
     player.shieldUntil = 0;
     player.speedBoostUntil = 0;
     player.damageBoostUntil = 0;
     player.comebackUntil = 0;
-    player.spawnProtectedUntil = Date.now() + spawnProtectionMs;
+    player.spawnProtectedUntil = now + spawnProtectionMs;
     player.vehicleId = "";
-    player.lastStateAt = Date.now();
+    player.lastStateAt = now;
     player.nextImpactAt = 0;
     player.nextZoneDamageAt = 0;
     player.nextTeamPingAt = 0;
@@ -4084,19 +4137,19 @@ function resetRoomScores(room) {
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
     index += 1;
   }
-  if (room.mode !== "castle") room.playerTeam = null;
+  if (room.mode !== "castle" && room.relationMode !== "coop") room.playerTeam = null;
   room.donPunches.clear();
   room.vehicles = createVehicles();
   room.elevators = createElevators();
   rebuildElevatorObstacles(room);
   room.castleCores = createCastleCores(room.playerTeam || "blue");
-  room.castleEndsAt = room.mode === "castle" ? Date.now() + castleRoundMs : 0;
+  room.castleEndsAt = room.mode === "castle" && room.matchStarted ? now + castleRoundMs : 0;
   room.barrier = { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 };
   room.healthPickup = { ...randomPickupSpawn(room.arena), available: false, respawnAt: room.mode === "oneLife" ? nextHealthPickupAt() : 0 };
-  room.powerups = createPowerups();
+  room.powerups = createPowerups(now);
   room.safeZone = computeSafeZone({
     roundStartedAt: room.roundStartedAt,
-    now: Date.now(),
+    now,
     mode: room.mode,
     matchStarted: room.matchStarted,
     winner: room.winner

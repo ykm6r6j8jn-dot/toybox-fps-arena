@@ -22,6 +22,8 @@
     "test:combat": "node scripts/combat-systems-test.mjs",
     "test:movement": "node scripts/movement-systems-test.mjs",
     "test:world": "node scripts/world-systems-test.mjs",
+    "test:match": "node scripts/match-systems-test.mjs",
+    "test:match-live": "node scripts/match-live-test.mjs",
     "test:vertical": "node scripts/vertical-systems-test.mjs",
     "test:vertical-live": "node scripts/vertical-live-test.mjs",
     "test:world-live": "node scripts/world-live-test.mjs",

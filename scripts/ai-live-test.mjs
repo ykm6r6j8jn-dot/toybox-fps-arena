@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
-const port = 49_152 + Math.floor(Math.random() * 8_000);
+const port = 56_000 + Math.floor(Math.random() * 1_000);
 const root = fileURLToPath(new URL("..", import.meta.url));
 const server = spawn(process.execPath, ["server.mjs"], {
   cwd: root,
@@ -76,6 +76,10 @@ try {
   });
 
   await waitFor(() => snapshots.some((snapshot) => snapshot.players?.filter((player) => player.isBot).length === 19), "19 tactical CPs", 8000);
+  ws.send(JSON.stringify({ type: "ready", ready: true }));
+  await waitFor(() => snapshots.at(-1)?.matchPhase === "active", "AI room enters active combat", 7000);
+  snapshots.length = 0;
+  shots.length = 0;
   await delay(8000);
   const tacticalSnapshots = snapshots.filter((snapshot) => snapshot.aiVersion === "TACTICS 2.0");
   assert.ok(tacticalSnapshots.length >= 20, "server must continuously publish tactical snapshots");

@@ -27,7 +27,7 @@ if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.
 const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
-if (!pageHtml.includes("VERTICAL 4.0 立体戦更新")) throw new Error("public page is missing the VERTICAL 4.0 update marker");
+if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 
@@ -90,6 +90,12 @@ await waitFor(
     snapshot.players?.some((player) => player.id === probe.state.id) &&
     snapshot.aiVersion === "TACTICS 2.0" &&
     snapshot.worldVersion === "VERTICAL 4.0" &&
+    snapshot.matchVersion === "MATCH 5.0" &&
+    ["waiting", "countdown", "active", "result"].includes(snapshot.matchPhase) &&
+    typeof snapshot.matchStarted === "boolean" &&
+    typeof snapshot.humanCount === "number" &&
+    typeof snapshot.readyHumans === "number" &&
+    typeof snapshot.minimumHumans === "number" &&
     snapshot.doors?.length === 6 &&
     snapshot.doors.every((door) => typeof door.openness === "number" && typeof door.targetOpen === "boolean") &&
     snapshot.elevators?.length === 2 &&
@@ -104,7 +110,7 @@ await waitFor(
     typeof snapshot.safeZone?.enabled === "boolean" &&
     snapshot.players.every((player) => !("qaVerticalStage" in player))
   ),
-  "public snapshot includes VERTICAL 4.0 elevators, doors, TACTICS 2.0, player, vehicle durability, and safe-zone state"
+  "public snapshot includes MATCH 5.0 lifecycle, VERTICAL 4.0 elevators, doors, TACTICS 2.0, player, vehicle durability, and safe-zone state"
 );
 
 const snapshot = probe.state.snapshots.at(-1);
@@ -130,4 +136,4 @@ send(probe.ws, { type: "leave" });
 await new Promise((resolve) => setTimeout(resolve, 80));
 probe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, VERTICAL 4.0 elevators, doors, and TACTICS 2.0 active, movement corrected, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 lifecycle, VERTICAL 4.0 elevators, doors, and TACTICS 2.0 active, movement corrected, assets ${assetNames.join(", ")}`);

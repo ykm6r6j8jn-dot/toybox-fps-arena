@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const port = 54_000 + Math.floor(Math.random() * 3_000);
+const port = 54_000 + Math.floor(Math.random() * 1_000);
 const endpoint = `ws://127.0.0.1:${port}/ws`;
 let serverOutput = "";
 const server = spawn(process.execPath, ["server.mjs"], {
@@ -80,6 +80,8 @@ try {
   });
 
   await waitFor(() => latest()?.worldVersion === "VERTICAL 4.0" && latest()?.elevators?.length === 2, "shared vertical snapshot");
+  send({ type: "ready", ready: true });
+  await waitFor(() => latest()?.matchPhase === "active", "vertical room enters active combat", 7000);
   assert.equal(lift().currentFloor, 0);
 
   send({ type: "elevator_interact", elevatorId: "aurora-lift" });
@@ -107,12 +109,14 @@ try {
   });
   await waitFor(() => impacts.some((impact) => impact.point?.y > 5.3 && impact.point?.y < 5.7), "elevator platform blocks projectiles");
 
+  send({ type: "set_cpu", count: 19 });
+  await waitFor(() => latest()?.players?.filter((player) => player.isBot).length === 19, "19 CP vertical opponents", 9000);
+  send({ type: "ready", ready: true });
+  await waitFor(() => latest()?.matchPhase === "active", "vertical CP match restarts after CPU fill", 7000);
   send({ type: "creative_toggle", enabled: true });
   send({ type: "state", x: 74, y: 7.26, z: -20, yaw: 0, pitch: 0 });
   await waitFor(() => me()?.y > 7, "creative upper-floor placement");
   send({ type: "creative_toggle", enabled: false });
-  send({ type: "set_cpu", count: 19 });
-  await waitFor(() => latest()?.players?.filter((player) => player.isBot).length === 19, "19 CP vertical opponents", 9000);
 
   const observedTracks = new Map();
   let sawVerticalTactic = false;

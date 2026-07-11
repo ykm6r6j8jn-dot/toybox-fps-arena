@@ -8,7 +8,7 @@ let managedServerOutput = "";
 
 async function startManagedServer() {
   if (endpoint) return;
-  const port = 49_152 + Math.floor(Math.random() * 8_000);
+  const port = 50_000 + Math.floor(Math.random() * 1_000);
   endpoint = `ws://127.0.0.1:${port}/ws`;
   managedServer = spawn(process.execPath, ["server.mjs"], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
@@ -213,6 +213,13 @@ await waitFor(
       !snapshot.players?.some((player) => /^(CPU|CP)-/.test(String(player.name || "")))
     ),
   "three clients see each other without CP fill"
+);
+
+for (const client of [alpha, beta, gamma]) send(client.ws, { type: "ready", ready: true });
+await waitFor(
+  () => [alpha, beta, gamma].every((client) => latestSnapshot(client)?.matchPhase === "active" && latestSnapshot(client)?.matchStarted === true),
+  "three ready clients enter active combat",
+  7000
 );
 
 await waitFor(

@@ -60,6 +60,7 @@ type PlayerColor = "blue" | "red";
 type TeamChoice = PlayerColor | "auto";
 type RelationMode = "versus" | "coop";
 type GameMode = "oneLife" | "practice" | "life3" | "castle";
+type MatchPhase = "waiting" | "countdown" | "active" | "result";
 type ArenaId = "toybox";
 type PartySize = 1 | 2 | 4;
 type SkinId = "rounded" | "scout" | "heavy" | "bee";
@@ -421,6 +422,10 @@ const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
 const inviteButton = $("#inviteButton") as HTMLButtonElement;
 const readyButton = $("#readyButton") as HTMLButtonElement;
+const matchPhaseBanner = $("#matchPhaseBanner");
+const matchPhaseLabel = $("#matchPhaseLabel");
+const matchPhaseValue = $("#matchPhaseValue");
+const matchPhaseDetail = $("#matchPhaseDetail");
 const mobileFire = $("#mobileFire") as HTMLButtonElement;
 const scoreboard = $("#scoreboard");
 const scoreboardToggle = $("#scoreboardToggle") as HTMLButtonElement;
@@ -736,6 +741,13 @@ let partySize: PartySize = ([1, 2, 4].includes(Number(localStorage.getItem("toyb
 let cpuFillEnabled = localStorage.getItem("toybox-cpu-fill") !== "off";
 let relationMode: RelationMode = localStorage.getItem("toybox-relation-mode") === "coop" ? "coop" : "versus";
 let matchMaxPlayers = 20;
+let matchPhase: MatchPhase = "waiting";
+let matchPhaseEndsAt = 0;
+let matchHumanCount = 0;
+let matchReadyHumans = 0;
+let matchMinimumHumans = 1;
+let matchPhaseChangedAt = 0;
+let lastCountdownSecond = -1;
 let celebrationUntil = 0;
 let lastFireworkAt = 0;
 let winnerName = "";
@@ -3542,10 +3554,108 @@ memberToggle.addEventListener("click", () => {
   document.body.classList.toggle("members-open", open);
   memberToggle.textContent = open ? "メンバー収納" : "メンバー確認";
 });
-readyButton.addEventListener("click", () => {
-  self.ready = !self.ready;
+
+function syncReadyButton() {
   readyButton.classList.toggle("active", self.ready);
-  readyButton.querySelector("span")!.textContent = self.ready ? "準備解除" : "準備完了";
+  readyButton.disabled = matchPhase !== "waiting";
+  const label = matchPhase === "waiting"
+    ? self.ready ? "準備解除" : "準備完了"
+    : matchPhase === "countdown" ? "開始準備中"
+      : matchPhase === "active" ? "戦闘中"
+        : "試合終了";
+  readyButton.querySelector("span")!.textContent = label;
+}
+
+function applyMatchLifecycle(snapshot: Record<string, unknown>) {
+  const requestedPhase = String(snapshot.matchPhase || "waiting") as MatchPhase;
+  const nextPhase: MatchPhase = ["waiting", "countdown", "active", "result"].includes(requestedPhase)
+    ? requestedPhase
+    : "waiting";
+  const changed = nextPhase !== matchPhase;
+  matchPhase = nextPhase;
+  matchPhaseEndsAt = Math.max(0, Number(snapshot.phaseEndsAt) || 0);
+  matchHumanCount = Math.max(0, Math.floor(Number(snapshot.humanCount) || 0));
+  matchReadyHumans = Math.max(0, Math.floor(Number(snapshot.readyHumans) || 0));
+  matchMinimumHumans = Math.max(1, Math.floor(Number(snapshot.minimumHumans) || 1));
+  for (const phase of ["waiting", "countdown", "active", "result"] as MatchPhase[]) {
+    document.body.classList.toggle(`match-${phase}`, phase === matchPhase);
+  }
+  if (changed) {
+    matchPhaseChangedAt = performance.now();
+    lastCountdownSecond = -1;
+    if (matchPhase !== "active") {
+      desktopFiring = false;
+      mobileFiring = false;
+    }
+    if (matchPhase === "active") {
+      showToast("BATTLE START");
+      playSweep(520, 1040, 0.2, 0.05, "square");
+      pulseHaptic(28);
+    }
+  }
+  syncReadyButton();
+  updateMatchPhaseHud();
+}
+
+function updateMatchPhaseHud(now = performance.now()) {
+  if (!self.joined || !document.body.classList.contains("game-active")) {
+    matchPhaseBanner.classList.remove("show");
+    return;
+  }
+  const serverNow = Date.now() + serverClockOffsetMs;
+  const remainingSeconds = matchPhaseEndsAt > 0 ? Math.max(0, Math.ceil((matchPhaseEndsAt - serverNow) / 1000)) : 0;
+  matchPhaseBanner.classList.toggle("waiting", matchPhase === "waiting");
+  matchPhaseBanner.classList.toggle("countdown", matchPhase === "countdown");
+  matchPhaseBanner.classList.toggle("battle", matchPhase === "active");
+  matchPhaseBanner.classList.toggle("result", matchPhase === "result");
+
+  if (matchPhase === "waiting") {
+    const enoughPlayers = matchHumanCount >= matchMinimumHumans;
+    matchPhaseLabel.textContent = enoughPlayers ? "READY CHECK" : "MATCH WAITING";
+    matchPhaseValue.textContent = enoughPlayers && remainingSeconds > 0 ? `${remainingSeconds}s` : `${matchHumanCount}/${matchMinimumHumans}`;
+    matchPhaseDetail.textContent = enoughPlayers
+      ? `${matchReadyHumans}/${matchHumanCount} READY · 自動開始`
+      : `あと${Math.max(0, matchMinimumHumans - matchHumanCount)}人`;
+    matchPhaseBanner.classList.add("show");
+    return;
+  }
+
+  if (matchPhase === "countdown") {
+    const second = Math.max(1, remainingSeconds);
+    matchPhaseLabel.textContent = "MATCH START";
+    matchPhaseValue.textContent = String(second);
+    matchPhaseDetail.textContent = `${gameModeLabel(gameMode)} · ${Math.max(1, players.size)} PLAYERS`;
+    matchPhaseBanner.classList.add("show");
+    if (second !== lastCountdownSecond) {
+      lastCountdownSecond = second;
+      playSweep(440 + (4 - Math.min(3, second)) * 110, 620, 0.07, 0.025, "square");
+      pulseHaptic(12);
+    }
+    return;
+  }
+
+  if (matchPhase === "active" && now - matchPhaseChangedAt < 1450) {
+    matchPhaseLabel.textContent = "BATTLE";
+    matchPhaseValue.textContent = "GO";
+    matchPhaseDetail.textContent = gameModeLabel(gameMode);
+    matchPhaseBanner.classList.add("show");
+    return;
+  }
+
+  if (matchPhase === "result") {
+    matchPhaseLabel.textContent = "ROUND OVER";
+    matchPhaseValue.textContent = "RESULT";
+    matchPhaseDetail.textContent = "戦績を集計中";
+    matchPhaseBanner.classList.add("show");
+    return;
+  }
+  matchPhaseBanner.classList.remove("show");
+}
+
+readyButton.addEventListener("click", () => {
+  if (matchPhase !== "waiting") return;
+  self.ready = !self.ready;
+  syncReadyButton();
   send({ type: "ready", ready: self.ready });
 });
 copyInviteButton.addEventListener("click", copyInvite);
@@ -4114,10 +4224,12 @@ setInterval(() => {
 }, 3500);
 
 function triggerDonPunch() {
+  if (matchPhase !== "active") return;
   send({ type: "donpunch" });
 }
 
 function useHealPack() {
+  if (matchPhase !== "active") return;
   const me = players.get(self.id);
   if (!me || me.eliminated || me.health <= 0 || me.creative) return;
   if ((me.healPacks ?? 0) <= 0) {
@@ -4496,6 +4608,7 @@ function handleMessage(event: MessageEvent<string>) {
     roomInput.value = self.room;
     joinPanel.classList.add("hidden");
     setFpsActive(true);
+    applyMatchLifecycle(message as Record<string, unknown>);
     updateLobbyBgm();
     history.replaceState(null, "", `?room=${self.room}`);
     playerMotionTracks.clear();
@@ -4534,6 +4647,7 @@ function handleMessage(event: MessageEvent<string>) {
     if (message.relationMode) setRelationMode(message.relationMode as RelationMode);
     if (message.maxPlayers) matchMaxPlayers = Number(message.maxPlayers) || matchMaxPlayers;
     if (message.gameMode) setGameMode(message.gameMode as GameMode);
+    applyMatchLifecycle(message as Record<string, unknown>);
     if (message.arena) {
       arenaChoice = "toybox";
       setArenaChoice(arenaChoice);
@@ -4559,6 +4673,8 @@ function handleMessage(event: MessageEvent<string>) {
     const me = players.get(self.id);
     if (me) {
       self.health = me.health;
+      self.ready = Boolean(me.ready);
+      syncReadyButton();
       activeVehicleId = me.vehicleId || "";
       if (!activeVehicleId && previousVehicleId) {
         self.position.set(me.x, me.y, me.z);
@@ -4865,6 +4981,8 @@ function updateLobbyBgm() {
 function setFpsActive(active: boolean) {
   document.body.classList.toggle("game-active", active);
   if (!active) {
+    for (const phase of ["waiting", "countdown", "active", "result"] as MatchPhase[]) document.body.classList.remove(`match-${phase}`);
+    matchPhaseBanner.classList.remove("show");
     document.body.classList.remove("members-open");
     scoreboard.classList.remove("open");
     settingsPanel.classList.remove("open");
@@ -5417,7 +5535,7 @@ function currentAimSpread(gun = currentGun()) {
 }
 
 function shoot() {
-  if (fpsConnectionRecovering) return;
+  if (fpsConnectionRecovering || matchPhase !== "active") return;
   const me = players.get(self.id);
   if (activeVehicleId || me?.eliminated || (me && me.health <= 0)) return;
   const now = performance.now();
@@ -5619,6 +5737,12 @@ function returnToLobbyAfterRound() {
   lobbyReturnTimer = 0;
   self.joined = false;
   self.ready = false;
+  matchPhase = "waiting";
+  matchPhaseEndsAt = 0;
+  matchHumanCount = 0;
+  matchReadyHumans = 0;
+  matchMinimumHumans = 1;
+  lastCountdownSecond = -1;
   setFpsActive(false);
   desktopFiring = false;
   mobileFiring = false;
@@ -5629,7 +5753,7 @@ function returnToLobbyAfterRound() {
   interactionHint.classList.remove("show");
   roomCodeEl.textContent = "----";
   readyButton.classList.remove("active");
-  readyButton.querySelector("span")!.textContent = "準備完了";
+  syncReadyButton();
   resultPanel.classList.remove("open");
   spectatorCard.classList.remove("show");
   killcamCard.classList.remove("show");
@@ -6453,7 +6577,7 @@ function firstObstacleDistance(origin: THREE.Vector3, direction: THREE.Vector3, 
 
 function sendTeamPing() {
   const me = players.get(self.id);
-  if (!self.joined || me?.eliminated || (me && me.health <= 0)) return;
+  if (!self.joined || matchPhase !== "active" || me?.eliminated || (me && me.health <= 0)) return;
   const origin = self.position.clone();
   const direction = getLookDirection();
   const maxDistance = 90;
@@ -7577,6 +7701,7 @@ function animate() {
   }
   updateMeasuredFps(now);
   updateAdaptiveQuality(delta, now);
+  updateMatchPhaseHud(now);
   roundSeconds = Math.max(0, roundSeconds - delta);
   const minutes = Math.floor(roundSeconds / 60).toString().padStart(2, "0");
   const seconds = Math.floor(roundSeconds % 60).toString().padStart(2, "0");
@@ -7594,9 +7719,9 @@ function animate() {
   updateRemotePlayers(delta);
   if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);
-  const mobileAimLocked = self.joined ? applyMobileAimAssist(delta) : false;
-  if (self.joined && desktopFiring) shoot();
-  if (self.joined && mobileFiring && mobileAimLocked) shoot();
+  const mobileAimLocked = self.joined && matchPhase === "active" ? applyMobileAimAssist(delta) : false;
+  if (self.joined && matchPhase === "active" && desktopFiring) shoot();
+  if (self.joined && matchPhase === "active" && mobileFiring && mobileAimLocked) shoot();
   updateKillcam();
   updateCamera(delta);
   updateWeaponMotion(delta);
