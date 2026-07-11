@@ -9,6 +9,7 @@ import Check from "lucide/dist/esm/icons/check.js";
 import ChevronsUp from "lucide/dist/esm/icons/chevrons-up.js";
 import Copy from "lucide/dist/esm/icons/copy.js";
 import Crosshair from "lucide/dist/esm/icons/crosshair.js";
+import DoorOpen from "lucide/dist/esm/icons/door-open.js";
 import HeartPulse from "lucide/dist/esm/icons/heart-pulse.js";
 import MapPin from "lucide/dist/esm/icons/map-pin.js";
 import Maximize2 from "lucide/dist/esm/icons/maximize-2.js";
@@ -38,6 +39,8 @@ import {
   toyboxTrampolinePads,
   wrapAngle
 } from "../movement-systems.mjs";
+import { nearestInteractableDoor, toyboxDoorDefinitions } from "../world-systems.mjs";
+import type { DoorDefinition } from "../world-systems.mjs";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -143,6 +146,13 @@ type VehicleSnapshot = {
   maxHealth?: number;
   disabledUntil?: number;
   repairing?: boolean;
+};
+
+type DoorSnapshot = {
+  id: string;
+  openness: number;
+  targetOpen: boolean;
+  updatedAt: number;
 };
 
 type SafeZoneSnapshot = {
@@ -314,6 +324,7 @@ const lucideIcons = {
   Check,
   Copy,
   Crosshair,
+  DoorOpen,
   HeartPulse,
   MapPin,
   Maximize2,
@@ -803,6 +814,7 @@ let barrierMesh: THREE.Group | null = null;
 let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
 const vehicleSnapshots = new Map<string, VehicleSnapshot>();
+const doorSnapshots = new Map<string, DoorSnapshot>();
 const playerMotionTracks = new Map<string, MotionSample[]>();
 const playerAnimationPhases = new Map<string, number>();
 const vehicleMotionTracks = new Map<string, MotionSample[]>();
@@ -820,7 +832,18 @@ let networkInterpolationDelayMs = 132;
 let lastSafeZonePhase = -1;
 let wasOutsideSafeZone = false;
 let wasVehicleRepairing = false;
-const automaticDoors: { left: THREE.Mesh; right: THREE.Mesh; center: THREE.Vector3; closedLeftX: number; closedRightX: number; openness: number }[] = [];
+const automaticDoors: {
+  definition: DoorDefinition;
+  left: THREE.Mesh;
+  right: THREE.Mesh;
+  leftCollider: THREE.Box3;
+  rightCollider: THREE.Box3;
+  closedLeftX: number;
+  closedRightX: number;
+  openness: number;
+  targetOpenness: number;
+}[] = [];
+const toyboxDoorDefinitionsById = new Map<string, DoorDefinition>(toyboxDoorDefinitions.map((definition) => [definition.id, definition]));
 let bulletHoleTexture: THREE.CanvasTexture | null = null;
 let bulletHoleOwnMaterial: THREE.MeshBasicMaterial | null = null;
 let bulletHoleOtherMaterial: THREE.MeshBasicMaterial | null = null;
@@ -862,6 +885,7 @@ let viewportRecoveryTimers: number[] = [];
 let viewportRecoveryUntil = 0;
 let activeVehicleId = "";
 let nearestVehicleId = "";
+let nearestDoorId = "";
 let lastVehicleInputSent = 0;
 let lastInteractionCheckAt = 0;
 
@@ -1261,11 +1285,13 @@ function clearArenaObjects() {
   for (const vehicle of vehicleMeshes.values()) scene.remove(vehicle.group);
   vehicleMeshes.clear();
   vehicleSnapshots.clear();
+  doorSnapshots.clear();
   for (const ping of teamPingMeshes.values()) disposeGroup(ping.group);
   teamPingMeshes.clear();
   automaticDoors.length = 0;
   activeVehicleId = "";
   nearestVehicleId = "";
+  nearestDoorId = "";
   for (const object of arenaObjects.splice(0)) {
     scene.remove(object);
     object.traverse((child) => {
@@ -2230,20 +2256,46 @@ function addInstancedTowerSpiral(name: string, center: [number, number, number],
   trackArenaObject(pole);
 }
 
-function addAutomaticSlidingDoor(name: string, center: [number, number, number]) {
-  const left = addDetailBox(`${name} left`, [center[0] - 1.35, center[1], center[2]], [2.55, 2.9, 0.1], materials.glass);
-  const right = addDetailBox(`${name} right`, [center[0] + 1.35, center[1], center[2]], [2.55, 2.9, 0.1], materials.glass);
-  addDetailBox(`${name} header`, [center[0], center[1] + 1.62, center[2] - 0.04], [6.2, 0.28, 0.32], materials.metal);
-  addDetailBox(`${name} left frame`, [center[0] - 3.05, center[1], center[2] - 0.04], [0.18, 3.18, 0.3], materials.metal);
-  addDetailBox(`${name} right frame`, [center[0] + 3.05, center[1], center[2] - 0.04], [0.18, 3.18, 0.3], materials.metal);
-  automaticDoors.push({
+function addAutomaticSlidingDoor(id: string, name: string) {
+  const definition = toyboxDoorDefinitionsById.get(id);
+  if (!definition) return;
+  const center: [number, number, number] = [definition.x, definition.y, definition.z];
+  const left = addDetailBox(
+    `${name} left`,
+    [definition.x - definition.panelOffset, definition.y, definition.z],
+    [definition.panelWidth, definition.height, 0.1],
+    materials.glass
+  );
+  const right = addDetailBox(
+    `${name} right`,
+    [definition.x + definition.panelOffset, definition.y, definition.z],
+    [definition.panelWidth, definition.height, 0.1],
+    materials.glass
+  );
+  const leftHandle = new THREE.Mesh(new THREE.BoxGeometry(0.075, 1.18, 0.075), materials.metal);
+  leftHandle.name = `${name} left handle`;
+  leftHandle.position.set(definition.panelWidth / 2 - 0.12, 0, 0.075);
+  const rightHandle = new THREE.Mesh(new THREE.BoxGeometry(0.075, 1.18, 0.075), materials.metal);
+  rightHandle.name = `${name} right handle`;
+  rightHandle.position.set(-definition.panelWidth / 2 + 0.12, 0, 0.075);
+  left.add(leftHandle);
+  right.add(rightHandle);
+  addDetailBox(`${name} header`, [center[0], center[1] + 1.62, center[2] - 0.04], [definition.width + 1.1, 0.28, 0.32], materials.metal);
+  addDetailBox(`${name} left frame`, [center[0] - definition.width / 2 - 0.5, center[1], center[2] - 0.04], [0.18, 3.18, 0.3], materials.metal);
+  addDetailBox(`${name} right frame`, [center[0] + definition.width / 2 + 0.5, center[1], center[2] - 0.04], [0.18, 3.18, 0.3], materials.metal);
+  const runtimeDoor = {
+    definition,
     left,
     right,
-    center: new THREE.Vector3(...center),
+    leftCollider: new THREE.Box3(),
+    rightCollider: new THREE.Box3(),
     closedLeftX: left.position.x,
     closedRightX: right.position.x,
-    openness: 0
-  });
+    openness: 0,
+    targetOpenness: 0
+  };
+  automaticDoors.push(runtimeDoor);
+  updateDoorCollisionBoxes(runtimeDoor);
 }
 
 function addAuroraTower() {
@@ -2290,9 +2342,85 @@ function addAuroraTower() {
   addBox("aurora lift bank", [x + 5.7, 1.55, z - 9.68], [5.8, 3.1, 0.12], materials.dark);
   addDetailBox("aurora route stripe", [x - 2.4, 0.09, z + 2.6], [0.5, 0.04, 11], materials.green);
   addInstancedTowerSpiral("aurora spiral", [x - 4.8, 0.08, z - 2.2], 4, 5.5);
-  addAutomaticSlidingDoor("aurora auto door", [x, 1.48, z + 10.28]);
+  addAutomaticSlidingDoor("aurora-entry", "aurora auto door");
   addSign("AURORA TOWER", [x, 3.85, z + 10.32], Math.PI, "#177fd2");
   addWallDecal("aurora lobby mural", [x, 2.45, z - 9.7], Math.PI, decalTextures.greenSmile, 5.6, 3.5, 0.78);
+}
+
+function addNexusCenter() {
+  const x = -79;
+  const z = -74;
+  const width = 14;
+  const depth = 14;
+  const height = 27.5;
+  const floorHeight = 5.5;
+  const facadeGap = 5.4;
+  const facadeWing = (width - facadeGap) / 2;
+  const facadeOffset = facadeGap / 2 + facadeWing / 2;
+
+  addBox("nexus rear wall", [x, height / 2, z - depth / 2], [width, height, 0.5], materials.wall);
+  addBox("nexus front west", [x - facadeOffset, height / 2, z + depth / 2], [facadeWing, height, 0.5], materials.wall);
+  addBox("nexus front east", [x + facadeOffset, height / 2, z + depth / 2], [facadeWing, height, 0.5], materials.wall);
+  addBox("nexus front upper", [x, 15.35, z + depth / 2], [facadeGap, 24.3, 0.5], materials.glass);
+  addBox("nexus west wall", [x - width / 2, height / 2, z], [0.5, height, depth], materials.wall);
+  addBox("nexus east wall", [x + width / 2, height / 2, z], [0.5, height, depth], materials.wall);
+  addBox("nexus lobby floor", [x, 0.04, z], [13.5, 0.12, 13.5], materials.floor, false);
+
+  for (let level = 1; level <= 5; level += 1) {
+    const floorY = level * floorHeight + 0.05;
+    const floorMaterial = level === 5 ? materials.metal : materials.floor;
+    const slabs: Array<{ position: [number, number, number]; scale: [number, number, number] }> = [
+      { position: [-85.55, floorY, z], scale: [0.4, 0.22, 13.5] },
+      { position: [-75.45, floorY, z], scale: [6.4, 0.22, 13.5] },
+      { position: [-82, floorY, -79.175], scale: [6.7, 0.22, 3.15] },
+      { position: [-82, floorY, -69.075], scale: [6.7, 0.22, 3.65] }
+    ];
+    for (const [index, slab] of slabs.entries()) {
+      addBox(`nexus floor ${level}-${index}`, slab.position, slab.scale, floorMaterial, false);
+      addWalkSurface(slab.position, slab.scale);
+    }
+    if (level < 5) {
+      const accent = level % 3 === 1 ? materials.blue : level % 3 === 2 ? materials.green : materials.yellow;
+      addDetailBox(`nexus level band ${level}`, [x, floorY + 0.15, z + 6.72], [13.6, 0.16, 0.08], accent);
+    }
+  }
+
+  for (let level = 0; level < 5; level += 1) {
+    const baseY = level * floorHeight;
+    const windowY = baseY + 3.72;
+    const accent = level % 2 === 0 ? materials.blue : materials.green;
+    for (const offset of [-4.8, -1.6, 1.6, 4.8]) {
+      addDetailBox(`nexus rear window ${level}-${offset}`, [x + offset, windowY, z - 6.72], [2.35, 2.45, 0.08], materials.glass);
+    }
+    addDetailBox(`nexus front west window ${level}`, [x - 4.85, windowY, z + 6.72], [3.15, 2.45, 0.08], materials.glass);
+    addDetailBox(`nexus front east window ${level}`, [x + 4.85, windowY, z + 6.72], [3.15, 2.45, 0.08], materials.glass);
+    addDetailBox(`nexus west window ${level}`, [x - 6.72, windowY, z + 2.5], [0.08, 2.45, 3.5], materials.glass);
+    addDetailBox(`nexus east window ${level}`, [x + 6.72, windowY, z - 2.5], [0.08, 2.45, 3.5], materials.glass);
+    addDetailBox(`nexus ceiling light ${level}`, [x + 2.4, baseY + 5.12, z], [5.6, 0.06, 0.18], materials.light);
+    addDetailBox(`nexus route stripe ${level}`, [x + 2.3, baseY + 0.16, z + 0.8], [4.7, 0.04, 0.46], accent);
+    if (level > 0) {
+      addBox(`nexus partition ${level}`, [x + 3.1, baseY + 1.35, z - 2.4], [0.35, 2.7, 3.3], materials.wall);
+      addBox(`nexus cover desk ${level}`, [x + 4.9, baseY + 0.78, z + 2.1], [2.4, 1.56, 0.35], accent);
+    }
+  }
+
+  addBox("nexus reception", [x + 3.4, 0.52, z + 4.5], [4.8, 0.9, 1.2], materials.blue);
+  addDetailBox("nexus reception top", [x + 3.4, 1.02, z + 4.5], [5, 0.12, 1.4], materials.metal);
+  addBox("nexus lift bank", [x + 3.8, 1.55, z - 6.68], [4, 3.1, 0.12], materials.dark);
+  addInstancedTowerSpiral("nexus spiral", [x - 3, 0.08, z - 0.25], 5, floorHeight);
+  addAutomaticSlidingDoor("nexus-entry", "nexus auto door");
+  addSign("NEXUS CENTER", [x, 4.18, z + 7.32], Math.PI, "#1a89d8");
+  addWallDecal("nexus lobby smile", [x, 2.35, z - 6.7], Math.PI, decalTextures.greenSmile, 4.8, 3.1, 0.78);
+
+  addRailingRun("nexus roof north", [x - 5.9, height + 0.38, z - 6.45], 10, 1.3, 0);
+  addRailingRun("nexus roof south", [x - 5.9, height + 0.38, z + 6.45], 10, 1.3, 0);
+  addDetailBox("nexus rooftop hvac", [x + 3.6, height + 0.62, z - 2.2], [2.4, 1.1, 1.8], materials.metal);
+  addDetailBox("nexus rooftop solar", [x + 3.5, height + 0.34, z + 2.3], [3.1, 0.12, 1.8], materials.blue, -0.12);
+  const helipad = new THREE.Mesh(new THREE.RingGeometry(1.45, 1.8, 28), materials.yellow);
+  helipad.name = "nexus rooftop landing marker";
+  helipad.rotation.x = -Math.PI / 2;
+  helipad.position.set(x + 2.5, height + 0.19, z);
+  trackArenaObject(helipad);
 }
 
 function addMetroAtrium() {
@@ -2325,6 +2453,7 @@ function addMetroAtrium() {
   addRailingRun("metro roof south guard", [x - 5.8, h + 0.42, z + d / 2 + 0.2], 10, 1.25, 0);
   addRailingRun("metro deck guard", [x + 0.2, 3.34, z + 1.9], 5, 1.1, 0);
   addWallDecal("metro interior smile mural", [x, 2.08, z - d / 2 + 0.035], Math.PI, decalTextures.greenSmile, 5.6, 3.6, 0.86);
+  addAutomaticSlidingDoor("metro-entry", "metro atrium auto door");
 }
 
 function addStripedRampDetails() {
@@ -2505,10 +2634,12 @@ function addToyboxArena() {
   addOpenCityBuilding("north office lobby", 0, -82, 22, 13, 8.4, materials.wall, materials.blue);
   addOpenCityBuilding("west shopping arcade", -80, -18, 18, 15, 6.2, materials.glass, materials.orange);
   addOpenCityBuilding("east civic hall", 80, 18, 18, 15, 6.2, materials.wall, materials.green);
+  addAutomaticSlidingDoor("north-office-entry", "north office auto door");
+  addAutomaticSlidingDoor("west-arcade-entry", "west arcade auto door");
+  addAutomaticSlidingDoor("east-civic-entry", "east civic auto door");
   addBox("north office tower", [0, 15.4, -86], [12, 30.8, 7], materials.glass);
   addBox("north office roof", [0, 30.95, -86], [12.8, 0.35, 7.8], materials.cyan, false);
-  addBox("west highrise", [-79, 13.5, -74], [13, 27, 10], materials.wall);
-  addBox("west highrise roof", [-79, 27.2, -74], [13.8, 0.35, 10.8], materials.orange, false);
+  addNexusCenter();
   addBox("east highrise", [78, 14.8, 75], [12, 29.6, 11], materials.glass);
   addBox("east highrise roof", [78, 29.75, 75], [12.8, 0.35, 11.8], materials.purple, false);
   addBox("central skywalk west", [-31, 8.6, -74], [44, 0.48, 3.2], materials.cyan, false);
@@ -2561,7 +2692,6 @@ function addToyboxArena() {
   addStairs("broadcast stairs", [-4.2, 0.15, 48], 20, 0.47, 0.9, -Math.PI / 2);
   addStairs("north office stairs", [9, 0.15, -80], 17, 0.47, 0.9, Math.PI);
   addStairs("north tower stairs", [-7.5, 0.15, -89], 34, 0.82, 0.78, 0);
-  addStairs("west highrise stairs", [-88, 0.15, -74], 31, 0.82, 0.78, Math.PI / 2);
   addStairs("east highrise stairs", [86, 0.15, 75], 34, 0.82, 0.78, -Math.PI / 2);
   addStairs("parking deck stairs", [-17, 0.15, 82], 12, 0.5, 1.0, Math.PI / 2);
   for (const trampoline of toyboxTrampolinePads) {
@@ -3153,7 +3283,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyE" && !event.repeat && self.joined) {
     event.preventDefault();
-    toggleVehicleInteraction();
+    triggerContextInteraction();
   }
   if (event.code === "KeyP" && !event.repeat && self.joined) {
     event.preventDefault();
@@ -3861,7 +3991,7 @@ mobileSkill.addEventListener("pointerdown", (event) => {
 mobileInteract.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
-  toggleVehicleInteraction();
+  triggerContextInteraction();
 });
 setCustomColor(customColor);
 setSoundEnabled(soundEnabled);
@@ -4322,6 +4452,7 @@ function handleMessage(event: MessageEvent<string>) {
     const incomingPlayers = (message.players || []) as PlayerState[];
     syncPlayerMotionSnapshots(incomingPlayers, snapshotAt);
     syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[], snapshotAt);
+    syncDoorSnapshots((message.doors || []) as DoorSnapshot[]);
     syncSafeZone(message.safeZone as SafeZoneSnapshot | undefined);
     const previousVehicleId = activeVehicleId;
     players.clear();
@@ -4431,6 +4562,9 @@ function handleMessage(event: MessageEvent<string>) {
     } else if (activeVehicleId) {
       showToast("ロードスターに乗りました");
     }
+  }
+  if (message.type === "door_status" && message.opened) {
+    pulseHaptic(12);
   }
   if (message.type === "movement_correction" && message.position && !activeVehicleId && !creativeMode) {
     movementCorrectionTarget.set(
@@ -5141,6 +5275,9 @@ function collides(position: THREE.Vector3) {
     new THREE.Vector3(position.x + playerRadius, maxY, position.z + playerRadius)
   );
   if (colliders.some((box) => box.intersectsBox(playerBox))) return true;
+  for (const door of automaticDoors) {
+    if (door.leftCollider.intersectsBox(playerBox) || door.rightCollider.intersectsBox(playerBox)) return true;
+  }
   if (position.y > 3.4) return false;
   for (const vehicle of vehicleSnapshots.values()) {
     if (vehicle.id === activeVehicleId) continue;
@@ -5717,6 +5854,19 @@ function syncVehicleSnapshots(snapshots: VehicleSnapshot[], snapshotAt: number) 
   }
 }
 
+function syncDoorSnapshots(snapshots: DoorSnapshot[]) {
+  doorSnapshots.clear();
+  for (const snapshot of snapshots) {
+    if (!snapshot?.id || !toyboxDoorDefinitionsById.has(snapshot.id)) continue;
+    doorSnapshots.set(snapshot.id, {
+      id: snapshot.id,
+      openness: THREE.MathUtils.clamp(Number(snapshot.openness) || 0, 0, 1),
+      targetOpen: Boolean(snapshot.targetOpen),
+      updatedAt: Number(snapshot.updatedAt) || 0
+    });
+  }
+}
+
 function updateVehicleVisuals(delta: number) {
   const serverNow = Date.now() + serverClockOffsetMs;
   for (const [id, snapshot] of vehicleSnapshots) {
@@ -5878,16 +6028,26 @@ function updateTeamPings(delta: number) {
   }
 }
 
+function updateDoorCollisionBoxes(door: (typeof automaticDoors)[number]) {
+  const definition = door.definition;
+  const halfWidth = definition.panelWidth / 2;
+  const halfHeight = definition.height / 2;
+  const halfThickness = definition.thickness / 2;
+  door.leftCollider.min.set(door.left.position.x - halfWidth, definition.y - halfHeight, definition.z - halfThickness);
+  door.leftCollider.max.set(door.left.position.x + halfWidth, definition.y + halfHeight, definition.z + halfThickness);
+  door.rightCollider.min.set(door.right.position.x - halfWidth, definition.y - halfHeight, definition.z - halfThickness);
+  door.rightCollider.max.set(door.right.position.x + halfWidth, definition.y + halfHeight, definition.z + halfThickness);
+}
+
 function updateAutomaticDoors(delta: number) {
   for (const door of automaticDoors) {
-    let nearest = self.joined ? Math.hypot(self.position.x - door.center.x, self.position.z - door.center.z) : Infinity;
-    for (const player of players.values()) {
-      nearest = Math.min(nearest, Math.hypot(player.x - door.center.x, player.z - door.center.z));
-    }
-    const target = nearest < 4.2 ? 1 : 0;
-    door.openness = THREE.MathUtils.damp(door.openness, target, 8.5, delta);
-    door.left.position.x = door.closedLeftX - door.openness * 2.32;
-    door.right.position.x = door.closedRightX + door.openness * 2.32;
+    const snapshot = doorSnapshots.get(door.definition.id);
+    door.targetOpenness = THREE.MathUtils.clamp(Number(snapshot?.openness) || 0, 0, 1);
+    door.openness = THREE.MathUtils.damp(door.openness, door.targetOpenness, 18, delta);
+    if (Math.abs(door.openness - door.targetOpenness) < 0.001) door.openness = door.targetOpenness;
+    door.left.position.x = door.closedLeftX - door.openness * door.definition.travel;
+    door.right.position.x = door.closedRightX + door.openness * door.definition.travel;
+    updateDoorCollisionBoxes(door);
   }
 }
 
@@ -5900,24 +6060,31 @@ function updateVehicleInteraction(now = performance.now()) {
   if (now - lastInteractionCheckAt < 90) return;
   lastInteractionCheckAt = now;
   nearestVehicleId = "";
-  let nearestDistance = Infinity;
+  nearestDoorId = "";
+  let nearestVehicleDistance = Infinity;
   if (!activeVehicleId) {
     for (const vehicle of vehicleSnapshots.values()) {
       if (vehicle.driverId || (vehicle.health ?? 600) <= 0 || (vehicle.disabledUntil || 0) > Date.now()) continue;
       const distance = Math.hypot(vehicle.x - self.position.x, vehicle.z - self.position.z);
-      if (distance < 3.35 && distance < nearestDistance) {
-        nearestDistance = distance;
+      if (distance < 3.35 && distance < nearestVehicleDistance) {
+        nearestVehicleDistance = distance;
         nearestVehicleId = vehicle.id;
       }
     }
+    const nearestDoor = nearestInteractableDoor(self.position);
+    if (nearestDoor && nearestDoor.distance < nearestVehicleDistance) nearestDoorId = nearestDoor.definition.id;
   }
-  const available = Boolean(activeVehicleId || nearestVehicleId);
+  const doorAction = Boolean(!activeVehicleId && nearestDoorId);
+  const available = Boolean(activeVehicleId || nearestVehicleId || nearestDoorId);
   document.body.classList.toggle("driving", Boolean(activeVehicleId));
   if (activeVehicleId) mobileFiring = false;
   mobileInteract.classList.toggle("available", available);
+  mobileInteract.classList.toggle("door-action", doorAction);
+  interactionHint.classList.toggle("door-action", doorAction);
   interactionHint.classList.toggle("show", available && !isCoarsePointer());
-  interactionHintText.textContent = activeVehicleId ? "ロードスターから降りる" : "ロードスターに乗る";
-  mobileInteract.setAttribute("aria-label", activeVehicleId ? "車から降りる" : "車に乗る");
+  const doorLabel = nearestDoorId ? toyboxDoorDefinitionsById.get(nearestDoorId)?.label || "建物" : "";
+  interactionHintText.textContent = activeVehicleId ? "ロードスターから降りる" : doorAction ? `${doorLabel}を開ける` : "ロードスターに乗る";
+  mobileInteract.setAttribute("aria-label", activeVehicleId ? "車から降りる" : doorAction ? `${doorLabel}のドアを開ける` : "車に乗る");
   mobileJump.setAttribute("aria-label", activeVehicleId ? "ブレーキ" : "ジャンプ");
 }
 
@@ -5966,11 +6133,16 @@ function updateSafeZoneHud() {
   zoneStatus.classList.toggle("shrinking", safeZoneSnapshot.stage === "shrinking");
 }
 
-function toggleVehicleInteraction() {
+function triggerContextInteraction() {
   if (!self.joined) return;
   if (activeVehicleId) {
     send({ type: "vehicle_exit" });
     pulseHaptic(28);
+    return;
+  }
+  if (nearestDoorId) {
+    send({ type: "door_interact", doorId: nearestDoorId });
+    pulseHaptic(18);
     return;
   }
   if (!nearestVehicleId) return;
@@ -6006,6 +6178,12 @@ function firstObstacleDistance(origin: THREE.Vector3, direction: THREE.Vector3, 
   for (const box of colliders) {
     const hit = rayBoxDistance(origin, direction, box, maxDistance);
     if (hit !== null && hit < best) best = hit;
+  }
+  for (const door of automaticDoors) {
+    for (const box of [door.leftCollider, door.rightCollider]) {
+      const hit = rayBoxDistance(origin, direction, box, maxDistance);
+      if (hit !== null && hit < best) best = hit;
+    }
   }
   return best;
 }

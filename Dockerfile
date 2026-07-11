@@ -17,5 +17,6 @@ COPY --from=build /app/network-systems.mjs ./network-systems.mjs
 COPY --from=build /app/combat-systems.mjs ./combat-systems.mjs
 COPY --from=build /app/movement-systems.mjs ./movement-systems.mjs
 COPY --from=build /app/ai-systems.mjs ./ai-systems.mjs
+COPY --from=build /app/world-systems.mjs ./world-systems.mjs
 EXPOSE 5188
 CMD ["npm", "start"]

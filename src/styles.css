@@ -1210,6 +1210,26 @@ body.scoped .center-reticle::after {
   display: grid;
 }
 
+.mobile-interact .door-icon,
+.interaction-hint .door-icon {
+  display: none;
+}
+
+.mobile-interact.door-action .vehicle-icon,
+.interaction-hint.door-action .vehicle-icon {
+  display: none;
+}
+
+.mobile-interact.door-action .door-icon,
+.interaction-hint.door-action .door-icon {
+  display: block;
+}
+
+.mobile-interact.door-action {
+  color: #f8fbff;
+  background: rgba(29, 139, 216, 0.92);
+}
+
 body.driving .fire-button,
 body.driving .mobile-weapon,
 body.driving .mobile-reload,

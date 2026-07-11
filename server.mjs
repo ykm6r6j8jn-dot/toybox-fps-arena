@@ -10,6 +10,14 @@ import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
 import { clampMovementRequest, isNearToyboxTrampoline, wrapAngle } from "./movement-systems.mjs";
 import {
+  createDoorState,
+  distanceToDoor,
+  doorPanelBoxes,
+  doorShouldOpen,
+  stepDoorOpenness,
+  toyboxDoorDefinitions
+} from "./world-systems.mjs";
+import {
   chooseCpuTactic,
   computeCpuDestination,
   cpuCanFire,
@@ -42,6 +50,7 @@ const matchTeamSize = maxPlayers / 2;
 const maxHealth = 200;
 const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
+const worldVersion = "WORLD 3.0";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -148,6 +157,8 @@ const maxEquipmentTier = 5;
 const allowedWeapons = new Set(weaponDamage.keys());
 const solidObstacles = [];
 const okakoSolidObstacles = [];
+const emptyDoorObstacles = Object.freeze([]);
+const doorDefinitionsById = new Map(toyboxDoorDefinitions.map((definition) => [definition.id, definition]));
 const vehicleSpawns = [
   { id: "roadster-east", x: 64, z: 2, yaw: 0, color: "green" },
   { id: "roadster-west", x: -66, z: -38, yaw: Math.PI / 2, color: "blue" },
@@ -170,6 +181,66 @@ function addSolidObstacle(position, scale, arena = "toybox", movement = true) {
 
 function obstaclesForArena(arena = "toybox") {
   return arena === "okakoj" ? okakoSolidObstacles : solidObstacles;
+}
+
+function arenaForContext(context = "toybox") {
+  return typeof context === "string" ? context : context?.arena || "toybox";
+}
+
+function doorObstaclesForContext(context) {
+  return typeof context === "object" && context?.arena === "toybox" && Array.isArray(context.doorObstacles)
+    ? context.doorObstacles
+    : emptyDoorObstacles;
+}
+
+function createDoors(now = Date.now()) {
+  return new Map(toyboxDoorDefinitions.map((definition) => [definition.id, createDoorState(definition, now)]));
+}
+
+function rebuildDoorObstacles(room) {
+  room.doorObstacles = [];
+  if (room.arena !== "toybox") return;
+  for (const definition of toyboxDoorDefinitions) {
+    const state = room.doors?.get(definition.id);
+    if (!state) continue;
+    room.doorObstacles.push(...doorPanelBoxes(definition, state.openness));
+  }
+}
+
+function updateDoors(room, now = Date.now()) {
+  if (room.arena !== "toybox" || !room.doors) return;
+  const entities = [];
+  for (const player of room.players.values()) {
+    if (player.disconnectedAt || player.eliminated || player.health <= 0 || player.vehicleId) continue;
+    entities.push(player);
+  }
+  for (const vehicle of room.vehicles?.values?.() || []) {
+    if (vehicle.health <= 0 || (vehicle.disabledUntil || 0) > now) continue;
+    entities.push({ x: vehicle.x, y: 1.1, z: vehicle.z });
+  }
+  for (const definition of toyboxDoorDefinitions) {
+    const state = room.doors.get(definition.id);
+    if (!state) continue;
+    const elapsed = Math.max(0, Math.min(0.25, (now - (state.updatedAt || now)) / 1000));
+    const sensedByEntity = doorShouldOpen(definition, entities, 0, now);
+    if (sensedByEntity) {
+      state.holdOpenUntil = Math.max(state.holdOpenUntil || 0, now + 720);
+    }
+    const sensed = sensedByEntity || (state.holdOpenUntil || 0) > now;
+    state.targetOpen = sensed;
+    state.openness = stepDoorOpenness(state.openness, state.targetOpen, elapsed, definition);
+    state.updatedAt = now;
+  }
+  rebuildDoorObstacles(room);
+}
+
+function publicDoor(state) {
+  return {
+    id: state.id,
+    openness: Math.round(state.openness * 1000) / 1000,
+    targetOpen: Boolean(state.targetOpen),
+    updatedAt: state.updatedAt
+  };
 }
 
 function buildCpuCoverPoints(arena = "toybox") {
@@ -236,7 +307,7 @@ function initSolidObstacles() {
     [[-71, 3.1, -18], [0.5, 6.2, 15]], [[80, 3.1, 10.5], [18, 6.2, 0.5]],
     [[74, 3.1, 25.5], [6.2, 6.2, 0.5]], [[86, 3.1, 25.5], [6.2, 6.2, 0.5]],
     [[71, 3.1, 18], [0.5, 6.2, 15]], [[89, 3.1, 18], [0.5, 6.2, 15]],
-    [[-79, 13.5, -74], [13, 27, 10]], [[78, 14.8, 75], [12, 29.6, 11]],
+    [[78, 14.8, 75], [12, 29.6, 11]],
     [[0, 3.4, 82], [34, 6.8, 12]], [[-22, 1.3, 79], [8, 2.6, 3.2]],
     [[72, 1.9, -54], [17, 3.8, 8]], [[-72, 1.9, 54], [17, 3.8, 8]],
     [[63, 1.05, -78], [9, 2.1, 3.4]], [[-62, 1.8, 78], [5.2, 3.6, 5.2]],
@@ -265,6 +336,32 @@ function initSolidObstacles() {
       [[69.2, y, -16.525], [6.8, 0.22, 8.55]]
     ];
     for (const [position, scale] of slabs) addSolidObstacle(position, scale, "toybox", false);
+  }
+
+  const nexusWalls = [
+    [[-79, 13.75, -81], [14, 27.5, 0.5]],
+    [[-83.85, 13.75, -67], [4.3, 27.5, 0.5]],
+    [[-74.15, 13.75, -67], [4.3, 27.5, 0.5]],
+    [[-79, 15.35, -67], [5.4, 24.3, 0.5]],
+    [[-86, 13.75, -74], [0.5, 27.5, 14]],
+    [[-72, 13.75, -74], [0.5, 27.5, 14]],
+    [[-75.6, 0.52, -69.5], [4.8, 0.9, 1.2]],
+    [[-75.2, 1.55, -80.68], [4, 3.1, 0.12]]
+  ];
+  for (const [position, scale] of nexusWalls) addSolidObstacle(position, scale);
+  for (let level = 1; level <= 5; level += 1) {
+    const y = level * 5.5 + 0.05;
+    const slabs = [
+      [[-85.55, y, -74], [0.4, 0.22, 13.5]],
+      [[-75.45, y, -74], [6.4, 0.22, 13.5]],
+      [[-82, y, -79.175], [6.7, 0.22, 3.15]],
+      [[-82, y, -69.075], [6.7, 0.22, 3.65]]
+    ];
+    for (const [position, scale] of slabs) addSolidObstacle(position, scale, "toybox", false);
+    if (level >= 5) continue;
+    const baseY = level * 5.5;
+    addSolidObstacle([-75.9, baseY + 1.35, -76.4], [0.35, 2.7, 3.3]);
+    addSolidObstacle([-74.1, baseY + 0.78, -71.9], [2.4, 1.56, 0.35]);
   }
 
   const okakoBoxes = [
@@ -872,6 +969,8 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "oneLife" ? nextHealthPickupAt() : 0 },
     powerups: createPowerups()
   };
+  room.doors = createDoors(room.createdAt);
+  rebuildDoorObstacles(room);
   rooms.set(createdCode, room);
   return room;
 }
@@ -1525,7 +1624,7 @@ function spawnPoint(index = 0) {
     [64, 1.6, 8],
     [-60, 1.6, 34],
     [64, 1.6, -34],
-    [-48, 1.6, -62],
+    [-79, 1.6, -62.25],
     [48, 1.6, 62],
     [-82, 1.6, -8],
     [82, 1.6, 8],
@@ -1710,14 +1809,16 @@ function rayHitsBox(origin, direction, box, maxDistance) {
   return rayBoxDistance(origin, direction, box, maxDistance) !== null;
 }
 
-function firstObstacleImpact(origin, direction, maxDistance, arena = "toybox") {
+function firstObstacleImpact(origin, direction, maxDistance, context = "toybox") {
   let bestDistance = maxDistance;
   let bestBox = null;
-  for (const box of obstaclesForArena(arena)) {
-    const distance = rayBoxDistance(origin, direction, box, maxDistance);
-    if (distance !== null && distance < bestDistance) {
-      bestDistance = distance;
-      bestBox = box;
+  for (const boxes of [obstaclesForArena(arenaForContext(context)), doorObstaclesForContext(context)]) {
+    for (const box of boxes) {
+      const distance = rayBoxDistance(origin, direction, box, maxDistance);
+      if (distance !== null && distance < bestDistance) {
+        bestDistance = distance;
+        bestBox = box;
+      }
     }
   }
   if (!bestBox || bestDistance >= maxDistance) return null;
@@ -1737,7 +1838,7 @@ function firstObstacleImpact(origin, direction, maxDistance, arena = "toybox") {
   return { point, normal, distance: bestDistance };
 }
 
-function lineBlocked(origin, direction, targetDistance, arena = "toybox") {
+function lineBlocked(origin, direction, targetDistance, context = "toybox") {
   const endX = origin.x + direction.x * targetDistance;
   const endY = origin.y + direction.y * targetDistance;
   const endZ = origin.z + direction.z * targetDistance;
@@ -1747,44 +1848,55 @@ function lineBlocked(origin, direction, targetDistance, arena = "toybox") {
   const maxY = Math.max(origin.y, endY) + 0.08;
   const minZ = Math.min(origin.z, endZ) - 0.08;
   const maxZ = Math.max(origin.z, endZ) + 0.08;
-  return obstaclesForArena(arena).some((box) => {
-    if (box.maxX < minX || box.minX > maxX || box.maxY < minY || box.minY > maxY || box.maxZ < minZ || box.minZ > maxZ) {
-      return false;
+  for (const boxes of [obstaclesForArena(arenaForContext(context)), doorObstaclesForContext(context)]) {
+    for (const box of boxes) {
+      if (box.maxX < minX || box.minX > maxX || box.maxY < minY || box.minY > maxY || box.maxZ < minZ || box.minZ > maxZ) continue;
+      if (rayHitsBox(origin, direction, box, targetDistance)) return true;
     }
-    return rayHitsBox(origin, direction, box, targetDistance);
-  });
+  }
+  return false;
 }
 
-function cpuCollides(x, z, radius = 0.55, arena = "toybox") {
-  return obstaclesForArena(arena).some((box) => (
-    box.movement !== false &&
-    x + radius > box.minX &&
-    x - radius < box.maxX &&
-    z + radius > box.minZ &&
-    z - radius < box.maxZ &&
-    1.8 > box.minY &&
-    0.2 < box.maxY
-  ));
+function cpuCollides(x, z, radius = 0.55, context = "toybox") {
+  for (const boxes of [obstaclesForArena(arenaForContext(context)), doorObstaclesForContext(context)]) {
+    for (const box of boxes) {
+      if (
+        box.movement !== false &&
+        x + radius > box.minX &&
+        x - radius < box.maxX &&
+        z + radius > box.minZ &&
+        z - radius < box.maxZ &&
+        1.8 > box.minY &&
+        0.2 < box.maxY
+      ) return true;
+    }
+  }
+  return false;
 }
 
-function playerCollides(x, y, z, arena = "toybox", radius = 0.24) {
+function playerCollides(x, y, z, context = "toybox", radius = 0.24) {
   const minY = y - 1.38;
   const maxY = y + 0.22;
-  return obstaclesForArena(arena).some((box) => (
-    box.movement !== false &&
-    x + radius > box.minX &&
-    x - radius < box.maxX &&
-    z + radius > box.minZ &&
-    z - radius < box.maxZ &&
-    maxY > box.minY &&
-    minY < box.maxY
-  ));
+  for (const boxes of [obstaclesForArena(arenaForContext(context)), doorObstaclesForContext(context)]) {
+    for (const box of boxes) {
+      if (
+        box.movement !== false &&
+        x + radius > box.minX &&
+        x - radius < box.maxX &&
+        z + radius > box.minZ &&
+        z - radius < box.maxZ &&
+        maxY > box.minY &&
+        minY < box.maxY
+      ) return true;
+    }
+  }
+  return false;
 }
 
-function findNearestCpuSafeSpot(x, z, radius = 0.68, arena = "toybox") {
+function findNearestCpuSafeSpot(x, z, radius = 0.68, context = "toybox") {
   const startX = clamp(x, -arenaHalfSize + 2, arenaHalfSize - 2);
   const startZ = clamp(z, -arenaHalfSize + 2, arenaHalfSize - 2);
-  if (!cpuCollides(startX, startZ, radius, arena)) return { x: startX, z: startZ };
+  if (!cpuCollides(startX, startZ, radius, context)) return { x: startX, z: startZ };
 
   const angleSteps = 16;
   for (let ring = 1; ring <= 18; ring += 1) {
@@ -1793,16 +1905,16 @@ function findNearestCpuSafeSpot(x, z, radius = 0.68, arena = "toybox") {
       const angle = (Math.PI * 2 * i) / angleSteps;
       const candidateX = clamp(startX + Math.cos(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
       const candidateZ = clamp(startZ + Math.sin(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
-      if (!cpuCollides(candidateX, candidateZ, radius, arena)) return { x: candidateX, z: candidateZ };
+      if (!cpuCollides(candidateX, candidateZ, radius, context)) return { x: candidateX, z: candidateZ };
     }
   }
 
   return { x: 0, z: 0 };
 }
 
-function keepCpuOutOfWalls(bot, arena = "toybox") {
-  if (!cpuCollides(bot.x, bot.z, 0.68, arena)) return false;
-  const spot = findNearestCpuSafeSpot(bot.x, bot.z, 0.68, arena);
+function keepCpuOutOfWalls(bot, context = "toybox") {
+  if (!cpuCollides(bot.x, bot.z, 0.68, context)) return false;
+  const spot = findNearestCpuSafeSpot(bot.x, bot.z, 0.68, context);
   bot.x = spot.x;
   bot.z = spot.z;
   bot.stuckTicks = 0;
@@ -1811,7 +1923,7 @@ function keepCpuOutOfWalls(bot, arena = "toybox") {
 }
 
 function cpuMovementCollides(room, x, z, radius = 0.55, mover = null) {
-  if (cpuCollides(x, z, radius, room.arena)) return true;
+  if (cpuCollides(x, z, radius, room)) return true;
   for (const vehicle of room.vehicles?.values?.() || []) {
     if (Math.hypot(vehicle.x - x, vehicle.z - z) < 1.48 + radius) return true;
   }
@@ -1831,7 +1943,7 @@ function moveCpuAlongWalls(bot, desiredX, desiredZ, now, room) {
   const elapsed = Math.min(0.18, Math.max(0.06, (now - (bot.lastCpuMoveAt || now - 110)) / 1000));
   bot.lastCpuMoveAt = now;
 
-  if (keepCpuOutOfWalls(bot, arena)) return;
+  if (keepCpuOutOfWalls(bot, room)) return;
 
   const dx = desiredX - bot.x;
   const dz = desiredZ - bot.z;
@@ -1893,7 +2005,7 @@ function findCpuCoverPoint(room, bot, target) {
     const origin = { x: point.x, y: 1.6, z: point.z };
     const distance = Math.hypot(target.x - point.x, target.y - 1.6, target.z - point.z);
     const direction = normalize({ x: target.x - point.x, y: target.y - 1.6, z: target.z - point.z });
-    if (lineBlocked(origin, direction, distance, room.arena)) return { x: point.x, z: point.z };
+    if (lineBlocked(origin, direction, distance, room)) return { x: point.x, z: point.z };
   }
   return null;
 }
@@ -1924,7 +2036,7 @@ function applyCpuSeparation(room, bot, destination) {
 }
 
 function vehicleCollides(room, vehicle, x, z) {
-  if (cpuCollides(x, z, 1.48, room.arena)) return true;
+  if (cpuCollides(x, z, 1.48, room)) return true;
   for (const other of room.vehicles?.values?.() || []) {
     if (other.id === vehicle.id) continue;
     if (Math.hypot(other.x - x, other.z - z) < 3.05) return true;
@@ -1949,7 +2061,7 @@ function releasePlayerVehicle(room, player, placeBeside = true) {
   if (!placeBeside || !vehicle) return;
   const candidateX = vehicle.x + Math.cos(vehicle.yaw) * 2.25;
   const candidateZ = vehicle.z - Math.sin(vehicle.yaw) * 2.25;
-  const safe = findNearestCpuSafeSpot(candidateX, candidateZ, 0.4, room.arena);
+  const safe = findNearestCpuSafeSpot(candidateX, candidateZ, 0.4, room);
   player.x = safe.x;
   player.y = 1.6;
   player.z = safe.z;
@@ -2382,14 +2494,14 @@ wss.on("connection", (ws) => {
       const nextY = constrained.y;
       let nextZ = constrained.z;
 
-      if (currentPlayer.creative || !playerCollides(nextX, nextY, nextZ, currentRoom.arena)) {
+      if (currentPlayer.creative || !playerCollides(nextX, nextY, nextZ, currentRoom)) {
         currentPlayer.x = nextX;
         currentPlayer.y = nextY;
         currentPlayer.z = nextZ;
       } else {
-        if (!playerCollides(nextX, nextY, previousZ, currentRoom.arena)) currentPlayer.x = nextX;
-        if (!playerCollides(currentPlayer.x, nextY, nextZ, currentRoom.arena)) currentPlayer.z = nextZ;
-        if (!playerCollides(currentPlayer.x, nextY, currentPlayer.z, currentRoom.arena)) currentPlayer.y = nextY;
+        if (!playerCollides(nextX, nextY, previousZ, currentRoom)) currentPlayer.x = nextX;
+        if (!playerCollides(currentPlayer.x, nextY, nextZ, currentRoom)) currentPlayer.z = nextZ;
+        if (!playerCollides(currentPlayer.x, nextY, currentPlayer.z, currentRoom)) currentPlayer.y = nextY;
       }
       const correctionDistance = Math.hypot(
         currentPlayer.x - requested.x,
@@ -2439,6 +2551,25 @@ wss.on("connection", (ws) => {
       addFeed(currentRoom, `${currentPlayer.name} がロードスターから降車`, currentPlayer.color);
       send(currentPlayer.ws, { type: "vehicle_status", vehicleId: "", spawn: { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z } });
       broadcast(currentRoom, { type: "feed", feed: currentRoom.feed });
+      return;
+    }
+
+    if (message.type === "door_interact") {
+      if (currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.vehicleId || currentRoom.arena !== "toybox") return;
+      const definition = doorDefinitionsById.get(String(message.doorId || ""));
+      const state = definition ? currentRoom.doors?.get(definition.id) : null;
+      if (
+        !definition ||
+        !state ||
+        distanceToDoor(definition, currentPlayer) > definition.interactRadius + 0.35 ||
+        Math.abs(currentPlayer.y - definition.y) > definition.verticalRange
+      ) return;
+      const now = Date.now();
+      if (now < (currentPlayer.nextDoorInteractAt || 0)) return;
+      currentPlayer.nextDoorInteractAt = now + 250;
+      state.holdOpenUntil = Math.max(state.holdOpenUntil || 0, now + 4500);
+      state.targetOpen = true;
+      send(currentPlayer.ws, { type: "door_status", doorId: definition.id, opened: true });
       return;
     }
 
@@ -2680,7 +2811,7 @@ wss.on("connection", (ws) => {
       const shotResult = applyShot(currentRoom, currentPlayer, origin, direction, weapon, viewedAt, now);
       const canEmitImpact = now >= (currentPlayer.nextImpactAt || 0);
       if (canEmitImpact) currentPlayer.nextImpactAt = now + (weapon === "shotgun" ? 140 : 70);
-      const impact = canEmitImpact ? firstObstacleImpact(origin, direction, Math.min(range, 110), currentRoom.arena) : null;
+      const impact = canEmitImpact ? firstObstacleImpact(origin, direction, Math.min(range, 110), currentRoom) : null;
       if (impact && (!shotResult?.targetDistance || impact.distance < shotResult.targetDistance - 0.18)) {
         broadcast(currentRoom, {
           type: "impact",
@@ -2773,6 +2904,7 @@ setInterval(() => {
     updateHealthPickup(room, now);
     updatePowerups(room, now);
     updateDonPunchProjectiles(room, now);
+    updateDoors(room, now);
     updateVehicles(room, now);
     const safeZone = updateSafeZone(room, now);
     updateCpuPlayers(room, now);
@@ -2797,6 +2929,7 @@ setInterval(() => {
     broadcast(room, {
       type: "snapshot",
       aiVersion: cpuAiVersion,
+      worldVersion,
       players,
       blueScore,
       redScore,
@@ -2814,6 +2947,7 @@ setInterval(() => {
       castleCores: room.castleCores,
       castleEndsAt: room.castleEndsAt || 0,
       donPunches,
+      doors: [...room.doors.values()].map(publicDoor),
       vehicles: [...room.vehicles.values()].map(publicVehicle),
       barrier: room.barrier,
       healthPickup: room.healthPickup,
@@ -2955,7 +3089,7 @@ function nearestVehicleHit(room, origin, direction, range) {
   for (const vehicle of room.vehicles?.values?.() || []) {
     const center = { x: vehicle.x, y: 0.86, z: vehicle.z };
     const targetDistance = projectionToRay(center, origin, direction);
-    if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room.arena)) continue;
+    if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room)) continue;
     const missDistance = distanceToRay(center, origin, direction, range);
     if (missDistance > 1.45) continue;
     if (!best || targetDistance < best.targetDistance) best = { vehicle, targetDistance };
@@ -3017,7 +3151,7 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle", viewedAt 
     if (target.id === shooter.id || target.disconnectedAt || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
     const rewound = rewindPose(target.poseHistory || [], viewedAt, now, lagCompensationMs) || target;
     const hit = resolveHumanoidHit(origin, direction, rewound, range, target.skin);
-    if (!hit || lineBlocked(origin, direction, hit.distance, room.arena)) continue;
+    if (!hit || lineBlocked(origin, direction, hit.distance, room)) continue;
     if (hit.distance < bestTargetDistance) {
       bestTargetDistance = hit.distance;
       best = target;
@@ -3051,7 +3185,7 @@ function nearestCastleCoreHit(room, shooter, origin, direction, range) {
   for (const core of Object.values(room.castleCores || {})) {
     if (!core || core.team === shooter.color || core.health <= 0) continue;
     const targetDistance = projectionToRay(core, origin, direction);
-    if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room.arena)) continue;
+    if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room)) continue;
     const missDistance = distanceToRay(core, origin, direction, range);
     if (missDistance > castleCoreRadius) continue;
     if (!best || targetDistance < best.targetDistance) best = { core, targetDistance };
@@ -3200,10 +3334,10 @@ function safeRespawnPoint(room) {
     const distance = Math.sqrt(Math.random()) * usableRadius;
     const x = clamp(safeZone.x + Math.cos(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
     const z = clamp(safeZone.z + Math.sin(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
-    if (cpuCollides(x, z, 0.72, room.arena)) continue;
+    if (cpuCollides(x, z, 0.72, room)) continue;
     return { x, y: 1.6, z, yaw: Math.atan2(x - safeZone.x, z - safeZone.z) };
   }
-  const fallback = findNearestCpuSafeSpot(safeZone.x, safeZone.z, 0.72, room.arena);
+  const fallback = findNearestCpuSafeSpot(safeZone.x, safeZone.z, 0.72, room);
   return { x: fallback.x, y: 1.6, z: fallback.z, yaw: Math.atan2(fallback.x - safeZone.x, fallback.z - safeZone.z) };
 }
 
@@ -3259,7 +3393,7 @@ function nearestEnemy(room, shooter, maxDistance = Infinity, requireLineOfSight 
     if (requireLineOfSight) {
       const origin = { x: shooter.x, y: shooter.y, z: shooter.z };
       const direction = normalize({ x: target.x - shooter.x, y: target.y - shooter.y, z: target.z - shooter.z });
-      if (lineBlocked(origin, direction, distance, room.arena)) continue;
+      if (lineBlocked(origin, direction, distance, room)) continue;
     }
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -3304,7 +3438,7 @@ function cpuHasLineOfSight(room, bot, target) {
   const origin = { x: bot.x, y: bot.y, z: bot.z };
   const distance = Math.hypot(target.x - bot.x, target.y - bot.y, target.z - bot.z);
   const direction = normalize({ x: target.x - bot.x, y: target.y - bot.y, z: target.z - bot.z });
-  return distance > 0.01 && !lineBlocked(origin, direction, distance, room.arena);
+  return distance > 0.01 && !lineBlocked(origin, direction, distance, room);
 }
 
 function updateCpuAwareness(room, bot, targets, now) {
@@ -3380,7 +3514,7 @@ function updateCpuAwareness(room, bot, targets, now) {
 }
 
 function cpuSpawnIsClear(room, x, z) {
-  if (cpuCollides(x, z, 0.72, room.arena)) return false;
+  if (cpuCollides(x, z, 0.72, room)) return false;
   for (const vehicle of room.vehicles?.values?.() || []) {
     if (Math.hypot(vehicle.x - x, vehicle.z - z) < 2.35) return false;
   }
@@ -3408,7 +3542,7 @@ function safeCpuSpawnPoint(room, index = 0) {
       return { x, y: 1.6, z, yaw: preferred.yaw };
     }
   }
-  const fallback = findNearestCpuSafeSpot(preferred.x, preferred.z, 0.72, room.arena);
+  const fallback = findNearestCpuSafeSpot(preferred.x, preferred.z, 0.72, room);
   return { x: fallback.x, y: 1.6, z: fallback.z, yaw: preferred.yaw };
 }
 
@@ -3886,7 +4020,7 @@ function tryCpuCastleShot(room, bot, attackCore, now) {
   bot.yaw = Math.atan2(direction.x, direction.z);
   bot.pitch = Math.asin(clamp(direction.y, -1, 1));
   if (targetDistance <= 0 || targetDistance > weaponRangeLimit || coreMissDistance > castleCoreRadius * 0.82) return false;
-  if (lineBlocked(origin, direction, targetDistance, room.arena)) return false;
+  if (lineBlocked(origin, direction, targetDistance, room)) return false;
   const baseDamage = weaponDamage.get(weapon) || 25;
   const damage = Math.max(6, Math.ceil(baseDamage * cpuCastleDamageMultiplier));
   applyCastleCoreDamage(room, bot, attackCore, damage);
@@ -3988,7 +4122,7 @@ function updateCpuPlayers(room, now) {
     bot.learnedSpeedBoost = samples > 30 && movingRatio > 0.62 ? 0.38 : 0;
     bot.learnedAirborneBias = samples > 30 && airborneRatio > 0.16;
     moveCpuAlongWalls(bot, destination.x, destination.z, now, room);
-    keepCpuOutOfWalls(bot, room.arena);
+    keepCpuOutOfWalls(bot, room);
     bot.y = 1.6;
     bot.lastSeen = now;
     if (room.winner) continue;
