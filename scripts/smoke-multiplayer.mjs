@@ -160,6 +160,34 @@ async function shootUntilHit(shooter, targetId, label) {
 
 try {
 await startManagedServer();
+
+const vacated = await openClient("SpawnVacated", "", { cpuFill: false });
+const keeper = await openClient("SpawnKeeper", vacated.state.room, { cpuFill: false });
+await waitFor(
+  () => latestSnapshot(keeper)?.players?.some((player) => player.id === vacated.state.id),
+  "spawn keeper sees the first player"
+);
+send(vacated.ws, { type: "leave" });
+await delay(80);
+vacated.ws.close(1000, "leave");
+await waitFor(
+  () => latestSnapshot(keeper)?.players?.every((player) => player.id !== vacated.state.id),
+  "vacated spawn is removed"
+);
+const replacement = await openClient("SpawnReplacement", keeper.state.room, { cpuFill: false });
+await waitFor(
+  () => latestPlayer(keeper, replacement.state.id) && latestPlayer(keeper, keeper.state.id),
+  "replacement spawn is synchronized"
+);
+const keeperSpawn = latestPlayer(keeper, keeper.state.id);
+const replacementSpawn = latestPlayer(keeper, replacement.state.id);
+if (Math.hypot(keeperSpawn.x - replacementSpawn.x, keeperSpawn.z - replacementSpawn.z) < 2.15) {
+  throw new Error("replacement reused an occupied spawn slot");
+}
+for (const client of [keeper, replacement]) send(client.ws, { type: "leave" });
+await delay(80);
+for (const client of [keeper, replacement]) client.ws.close(1000, "leave");
+
 const roomCode = testRoomCode();
 const alpha = await openClient("Alpha", roomCode, { cpuFill: false });
 const beta = await openClient("Beta", alpha.state.room, { cpuFill: false });
@@ -377,7 +405,7 @@ if (appliedPlayerDamage !== 200) throw new Error(`reported applied damage must e
 for (const client of [alpha, beta, gamma]) send(client.ws, { type: "leave" });
 await delay(80);
 for (const client of [alpha, beta, gamma]) client.ws.close(1000, "leave");
-console.log(`smoke passed: room ${alpha.state.room}, movement warp corrected, yaw normalized, team edits protected, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/damaged`);
+console.log(`smoke passed: room ${alpha.state.room}, occupied spawn reuse prevented, movement warp corrected, yaw normalized, team edits protected, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/damaged`);
 } finally {
   await stopManagedServer();
 }

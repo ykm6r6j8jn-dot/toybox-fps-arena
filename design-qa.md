@@ -112,6 +112,7 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 38. P1: the original floor slabs covered the new lift shafts. AURORA and NEXUS floors are split around matching open shafts, while server projectile geometry uses the same openings and the moving platform supplies the temporary blocker.
 39. P1: a same-floor lift interaction could immediately send the cabin away while the player was still standing outside. A landed lift now becomes actionable only after the player enters the cabin; other floors remain callable from their landings.
 40. P2: a low landing trim crossed the first-person sightline. The status trim was raised above eye level and the final desktop capture confirms an unobstructed cabin view.
+41. P1: a long-lived global room could reuse an occupied spawn index after an earlier player left, placing two players at nearly identical coordinates and expanding the nearby world-space name tag across the camera. Initial joins and active-zone respawns now reject occupied, blocked, and vehicle-adjacent positions; the smoke test reproduces the vacated-slot sequence.
 
 ## Findings
 

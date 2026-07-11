@@ -1710,6 +1710,29 @@ function spawnPoint(index = 0) {
   return { x: point[0], y: point[1], z: point[2], yaw };
 }
 
+function initialPlayerSpawnPoint(room, preferredIndex = 0) {
+  const spawnCount = 20;
+  for (let offset = 0; offset < spawnCount; offset += 1) {
+    const candidate = spawnPoint(preferredIndex + offset);
+    if (cpuSpawnIsClear(room, candidate.x, candidate.z)) return candidate;
+  }
+
+  const preferred = spawnPoint(preferredIndex);
+  for (let ring = 1; ring <= 8; ring += 1) {
+    const distance = ring * 2.15;
+    for (let step = 0; step < 16; step += 1) {
+      const angle = (Math.PI * 2 * step) / 16 + preferredIndex * 0.41;
+      const x = clamp(preferred.x + Math.cos(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
+      const z = clamp(preferred.z + Math.sin(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
+      if (!cpuSpawnIsClear(room, x, z)) continue;
+      return { x, y: 1.6, z, yaw: Math.atan2(x, z) };
+    }
+  }
+
+  const fallback = findNearestCpuSafeSpot(preferred.x, preferred.z, 0.72, room);
+  return { x: fallback.x, y: 1.6, z: fallback.z, yaw: Math.atan2(fallback.x, fallback.z) };
+}
+
 function publicPlayer(player) {
   const color = teams.has(player.color) ? player.color : "blue";
   return {
@@ -2608,7 +2631,7 @@ wss.on("connection", (ws) => {
       const id = crypto.randomUUID();
       const spawn = room.safeZone?.enabled && room.safeZone.damage > 0
         ? safeRespawnPoint(room)
-        : spawnPoint(room.players.size);
+        : initialPlayerSpawnPoint(room, room.players.size);
       if (room.relationMode === "coop" && !room.playerTeam) {
         room.playerTeam = teams.has(String(message.team || "")) ? String(message.team) : "blue";
       }
@@ -3586,7 +3609,7 @@ function safeRespawnPoint(room) {
     const distance = Math.sqrt(Math.random()) * usableRadius;
     const x = clamp(safeZone.x + Math.cos(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
     const z = clamp(safeZone.z + Math.sin(angle) * distance, -arenaHalfSize + 2, arenaHalfSize - 2);
-    if (cpuCollides(x, z, 0.72, room)) continue;
+    if (!cpuSpawnIsClear(room, x, z)) continue;
     return { x, y: 1.6, z, yaw: Math.atan2(x - safeZone.x, z - safeZone.z) };
   }
   const fallback = findNearestCpuSafeSpot(safeZone.x, safeZone.z, 0.72, room);
