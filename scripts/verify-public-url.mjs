@@ -27,7 +27,7 @@ if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.
 const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
-if (!pageHtml.includes("WORLD 3.0 都市・屋内更新")) throw new Error("public page is missing the WORLD 3.0 update marker");
+if (!pageHtml.includes("VERTICAL 4.0 立体戦更新")) throw new Error("public page is missing the VERTICAL 4.0 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 
@@ -89,14 +89,22 @@ await waitFor(
   () => probe.state.snapshots.some((snapshot) =>
     snapshot.players?.some((player) => player.id === probe.state.id) &&
     snapshot.aiVersion === "TACTICS 2.0" &&
-    snapshot.worldVersion === "WORLD 3.0" &&
+    snapshot.worldVersion === "VERTICAL 4.0" &&
     snapshot.doors?.length === 6 &&
     snapshot.doors.every((door) => typeof door.openness === "number" && typeof door.targetOpen === "boolean") &&
+    snapshot.elevators?.length === 2 &&
+    snapshot.elevators.every((elevator) =>
+      typeof elevator.platformY === "number" &&
+      typeof elevator.currentFloor === "number" &&
+      typeof elevator.targetFloor === "number" &&
+      typeof elevator.moving === "boolean"
+    ) &&
     snapshot.vehicles?.length === 4 &&
     snapshot.vehicles.every((vehicle) => typeof vehicle.health === "number" && typeof vehicle.maxHealth === "number") &&
-    typeof snapshot.safeZone?.enabled === "boolean"
+    typeof snapshot.safeZone?.enabled === "boolean" &&
+    snapshot.players.every((player) => !("qaVerticalStage" in player))
   ),
-  "public snapshot includes WORLD 3.0 doors, TACTICS 2.0, player, vehicle durability, and safe-zone state"
+  "public snapshot includes VERTICAL 4.0 elevators, doors, TACTICS 2.0, player, vehicle durability, and safe-zone state"
 );
 
 const snapshot = probe.state.snapshots.at(-1);
@@ -122,4 +130,4 @@ send(probe.ws, { type: "leave" });
 await new Promise((resolve) => setTimeout(resolve, 80));
 probe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, WORLD 3.0 doors and TACTICS 2.0 active, movement corrected, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, VERTICAL 4.0 elevators, doors, and TACTICS 2.0 active, movement corrected, assets ${assetNames.join(", ")}`);

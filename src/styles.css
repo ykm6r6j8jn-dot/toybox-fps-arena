@@ -1211,7 +1211,9 @@ body.scoped .center-reticle::after {
 }
 
 .mobile-interact .door-icon,
-.interaction-hint .door-icon {
+.interaction-hint .door-icon,
+.mobile-interact .elevator-icon,
+.interaction-hint .elevator-icon {
   display: none;
 }
 
@@ -1228,6 +1230,23 @@ body.scoped .center-reticle::after {
 .mobile-interact.door-action {
   color: #f8fbff;
   background: rgba(29, 139, 216, 0.92);
+}
+
+.mobile-interact.elevator-action .vehicle-icon,
+.mobile-interact.elevator-action .door-icon,
+.interaction-hint.elevator-action .vehicle-icon,
+.interaction-hint.elevator-action .door-icon {
+  display: none;
+}
+
+.mobile-interact.elevator-action .elevator-icon,
+.interaction-hint.elevator-action .elevator-icon {
+  display: block;
+}
+
+.mobile-interact.elevator-action {
+  color: #10251a;
+  background: rgba(255, 204, 61, 0.94);
 }
 
 body.driving .fire-button,

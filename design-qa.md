@@ -27,9 +27,10 @@
 - WORLD 3.0 public mobile screenshot: `/tmp/donpachi-world3-public-mobile.png`
 - WORLD 3.0 public settings screenshot: `/tmp/donpachi-world3-public-settings.png`
 - WORLD 3.0 public desktop screenshot: `/tmp/donpachi-world3-public-desktop.png`
+- VERTICAL 4.0 local AURORA landing screenshot: `/tmp/donpachi-vertical4-final.jpg`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
-- state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for deterministic WORLD 3.0 browser QA
+- state: FPS match active in global room `DONPCH`; local VERTICAL 4.0 browser QA used an isolated practice room and QA-only creative positioning
 
 ## Full-view comparison evidence
 
@@ -50,6 +51,8 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - World interactions: four shared roadsters use server-owned drivers, obstacle/player/CP collision, analog steering, braking, and enter/exit controls. AURORA TOWER provides an automatic entrance, four interior floors, real stairwell openings, instanced spiral steps, a lobby, and a reachable roof.
 - World authority: six sliding entrances now use one room-owned open ratio. Players, CPs, vehicles, bullets, tracers, and reconnect snapshots consume the same panel state; remote interaction is rejected and valid manual opening is rate-limited.
 - NEXUS CENTER: the former solid west high-rise is now a five-floor accessible building with a sealed entrance, lobby, reception, interior cover, split floor slabs, an instanced spiral route, roof railings, utilities, and a reachable landing roof.
+- Vertical authority: AURORA and NEXUS have server-owned elevator position, target floor, arrival time, and projectile collision. The same shared definitions drive visual shafts, floor openings, client grounding, interaction range, and server snapshots.
+- Vertical CP routes: CPs now preserve their actual height, queue at tower entrances, commit to the interior route, and traverse the same continuous spiral geometry instead of teleporting or being reset to ground level.
 - Match pacing: one-life and life3 now use a server-owned multi-phase safe zone with waiting, shrinking, holding, and final stages. CPs route back toward safety and life3 respawns are selected inside the current zone.
 - Late joins: players and replacement CPs entering after a shrink use collision-checked spawn points inside the active safe zone. Initial human spawns remain unchanged, while every CP spawn is checked against walls, vehicles, humans, and previously placed CPs.
 - Team play: desktop `P`/middle-click and the smartphone pin control create short-lived server-filtered markers that are delivered only to teammates and also appear on the minimap.
@@ -105,6 +108,10 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 34. P1: the west high-rise was a solid box with a long exterior staircase and no interior. Replaced it with NEXUS CENTER's five split floors, lobby, cover, continuous spiral stairwell, and roof route, with matching server geometry.
 35. P2: the car-only context button gave no mobile or keyboard affordance for doors. `E` and the 50px mobile context control now switch between vehicle and door actions with an explicit label and Lucide door icon.
 36. P2: transparent sliding leaves were difficult to distinguish when closed. Added one moving metal handle per leaf; all six entrances gain only twelve additional detail meshes.
+37. P1: CP height was overwritten to `1.6m` every update, making legitimate upper-floor pursuit impossible and creating apparent warps. CPs now retain height and use deterministic tower entry, landing, ascending, and descending stages.
+38. P1: the original floor slabs covered the new lift shafts. AURORA and NEXUS floors are split around matching open shafts, while server projectile geometry uses the same openings and the moving platform supplies the temporary blocker.
+39. P1: a same-floor lift interaction could immediately send the cabin away while the player was still standing outside. A landed lift now becomes actionable only after the player enters the cabin; other floors remain callable from their landings.
+40. P2: a low landing trim crossed the first-person sightline. The status trim was raised above eye level and the final desktop capture confirms an unobstructed cabin view.
 
 ## Findings
 
@@ -118,14 +125,15 @@ No actionable P0, P1, or P2 findings remain for this pass.
 ## Verification
 
 - Browser page identity and nonblank canvas: WORLD 3.0 passed locally and publicly at desktop `1440 x 900` and mobile `844 x 390`; the final desktop canvas backing size exactly matched `1440 x 900`.
+- VERTICAL 4.0 local browser proof: the AURORA lift carried the player smoothly through sampled heights `0.4m`, `1.9m`, `4.4m`, `5.6m`, and `5.7m`; the final scene held `51-56fps` with zero console messages. A `1280 x 720` central canvas sample contained `1,633` unique colors and a `5.61%` near-black ratio, proving a nonblank, varied render.
 - Framework overlay: none.
 - Console errors and warnings: none in desktop and mobile checks.
 - Desktop render: local WORLD 3.0 held `58-60fps`; public WORLD 3.0 held `60fps` at `1440 x 900`, with zero horizontal overflow and zero console errors/warnings.
 - Mobile render: local and public WORLD 3.0 held `60fps` at `844 x 390`; public RTT was `181-183ms`, the real latency/FPS text remained visible, horizontal overflow was zero, and console errors/warnings were zero.
 - Interaction: the public mobile lobby was scrollable at `390/1535px`; public settings opened a `318px`-high panel with `706px` content. Main gameplay controls measured at least `48px`, the fire target remained `88px`, and pairwise overlap checks returned zero, including while the 50px door control was visible.
 - Door integration: the production-style WebSocket test synchronized all six doors to two clients, rejected remote use, blocked a closed-door projectile, opened by proximity, held by manual interaction, and closed after the hold expired.
-- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, AI systems, world systems, 19-CP production live test, world live test, and three-client multiplayer smoke tests: passed. With the browser renderer stopped, the 19-CP run observed all four roles, tactical movement, 11 visible shots, a `2.22m` minimum human gap, and a `2.2ms` maximum health response.
-- Bundle: main gameplay JS `162.92 kB` (`58.25 kB` gzip), CSS `76.95 kB` (`16.05 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, AI systems, world systems, vertical systems, 19-CP production live test, world live test, vertical live test, and three-client multiplayer smoke tests: passed. The vertical live test rejected remote lift use, synchronized both lifts, observed arrival and projectile collision, and confirmed 19 CPs climbed without warping.
+- Bundle: main gameplay JS `171.49 kB` (`61.18 kB` gzip), CSS `77.39 kB` (`16.11 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
 - Public verification: WORLD 3.0 commit `fc58a02` is `live` at `https://toybox-fps-arena.onrender.com`. The public page loaded `index-BjGqTeNe.js`, `index-CKhItUiK.css`, and `three-cAQsBUvP.js`; the WebSocket snapshot reported `worldVersion: WORLD 3.0`, six valid door states, and `aiVersion: TACTICS 2.0`. The verifier also received an authoritative movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
 - `tsc --noEmit`: stopped after it made no progress for 30 seconds; this repository's narrower build/runtime checks completed normally.

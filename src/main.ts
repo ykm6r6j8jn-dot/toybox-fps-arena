@@ -4,6 +4,7 @@ import ArrowDown from "lucide/dist/esm/icons/arrow-down.js";
 import ArrowLeft from "lucide/dist/esm/icons/arrow-left.js";
 import ArrowRight from "lucide/dist/esm/icons/arrow-right.js";
 import ArrowUp from "lucide/dist/esm/icons/arrow-up.js";
+import ArrowUpDown from "lucide/dist/esm/icons/arrow-up-down.js";
 import CarFront from "lucide/dist/esm/icons/car-front.js";
 import Check from "lucide/dist/esm/icons/check.js";
 import ChevronsUp from "lucide/dist/esm/icons/chevrons-up.js";
@@ -41,6 +42,14 @@ import {
 } from "../movement-systems.mjs";
 import { nearestInteractableDoor, toyboxDoorDefinitions } from "../world-systems.mjs";
 import type { DoorDefinition } from "../world-systems.mjs";
+import {
+  elevatorPlatformBox,
+  floorEyeY,
+  isOnElevatorPlatform,
+  nearestInteractableElevator,
+  toyboxElevatorDefinitions
+} from "../vertical-systems.mjs";
+import type { ElevatorDefinition } from "../vertical-systems.mjs";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -92,7 +101,7 @@ type PlayerState = {
   isBot?: boolean;
   weapon?: string;
   botRole?: "assault" | "support" | "flanker" | "marksman";
-  botTactic?: "patrol" | "objective" | "zone" | "push" | "hold" | "strafe" | "flank" | "retreat";
+  botTactic?: "patrol" | "objective" | "zone" | "push" | "hold" | "strafe" | "flank" | "retreat" | "vertical";
   level?: number;
   spawnProtectedUntil?: number;
   vehicleId?: string;
@@ -152,6 +161,17 @@ type DoorSnapshot = {
   id: string;
   openness: number;
   targetOpen: boolean;
+  updatedAt: number;
+};
+
+type ElevatorSnapshot = {
+  id: string;
+  platformY: number;
+  currentFloor: number;
+  targetFloor: number;
+  moving: boolean;
+  direction: number;
+  arrivedAt: number;
   updatedAt: number;
 };
 
@@ -319,6 +339,7 @@ const lucideIcons = {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  ArrowUpDown,
   ChevronsUp,
   CarFront,
   Check,
@@ -815,6 +836,7 @@ let healthPickupMesh: THREE.Group | null = null;
 const powerupMeshes = new Map<string, THREE.Group>();
 const vehicleSnapshots = new Map<string, VehicleSnapshot>();
 const doorSnapshots = new Map<string, DoorSnapshot>();
+const elevatorSnapshots = new Map<string, ElevatorSnapshot>();
 const playerMotionTracks = new Map<string, MotionSample[]>();
 const playerAnimationPhases = new Map<string, number>();
 const vehicleMotionTracks = new Map<string, MotionSample[]>();
@@ -844,6 +866,16 @@ const automaticDoors: {
   targetOpenness: number;
 }[] = [];
 const toyboxDoorDefinitionsById = new Map<string, DoorDefinition>(toyboxDoorDefinitions.map((definition) => [definition.id, definition]));
+const toyboxElevatorDefinitionsById = new Map<string, ElevatorDefinition>(toyboxElevatorDefinitions.map((definition) => [definition.id, definition]));
+const elevatorVisuals = new Map<string, {
+  definition: ElevatorDefinition;
+  group: THREE.Group;
+  statusLight: THREE.Mesh;
+  platformCollider: THREE.Box3;
+  platformY: number;
+  targetPlatformY: number;
+  lastArrivedAt: number;
+}>();
 let bulletHoleTexture: THREE.CanvasTexture | null = null;
 let bulletHoleOwnMaterial: THREE.MeshBasicMaterial | null = null;
 let bulletHoleOtherMaterial: THREE.MeshBasicMaterial | null = null;
@@ -886,6 +918,7 @@ let viewportRecoveryUntil = 0;
 let activeVehicleId = "";
 let nearestVehicleId = "";
 let nearestDoorId = "";
+let nearestElevatorId = "";
 let lastVehicleInputSent = 0;
 let lastInteractionCheckAt = 0;
 
@@ -1286,12 +1319,15 @@ function clearArenaObjects() {
   vehicleMeshes.clear();
   vehicleSnapshots.clear();
   doorSnapshots.clear();
+  elevatorSnapshots.clear();
+  elevatorVisuals.clear();
   for (const ping of teamPingMeshes.values()) disposeGroup(ping.group);
   teamPingMeshes.clear();
   automaticDoors.length = 0;
   activeVehicleId = "";
   nearestVehicleId = "";
   nearestDoorId = "";
+  nearestElevatorId = "";
   for (const object of arenaObjects.splice(0)) {
     scene.remove(object);
     object.traverse((child) => {
@@ -2298,6 +2334,56 @@ function addAutomaticSlidingDoor(id: string, name: string) {
   updateDoorCollisionBoxes(runtimeDoor);
 }
 
+function addSkyLift(definition: ElevatorDefinition, name: string) {
+  const group = new THREE.Group();
+  group.name = name;
+  group.position.set(definition.x, floorEyeY(definition, 0) - 1.6, definition.z);
+
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(definition.width, 0.18, definition.depth), materials.metal);
+  platform.name = `${name} platform`;
+  platform.position.y = -0.09;
+  platform.receiveShadow = true;
+  const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(definition.width - 0.12, 2.25, 0.08), materials.glass);
+  rearGlass.name = `${name} rear glass`;
+  rearGlass.position.set(0, 1.12, -definition.depth / 2 + 0.06);
+  const leftGlass = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.25, definition.depth - 0.14), materials.glass);
+  leftGlass.name = `${name} left glass`;
+  leftGlass.position.set(-definition.width / 2 + 0.06, 1.12, 0);
+  const rightGlass = leftGlass.clone();
+  rightGlass.name = `${name} right glass`;
+  rightGlass.position.x = definition.width / 2 - 0.06;
+  const canopy = new THREE.Mesh(new THREE.BoxGeometry(definition.width, 0.12, definition.depth), materials.dark);
+  canopy.name = `${name} canopy`;
+  canopy.position.y = 2.3;
+  const statusMaterial = new THREE.MeshBasicMaterial({ color: 0x93e43c });
+  const statusLight = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.08), statusMaterial);
+  statusLight.name = `${name} status`;
+  statusLight.position.set(0, 2.06, definition.depth / 2 + 0.045);
+  group.add(platform, rearGlass, leftGlass, rightGlass, canopy, statusLight);
+  trackArenaObject(group);
+
+  for (let floor = 0; floor <= definition.maxFloor; floor += 1) {
+    const surfaceY = floor === 0 ? 0 : floorEyeY(definition, floor) - 1.6;
+    addDetailBox(`${name} landing trim ${floor}`, [definition.x, surfaceY + 2.48, definition.frontZ - 0.04], [definition.width + 0.52, 0.16, 0.12], floor % 2 ? materials.blue : materials.green);
+    addDetailBox(`${name} call light ${floor}`, [definition.x + definition.width / 2 + 0.42, surfaceY + 1.3, definition.frontZ + 0.02], [0.18, 0.34, 0.12], materials.light);
+  }
+
+  const platformY = floorEyeY(definition, 0);
+  const platformBox = elevatorPlatformBox(definition, platformY);
+  elevatorVisuals.set(definition.id, {
+    definition,
+    group,
+    statusLight,
+    platformCollider: new THREE.Box3(
+      new THREE.Vector3(platformBox.minX, platformBox.minY, platformBox.minZ),
+      new THREE.Vector3(platformBox.maxX, platformBox.maxY, platformBox.maxZ)
+    ),
+    platformY,
+    targetPlatformY: platformY,
+    lastArrivedAt: 0
+  });
+}
+
 function addAuroraTower() {
   const x = 74;
   const z = -22;
@@ -2307,6 +2393,8 @@ function addAuroraTower() {
   addBox("aurora tower front east", [80.4, h / 2, z + 10], [7.2, h, 0.5], materials.wall);
   addBox("aurora tower west wall", [x - 10, h / 2, z], [0.5, h, 20], materials.wall);
   addBox("aurora tower east wall", [x + 10, h / 2, z], [0.5, h, 20], materials.wall);
+  addBox("aurora lift shaft west", [78.15, h / 2, -29.3], [0.22, h, 5], materials.dark);
+  addBox("aurora lift shaft east", [81.25, h / 2, -29.3], [0.22, h, 5], materials.dark);
   addBox("aurora lobby floor", [x, 0.04, z], [19.5, 0.12, 19.5], materials.floor, false);
 
   for (let level = 1; level <= 4; level += 1) {
@@ -2314,7 +2402,9 @@ function addAuroraTower() {
     const floorMaterial = level === 4 ? materials.metal : materials.floor;
     const slabs: Array<{ position: [number, number, number]; scale: [number, number, number] }> = [
       { position: [65.025, floorY, z], scale: [1.55, 0.22, 19.5] },
-      { position: [78.175, floorY, z], scale: [11.15, 0.22, 19.5] },
+      { position: [75.425, floorY, z], scale: [5.65, 0.22, 19.5] },
+      { position: [82.45, floorY, z], scale: [2.6, 0.22, 19.5] },
+      { position: [79.7, floorY, -19.825], scale: [2.9, 0.22, 15.15] },
       { position: [69.2, floorY, -29.675], scale: [6.8, 0.22, 4.15] },
       { position: [69.2, floorY, -16.525], scale: [6.8, 0.22, 8.55] }
     ];
@@ -2342,6 +2432,8 @@ function addAuroraTower() {
   addBox("aurora lift bank", [x + 5.7, 1.55, z - 9.68], [5.8, 3.1, 0.12], materials.dark);
   addDetailBox("aurora route stripe", [x - 2.4, 0.09, z + 2.6], [0.5, 0.04, 11], materials.green);
   addInstancedTowerSpiral("aurora spiral", [x - 4.8, 0.08, z - 2.2], 4, 5.5);
+  const auroraLift = toyboxElevatorDefinitionsById.get("aurora-lift");
+  if (auroraLift) addSkyLift(auroraLift, "aurora sky lift");
   addAutomaticSlidingDoor("aurora-entry", "aurora auto door");
   addSign("AURORA TOWER", [x, 3.85, z + 10.32], Math.PI, "#177fd2");
   addWallDecal("aurora lobby mural", [x, 2.45, z - 9.7], Math.PI, decalTextures.greenSmile, 5.6, 3.5, 0.78);
@@ -2364,6 +2456,8 @@ function addNexusCenter() {
   addBox("nexus front upper", [x, 15.35, z + depth / 2], [facadeGap, 24.3, 0.5], materials.glass);
   addBox("nexus west wall", [x - width / 2, height / 2, z], [0.5, height, depth], materials.wall);
   addBox("nexus east wall", [x + width / 2, height / 2, z], [0.5, height, depth], materials.wall);
+  addBox("nexus lift shaft west", [-76.6, height / 2, -78.7], [0.22, height, 4.6], materials.dark);
+  addBox("nexus lift shaft east", [-73.8, height / 2, -78.7], [0.22, height, 4.6], materials.dark);
   addBox("nexus lobby floor", [x, 0.04, z], [13.5, 0.12, 13.5], materials.floor, false);
 
   for (let level = 1; level <= 5; level += 1) {
@@ -2371,7 +2465,9 @@ function addNexusCenter() {
     const floorMaterial = level === 5 ? materials.metal : materials.floor;
     const slabs: Array<{ position: [number, number, number]; scale: [number, number, number] }> = [
       { position: [-85.55, floorY, z], scale: [0.4, 0.22, 13.5] },
-      { position: [-75.45, floorY, z], scale: [6.4, 0.22, 13.5] },
+      { position: [-77.625, floorY, z], scale: [2.05, 0.22, 13.5] },
+      { position: [-73.025, floorY, z], scale: [1.55, 0.22, 13.5] },
+      { position: [-75.2, floorY, -71.925], scale: [2.8, 0.22, 9.35] },
       { position: [-82, floorY, -79.175], scale: [6.7, 0.22, 3.15] },
       { position: [-82, floorY, -69.075], scale: [6.7, 0.22, 3.65] }
     ];
@@ -2408,6 +2504,8 @@ function addNexusCenter() {
   addDetailBox("nexus reception top", [x + 3.4, 1.02, z + 4.5], [5, 0.12, 1.4], materials.metal);
   addBox("nexus lift bank", [x + 3.8, 1.55, z - 6.68], [4, 3.1, 0.12], materials.dark);
   addInstancedTowerSpiral("nexus spiral", [x - 3, 0.08, z - 0.25], 5, floorHeight);
+  const nexusLift = toyboxElevatorDefinitionsById.get("nexus-lift");
+  if (nexusLift) addSkyLift(nexusLift, "nexus sky lift");
   addAutomaticSlidingDoor("nexus-entry", "nexus auto door");
   addSign("NEXUS CENTER", [x, 4.18, z + 7.32], Math.PI, "#1a89d8");
   addWallDecal("nexus lobby smile", [x, 2.35, z - 6.7], Math.PI, decalTextures.greenSmile, 4.8, 3.1, 0.78);
@@ -4453,6 +4551,7 @@ function handleMessage(event: MessageEvent<string>) {
     syncPlayerMotionSnapshots(incomingPlayers, snapshotAt);
     syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[], snapshotAt);
     syncDoorSnapshots((message.doors || []) as DoorSnapshot[]);
+    syncElevatorSnapshots((message.elevators || []) as ElevatorSnapshot[]);
     syncSafeZone(message.safeZone as SafeZoneSnapshot | undefined);
     const previousVehicleId = activeVehicleId;
     players.clear();
@@ -4565,6 +4664,13 @@ function handleMessage(event: MessageEvent<string>) {
   }
   if (message.type === "door_status" && message.opened) {
     pulseHaptic(12);
+  }
+  if (message.type === "elevator_status") {
+    const floor = Math.max(0, Number(message.targetFloor) || 0) + 1;
+    if (message.status === "moving") showToast(`エレベーター移動中 ${floor}F`);
+    else if (message.status === "called") showToast(`エレベーターを${floor}Fへ呼びました`);
+    else showToast(`エレベーター ${floor}Fへ出発`);
+    pulseHaptic(14);
   }
   if (message.type === "movement_correction" && message.position && !activeVehicleId && !creativeMode) {
     movementCorrectionTarget.set(
@@ -4884,6 +4990,11 @@ function playLandingSound(intensity = 0.35) {
   playSweep(82, 46, 0.07 + amount * 0.05, 0.012 + amount * 0.02, "triangle");
 }
 
+function playElevatorArrivalSound() {
+  playTone(660, 0.08, 0.026);
+  window.setTimeout(() => playTone(990, 0.12, 0.022), 92);
+}
+
 function playBarrierSound() {
   playSweep(420, 1080, 0.18, 0.048, "sine");
   window.setTimeout(() => playSweep(620, 1480, 0.22, 0.034, "triangle"), 55);
@@ -5135,6 +5246,12 @@ function groundHeightAt(x: number, z: number, currentY = 1.6, ascending = false)
   const stairReach = groundSurfaceReach(ascending, 0.85);
   const spiralReach = groundSurfaceReach(ascending, 0.9);
   const surfaceReach = groundSurfaceReach(ascending, 0.75);
+  for (const visual of elevatorVisuals.values()) {
+    const definition = visual.definition;
+    if (Math.abs(x - definition.x) > definition.width / 2 - 0.08) continue;
+    if (Math.abs(z - definition.z) > definition.depth / 2 - 0.08) continue;
+    if (visual.platformY <= currentY + surfaceReach) ground = Math.max(ground, visual.platformY);
+  }
   for (const zone of stairZones) {
     const dx = x - zone.origin.x;
     const dz = z - zone.origin.z;
@@ -5645,6 +5762,47 @@ Object.assign(window, {
   }
 });
 
+const localQaEnabled = ["localhost", "127.0.0.1"].includes(location.hostname) && new URLSearchParams(location.search).has("qa");
+if (localQaEnabled) {
+  document.documentElement.dataset.qaReady = "true";
+  const applyLocalQaPose = (rawPose: string) => {
+    try {
+      const pose = JSON.parse(rawPose || "{}");
+      if (![pose.x, pose.y, pose.z].every(Number.isFinite)) return;
+      self.position.set(pose.x, pose.y, pose.z);
+      self.yaw = wrapAngle(Number(pose.yaw) || 0);
+      self.pitch = THREE.MathUtils.clamp(Number(pose.pitch) || 0, -1.35, 1.35);
+      self.velocity.set(0, 0, 0);
+      planarVelocity.set(0, 0, 0);
+      movementCorrectionActive = false;
+      lastSafePosition.copy(self.position);
+    } catch {
+      // Invalid QA data is ignored without affecting gameplay.
+    }
+  };
+  document.addEventListener("donpachi-qa-pose", () => applyLocalQaPose(document.documentElement.dataset.qaPose || ""));
+  const qaPoseInput = document.createElement("input");
+  qaPoseInput.id = "donpachiQaPose";
+  qaPoseInput.tabIndex = -1;
+  qaPoseInput.setAttribute("aria-hidden", "true");
+  qaPoseInput.style.cssText = "position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+  qaPoseInput.addEventListener("input", () => applyLocalQaPose(qaPoseInput.value));
+  document.body.appendChild(qaPoseInput);
+  const qaCreativeInput = document.createElement("input");
+  qaCreativeInput.id = "donpachiQaCreative";
+  qaCreativeInput.tabIndex = -1;
+  qaCreativeInput.setAttribute("aria-hidden", "true");
+  qaCreativeInput.style.cssText = qaPoseInput.style.cssText;
+  qaCreativeInput.addEventListener("input", () => {
+    creativeMode = qaCreativeInput.value === "true";
+    self.velocity.set(0, 0, 0);
+    planarVelocity.set(0, 0, 0);
+    movementCorrectionActive = false;
+    send({ type: "creative_toggle", enabled: creativeMode });
+  });
+  document.body.appendChild(qaCreativeInput);
+}
+
 function syncState(now: number) {
   if (!self.joined || now - lastStateSent < 75) return;
   lastStateSent = now;
@@ -5867,6 +6025,32 @@ function syncDoorSnapshots(snapshots: DoorSnapshot[]) {
   }
 }
 
+function syncElevatorSnapshots(snapshots: ElevatorSnapshot[]) {
+  elevatorSnapshots.clear();
+  for (const snapshot of snapshots) {
+    const definition = toyboxElevatorDefinitionsById.get(snapshot?.id || "");
+    if (!definition || !Number.isFinite(snapshot.platformY)) continue;
+    const normalized: ElevatorSnapshot = {
+      id: snapshot.id,
+      platformY: THREE.MathUtils.clamp(Number(snapshot.platformY), 1.6, floorEyeY(definition, definition.maxFloor)),
+      currentFloor: THREE.MathUtils.clamp(Math.round(Number(snapshot.currentFloor) || 0), 0, definition.maxFloor),
+      targetFloor: THREE.MathUtils.clamp(Math.round(Number(snapshot.targetFloor) || 0), 0, definition.maxFloor),
+      moving: Boolean(snapshot.moving),
+      direction: Math.sign(Number(snapshot.direction) || 0),
+      arrivedAt: Number(snapshot.arrivedAt) || 0,
+      updatedAt: Number(snapshot.updatedAt) || 0
+    };
+    elevatorSnapshots.set(snapshot.id, normalized);
+    const visual = elevatorVisuals.get(snapshot.id);
+    if (visual && visual.lastArrivedAt === 0) {
+      visual.platformY = normalized.platformY;
+      visual.targetPlatformY = normalized.platformY;
+      visual.lastArrivedAt = normalized.arrivedAt;
+      visual.group.position.y = normalized.platformY - 1.6;
+    }
+  }
+}
+
 function updateVehicleVisuals(delta: number) {
   const serverNow = Date.now() + serverClockOffsetMs;
   for (const [id, snapshot] of vehicleSnapshots) {
@@ -6051,6 +6235,46 @@ function updateAutomaticDoors(delta: number) {
   }
 }
 
+function updateElevatorVisuals(delta: number) {
+  for (const [id, visual] of elevatorVisuals) {
+    const snapshot = elevatorSnapshots.get(id);
+    if (!snapshot) continue;
+    visual.targetPlatformY = snapshot.platformY;
+    const previousY = visual.platformY;
+    visual.platformY = THREE.MathUtils.damp(visual.platformY, visual.targetPlatformY, 18, delta);
+    if (Math.abs(visual.platformY - visual.targetPlatformY) < 0.002) visual.platformY = visual.targetPlatformY;
+    const platformDelta = visual.platformY - previousY;
+    const riding = self.joined
+      && !activeVehicleId
+      && !creativeMode
+      && isOnElevatorPlatform(self.position, visual.definition, previousY, 0.52)
+      && (localGrounded || Math.abs(self.velocity.y) < 0.9);
+    if (riding && Math.abs(platformDelta) < 0.5) {
+      self.position.y += platformDelta;
+      self.velocity.y = Math.min(0, self.velocity.y);
+      localGrounded = true;
+      wasGrounded = true;
+      lastSafePosition.copy(self.position);
+    }
+    visual.group.position.y = visual.platformY - 1.6;
+    const platformBox = elevatorPlatformBox(visual.definition, visual.platformY);
+    visual.platformCollider.min.set(platformBox.minX, platformBox.minY, platformBox.minZ);
+    visual.platformCollider.max.set(platformBox.maxX, platformBox.maxY, platformBox.maxZ);
+    const statusMaterial = visual.statusLight.material as THREE.MeshBasicMaterial;
+    statusMaterial.color.setHex(snapshot.moving ? 0xffcc3d : 0x93e43c);
+    visual.statusLight.scale.x = snapshot.moving ? 0.72 + Math.sin(performance.now() * 0.012) * 0.18 : 1;
+    if (!snapshot.moving && snapshot.arrivedAt > 0 && snapshot.arrivedAt !== visual.lastArrivedAt) {
+      const nearby = Math.hypot(self.position.x - visual.definition.x, self.position.z - visual.definition.z) < 10
+        && Math.abs(self.position.y - visual.platformY) < 5;
+      if (visual.lastArrivedAt > 0 && nearby) {
+        playElevatorArrivalSound();
+        pulseHaptic(16);
+      }
+      visual.lastArrivedAt = snapshot.arrivedAt;
+    }
+  }
+}
+
 function pulseHaptic(duration = 18) {
   if (!isCoarsePointer() || typeof navigator.vibrate !== "function") return;
   navigator.vibrate(Math.max(8, Math.min(45, duration)));
@@ -6061,30 +6285,60 @@ function updateVehicleInteraction(now = performance.now()) {
   lastInteractionCheckAt = now;
   nearestVehicleId = "";
   nearestDoorId = "";
-  let nearestVehicleDistance = Infinity;
+  nearestElevatorId = "";
+  let nearestDistance = Infinity;
+  let elevatorActionText = "";
   if (!activeVehicleId) {
     for (const vehicle of vehicleSnapshots.values()) {
       if (vehicle.driverId || (vehicle.health ?? 600) <= 0 || (vehicle.disabledUntil || 0) > Date.now()) continue;
       const distance = Math.hypot(vehicle.x - self.position.x, vehicle.z - self.position.z);
-      if (distance < 3.35 && distance < nearestVehicleDistance) {
-        nearestVehicleDistance = distance;
+      if (distance < 3.35 && distance < nearestDistance) {
+        nearestDistance = distance;
         nearestVehicleId = vehicle.id;
       }
     }
     const nearestDoor = nearestInteractableDoor(self.position);
-    if (nearestDoor && nearestDoor.distance < nearestVehicleDistance) nearestDoorId = nearestDoor.definition.id;
+    if (nearestDoor && nearestDoor.distance < nearestDistance) {
+      nearestDistance = nearestDoor.distance;
+      nearestVehicleId = "";
+      nearestDoorId = nearestDoor.definition.id;
+    }
+    const nearestElevator = nearestInteractableElevator(self.position, elevatorSnapshots);
+    if (nearestElevator && nearestElevator.distance < nearestDistance) {
+      nearestVehicleId = "";
+      nearestDoorId = "";
+      nearestElevatorId = nearestElevator.definition.id;
+      const floor = nearestElevator.state.targetFloor + 1;
+      elevatorActionText = nearestElevator.state.moving
+        ? `${nearestElevator.definition.label} ${floor}Fへ移動中`
+        : nearestElevator.kind === "call" && nearestElevator.floor !== nearestElevator.state.currentFloor
+          ? `${nearestElevator.definition.label}を${nearestElevator.floor + 1}Fへ呼ぶ`
+          : `${nearestElevator.definition.label} 次の階へ`;
+    }
   }
   const doorAction = Boolean(!activeVehicleId && nearestDoorId);
-  const available = Boolean(activeVehicleId || nearestVehicleId || nearestDoorId);
+  const elevatorAction = Boolean(!activeVehicleId && nearestElevatorId);
+  const available = Boolean(activeVehicleId || nearestVehicleId || nearestDoorId || nearestElevatorId);
   document.body.classList.toggle("driving", Boolean(activeVehicleId));
   if (activeVehicleId) mobileFiring = false;
   mobileInteract.classList.toggle("available", available);
   mobileInteract.classList.toggle("door-action", doorAction);
+  mobileInteract.classList.toggle("elevator-action", elevatorAction);
   interactionHint.classList.toggle("door-action", doorAction);
+  interactionHint.classList.toggle("elevator-action", elevatorAction);
   interactionHint.classList.toggle("show", available && !isCoarsePointer());
   const doorLabel = nearestDoorId ? toyboxDoorDefinitionsById.get(nearestDoorId)?.label || "建物" : "";
-  interactionHintText.textContent = activeVehicleId ? "ロードスターから降りる" : doorAction ? `${doorLabel}を開ける` : "ロードスターに乗る";
-  mobileInteract.setAttribute("aria-label", activeVehicleId ? "車から降りる" : doorAction ? `${doorLabel}のドアを開ける` : "車に乗る");
+  interactionHintText.textContent = activeVehicleId
+    ? "ロードスターから降りる"
+    : elevatorAction
+      ? elevatorActionText
+      : doorAction
+        ? `${doorLabel}を開ける`
+        : "ロードスターに乗る";
+  mobileInteract.setAttribute(
+    "aria-label",
+    activeVehicleId ? "車から降りる" : elevatorAction ? elevatorActionText : doorAction ? `${doorLabel}のドアを開ける` : "車に乗る"
+  );
   mobileJump.setAttribute("aria-label", activeVehicleId ? "ブレーキ" : "ジャンプ");
 }
 
@@ -6145,6 +6399,11 @@ function triggerContextInteraction() {
     pulseHaptic(18);
     return;
   }
+  if (nearestElevatorId) {
+    send({ type: "elevator_interact", elevatorId: nearestElevatorId, direction: 1 });
+    pulseHaptic(18);
+    return;
+  }
   if (!nearestVehicleId) return;
   send({ type: "vehicle_enter", vehicleId: nearestVehicleId });
   pulseHaptic(28);
@@ -6184,6 +6443,10 @@ function firstObstacleDistance(origin: THREE.Vector3, direction: THREE.Vector3, 
       const hit = rayBoxDistance(origin, direction, box, maxDistance);
       if (hit !== null && hit < best) best = hit;
     }
+  }
+  for (const elevator of elevatorVisuals.values()) {
+    const hit = rayBoxDistance(origin, direction, elevator.platformCollider, maxDistance);
+    if (hit !== null && hit < best) best = hit;
   }
   return best;
 }
@@ -7327,6 +7590,7 @@ function animate() {
   updateSafeZoneVisual(delta);
   updateTeamPings(delta);
   updateAutomaticDoors(delta);
+  updateElevatorVisuals(delta);
   updateRemotePlayers(delta);
   if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);
