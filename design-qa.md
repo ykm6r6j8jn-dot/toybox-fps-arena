@@ -22,9 +22,14 @@
 - TACTICS 2.0 local settings screenshot: `/tmp/donpachi-tactics-settings-mobile.png`
 - TACTICS 2.0 public mobile screenshot: `/tmp/donpachi-tactics-public-mobile.png`
 - TACTICS 2.0 public settings screenshot: `/tmp/donpachi-tactics-public-settings.png`
+- WORLD 3.0 local mobile door screenshot: `/tmp/donpachi-world3-local-mobile.png`
+- WORLD 3.0 local desktop NEXUS screenshot: `/tmp/donpachi-world3-local-desktop.png`
+- WORLD 3.0 public mobile screenshot: `/tmp/donpachi-world3-public-mobile.png`
+- WORLD 3.0 public settings screenshot: `/tmp/donpachi-world3-public-settings.png`
+- WORLD 3.0 public desktop screenshot: `/tmp/donpachi-world3-public-desktop.png`
 - desktop viewport: `1440 x 900`
 - mobile viewport: `844 x 390`
-- state: FPS match active in global room `DONPCH`; practice mode, cooperative humans, and CP fill enabled for TACTICS 2.0 browser QA
+- state: FPS match active in global room `DONPCH`; practice mode and CP fill disabled for deterministic WORLD 3.0 browser QA
 
 ## Full-view comparison evidence
 
@@ -43,6 +48,8 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 - Copy and content: room, invite, score, health, ammo, settings, and ready labels remain functional. `200 HP`, one-life mode, global room `DONPCH`, and the collapsed 20-player list are intentional product requirements that supersede reference mock data.
 - Icons and interactions: Lucide controls remain aligned; mobile settings opens to a `320px`-high scrollable panel; ammo does not intersect mobile action buttons.
 - World interactions: four shared roadsters use server-owned drivers, obstacle/player/CP collision, analog steering, braking, and enter/exit controls. AURORA TOWER provides an automatic entrance, four interior floors, real stairwell openings, instanced spiral steps, a lobby, and a reachable roof.
+- World authority: six sliding entrances now use one room-owned open ratio. Players, CPs, vehicles, bullets, tracers, and reconnect snapshots consume the same panel state; remote interaction is rejected and valid manual opening is rate-limited.
+- NEXUS CENTER: the former solid west high-rise is now a five-floor accessible building with a sealed entrance, lobby, reception, interior cover, split floor slabs, an instanced spiral route, roof railings, utilities, and a reachable landing roof.
 - Match pacing: one-life and life3 now use a server-owned multi-phase safe zone with waiting, shrinking, holding, and final stages. CPs route back toward safety and life3 respawns are selected inside the current zone.
 - Late joins: players and replacement CPs entering after a shrink use collision-checked spawn points inside the active safe zone. Initial human spawns remain unchanged, while every CP spawn is checked against walls, vehicles, humans, and previously placed CPs.
 - Team play: desktop `P`/middle-click and the smartphone pin control create short-lived server-filtered markers that are delivered only to teammates and also appear on the minimap.
@@ -93,6 +100,11 @@ Separate focused crops were not needed because the native `1440 x 900` capture k
 29. P1: CP movement used a `0.55m` route radius but a `0.68m` wall-recovery radius, allowing a wall-edge correction to look like a speed spike. Both paths now use `0.68m`; the 19-CP live test caps observed movement at `11.5m/s` and reports no correction spike.
 30. P1: the mobile special button overlapped jump by `48 x 10px` and fire by `20 x 28px`. Moved it to a responsive independent lane and increased its target height from `32px` to `44px`; post-fix pairwise overlap is zero.
 31. P1: one late CP spawn started `0.93m` from the human camera, and CP movement had no player-body entry check. Added sequential collision-checked CP spawning plus directional personal-space collision; the eight-second 19-CP run held a minimum human gap of `2.21m`.
+32. P1: AURORA's visual door opened independently on each client and was absent from server movement and projectile collision. Replaced it with six room-owned door states used by every client and all authoritative collision paths.
+33. P1: the first closed-door test found a `0.15m` seam where a perfectly centered projectile could pass. Shifted both leaves into a slight physical overlap and retained the full open path; the live test now observes the impact at the closed METRO entrance.
+34. P1: the west high-rise was a solid box with a long exterior staircase and no interior. Replaced it with NEXUS CENTER's five split floors, lobby, cover, continuous spiral stairwell, and roof route, with matching server geometry.
+35. P2: the car-only context button gave no mobile or keyboard affordance for doors. `E` and the 50px mobile context control now switch between vehicle and door actions with an explicit label and Lucide door icon.
+36. P2: transparent sliding leaves were difficult to distinguish when closed. Added one moving metal handle per leaf; all six entrances gain only twelve additional detail meshes.
 
 ## Findings
 
@@ -105,16 +117,17 @@ No actionable P0, P1, or P2 findings remain for this pass.
 
 ## Verification
 
-- Browser page identity and nonblank canvas: prior desktop `1440 x 900` MOTION 2.0 proof remains valid; TACTICS 2.0 passed locally and publicly at mobile `844 x 390`.
+- Browser page identity and nonblank canvas: WORLD 3.0 passed locally and publicly at desktop `1440 x 900` and mobile `844 x 390`; the final desktop canvas backing size exactly matched `1440 x 900`.
 - Framework overlay: none.
 - Console errors and warnings: none in desktop and mobile checks.
-- Desktop render: `58-60fps` observed after settle in the in-app browser.
-- Mobile render: local and public TACTICS 2.0 held `60fps` at `844 x 390`; public RTT was `176-178ms`, the real latency/FPS text remained visible, horizontal overflow was zero, and console errors/warnings were zero.
-- Interaction: public mobile settings opened a `318px`-high scrollable panel with `706px` content. Main gameplay controls measured at least `44px`, the fire target remained `88px`, and pairwise button-overlap checks returned zero after the special-control fix.
-- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, AI systems, 19-CP production live test, and three-client multiplayer smoke tests: passed. The eight-second AI run observed all four roles, tactical movement, 11 visible shots, a `2.21m` minimum human gap, and a `3.0ms` maximum health response.
-- Bundle: main gameplay JS `157.31 kB` (`56.35 kB` gzip), CSS `76.64 kB` (`15.98 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+- Desktop render: local WORLD 3.0 held `58-60fps`; public WORLD 3.0 held `60fps` at `1440 x 900`, with zero horizontal overflow and zero console errors/warnings.
+- Mobile render: local and public WORLD 3.0 held `60fps` at `844 x 390`; public RTT was `181-183ms`, the real latency/FPS text remained visible, horizontal overflow was zero, and console errors/warnings were zero.
+- Interaction: the public mobile lobby was scrollable at `390/1535px`; public settings opened a `318px`-high panel with `706px` content. Main gameplay controls measured at least `48px`, the fire target remained `88px`, and pairwise overlap checks returned zero, including while the 50px door control was visible.
+- Door integration: the production-style WebSocket test synchronized all six doors to two clients, rejected remote use, blocked a closed-door projectile, opened by proximity, held by manual interaction, and closed after the hold expired.
+- Build, controls, gameplay-systems, network-systems, combat-systems, movement-systems, AI systems, world systems, 19-CP production live test, world live test, and three-client multiplayer smoke tests: passed. With the browser renderer stopped, the 19-CP run observed all four roles, tactical movement, 11 visible shots, a `2.22m` minimum human gap, and a `2.2ms` maximum health response.
+- Bundle: main gameplay JS `162.92 kB` (`58.25 kB` gzip), CSS `76.95 kB` (`16.05 kB` gzip), Three.js chunk `505.62 kB` (`127.25 kB` gzip).
 - Production dependency audit: `npm audit --audit-level=high --omit=dev` reports `0 vulnerabilities`; Vite remains build-only and is no longer installed in the Render runtime image.
-- Public verification: the TACTICS 2.0 implementation from commit `19cc000` is live at `https://toybox-fps-arena.onrender.com`. The public page loaded `index-7bP4VYGF.js`, `index-CnxG3BAV.css`, and `three-cAQsBUvP.js`; the WebSocket snapshot reported `aiVersion: TACTICS 2.0`, and the verifier also received an authoritative movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
-- `tsc --noEmit`: stopped after it made no progress for about 60 seconds; this repository's narrower build/runtime checks completed normally.
+- Public verification: WORLD 3.0 commit `fc58a02` is `live` at `https://toybox-fps-arena.onrender.com`. The public page loaded `index-BjGqTeNe.js`, `index-CKhItUiK.css`, and `three-cAQsBUvP.js`; the WebSocket snapshot reported `worldVersion: WORLD 3.0`, six valid door states, and `aiVersion: TACTICS 2.0`. The verifier also received an authoritative movement correction, rejected excessive horizontal/vertical warp, and observed normalized yaw.
+- `tsc --noEmit`: stopped after it made no progress for 30 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
