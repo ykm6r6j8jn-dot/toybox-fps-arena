@@ -539,6 +539,7 @@ const closeResult = $("#closeResult") as HTMLButtonElement;
 const resultRows = $("#resultRows");
 const resultProgress = $("#resultProgress");
 const progressRank = $("#progressRank");
+const lobbyWalletDonEl = $("#lobbyWalletDon");
 const progressMeter = $("#progressMeter") as HTMLElement;
 const progressStats = $("#progressStats");
 const progressHint = $("#progressHint");
@@ -568,6 +569,8 @@ let profileSyncTimer = 0;
 let applyingProfile = false;
 let lastBaccaratRewardKey = "";
 let guestWalletToken = getOrCreateGuestWalletToken();
+let sharedWalletSyncIdentity = "";
+let sharedWalletSyncPromise: Promise<number> | null = null;
 
 nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Player${Math.floor(Math.random() * 90 + 10)}`).replace(/[<>]/g, "");
 nameInput.addEventListener("input", () => {
@@ -1180,12 +1183,55 @@ function generateLoginId() {
 
 function getOrCreateGuestWalletToken() {
   const stored = String(localStorage.getItem(guestWalletStorageKey) || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
-  if (stored.length >= 12) return stored;
+  if (stored.length >= 16) return stored;
   const created = typeof crypto.randomUUID === "function"
     ? crypto.randomUUID().replace(/-/g, "")
     : generateLoginId() + generateLoginId();
   localStorage.setItem(guestWalletStorageKey, created);
   return created;
+}
+
+function currentSharedWalletIdentity() {
+  return loggedInLoginId ? `account:${loggedInLoginId}` : `guest:${guestWalletToken}`;
+}
+
+async function syncSharedWallet(force = false) {
+  const identity = currentSharedWalletIdentity();
+  if (!force && sharedWalletSyncPromise && sharedWalletSyncIdentity === identity) return sharedWalletSyncPromise;
+  const task = (async () => {
+    const response = await fetch(appHttpUrl("/api/wallet"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ loginId: loggedInLoginId, guestToken: guestWalletToken })
+    });
+    const data = await response.json().catch(() => null) as {
+      ok?: boolean;
+      message?: string;
+      balance?: number;
+      guestToken?: string;
+      scope?: "account" | "guest";
+    } | null;
+    if (!response.ok || !data?.ok || !Number.isFinite(Number(data.balance))) {
+      throw new Error(data?.message || "共通Donを同期できませんでした。");
+    }
+    if (data.scope === "guest" && typeof data.guestToken === "string" && data.guestToken.length >= 16) {
+      guestWalletToken = data.guestToken;
+      localStorage.setItem(guestWalletStorageKey, guestWalletToken);
+    }
+    profileInventory.don = THREE.MathUtils.clamp(Math.floor(Number(data.balance)), 0, 999999);
+    saveProfileInventory();
+    renderProgressCard();
+    return profileInventory.don;
+  })();
+  sharedWalletSyncIdentity = identity;
+  sharedWalletSyncPromise = task;
+  try {
+    return await task;
+  } catch (error) {
+    if (sharedWalletSyncPromise === task) sharedWalletSyncPromise = null;
+    throw error;
+  }
 }
 
 function normalizeProgressState(progress?: Partial<ProgressState>): ProgressState {
@@ -1257,6 +1303,8 @@ async function requestProfile(mode: "create" | "login" | "save") {
   localStorage.setItem(loginStorageKey, loginId);
   loginStatus.textContent = `ログイン中 Lv.${data.profile.level || 1}`;
   applyLoginProfile(data.profile);
+  sharedWalletSyncIdentity = currentSharedWalletIdentity();
+  sharedWalletSyncPromise = Promise.resolve(profileInventory.don);
   return data.profile;
 }
 
@@ -1292,6 +1340,7 @@ function renderProgressCard(note = "") {
   const info = progressInfo();
   const remaining = Math.max(0, info.next - progressState.xp);
   progressRank.textContent = `${info.title} Lv.${info.level}`;
+  lobbyWalletDonEl.textContent = `${profileInventory.don.toLocaleString()} Don`;
   progressMeter.style.width = `${Math.round(info.progress * 100)}%`;
   progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / バカラ的中${progressState.baccaratWins} / ${profileInventory.don.toLocaleString()}Don`;
   progressHint.textContent = note || (progressState.lastReward ? `${progressState.lastReward} / 次まで ${remaining}XP` : `次のランクまで ${remaining}XP`);
@@ -3534,9 +3583,9 @@ document.addEventListener("touchend", unlockAudioFromGesture, { capture: true, p
 document.addEventListener("click", unlockAudioFromGesture, { capture: true });
 document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
-createRoomButton.addEventListener("click", () => join(""));
+createRoomButton.addEventListener("click", () => { void join(""); });
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
-joinBaccaratRoomButton.addEventListener("click", joinBaccarat);
+joinBaccaratRoomButton.addEventListener("click", () => { void joinBaccarat(); });
 createLoginIdButton.addEventListener("click", () => {
   if (!sanitizeLoginId(loginIdInput.value)) loginIdInput.value = generateLoginId();
   void requestProfile("create")
@@ -4242,13 +4291,20 @@ setCpuFill(cpuFillEnabled);
 setRelationMode(relationMode);
 setSkin(currentSkin);
 showPwaSplashIfNeeded();
-if (loggedInLoginId) {
-  loginStatus.textContent = "自動ログイン中";
-  void requestProfile("login").catch(() => {
-    loginStatus.textContent = "未ログイン";
-  });
+async function initializeLobbyWallet() {
+  if (loggedInLoginId) {
+    loginStatus.textContent = "自動ログイン中";
+    const profile = await requestProfile("login").catch(() => null);
+    if (!profile) loginStatus.textContent = "ログイン確認が必要";
+  }
+  try {
+    await syncSharedWallet();
+  } catch {
+    lobbyWalletDonEl.textContent = "同期待ち";
+  }
+  window.setTimeout(maybeStartInviteAutoJoin, 0);
 }
-window.setTimeout(maybeStartInviteAutoJoin, autoJoinInviteRequested ? 650 : 0);
+void initializeLobbyWallet();
 void refreshOnlinePlayers();
 setInterval(() => {
   if (!self.joined) void refreshOnlinePlayers();
@@ -4296,7 +4352,7 @@ function joinTypedRoom() {
   const code = sanitizeRoomCode(roomInput.value);
   roomInput.value = globalFpsRoomCode;
   if (code && code !== globalFpsRoomCode) showToast(`FPSは共通ルーム ${globalFpsRoomCode} に入室します`);
-  join(globalFpsRoomCode);
+  void join(globalFpsRoomCode);
 }
 
 function setConnectionRecovery(active: boolean, detail = "試合状態を保持しています") {
@@ -4436,7 +4492,17 @@ window.addEventListener("online", () => {
   openFpsSocket(true);
 });
 
-function joinBaccarat() {
+async function joinBaccarat() {
+  if (joinBaccaratRoomButton.disabled) return;
+  joinBaccaratRoomButton.disabled = true;
+  try {
+    await syncSharedWallet(true);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "共通Donを同期できませんでした。");
+    joinBaccaratRoomButton.disabled = false;
+    return;
+  }
+  joinBaccaratRoomButton.disabled = false;
   const name = sanitizePlayerNameInput();
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
@@ -4510,7 +4576,20 @@ function sendBaccaratAction(action: "bet" | "undo" | "clear" | "repeat" | "confi
   send({ type: "baccarat_action", action, ...detail });
 }
 
-function join(room: string) {
+async function join(room: string) {
+  if (createRoomButton.disabled || joinRoomButton.disabled) return;
+  createRoomButton.disabled = true;
+  joinRoomButton.disabled = true;
+  try {
+    await syncSharedWallet(true);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "共通Donを同期できませんでした。");
+    createRoomButton.disabled = false;
+    joinRoomButton.disabled = false;
+    return;
+  }
+  createRoomButton.disabled = false;
+  joinRoomButton.disabled = false;
   const name = sanitizePlayerNameInput();
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
@@ -4529,11 +4608,11 @@ function maybeStartInviteAutoJoin() {
   if (!autoJoinInviteRequested || inviteAutoJoinStarted || self.joined || baccaratJoined) return;
   inviteAutoJoinStarted = true;
   if (invitePlayMode === "baccarat") {
-    joinBaccarat();
+    void joinBaccarat();
     return;
   }
   roomInput.value = globalFpsRoomCode;
-  join(globalFpsRoomCode);
+  void join(globalFpsRoomCode);
 }
 
 function handleMessage(event: MessageEvent<string>) {
@@ -4554,6 +4633,11 @@ function handleMessage(event: MessageEvent<string>) {
     if (typeof message.guestToken === "string" && message.guestToken) {
       guestWalletToken = message.guestToken;
       localStorage.setItem(guestWalletStorageKey, guestWalletToken);
+    }
+    if (typeof message.walletDon === "number") {
+      profileInventory.don = THREE.MathUtils.clamp(Math.floor(message.walletDon), 0, 999999);
+      saveProfileInventory();
+      renderProgressCard();
     }
     roomInput.value = globalFpsRoomCode;
     baccaratTableCodeEl.textContent = tableCode;
@@ -7443,6 +7527,7 @@ function renderBaccarat(snapshot: BaccaratSnapshot) {
   }[snapshot.phase];
 
   baccaratPanel.dataset.phase = snapshot.phase;
+  baccaratPanel.classList.toggle("showing-result", Boolean(snapshot.outcome));
   baccaratTableCodeEl.textContent = snapshot.table;
   baccaratRoundEl.textContent = `#${snapshot.round}`;
   baccaratParticipantCountEl.textContent = snapshot.participantCount.toLocaleString();

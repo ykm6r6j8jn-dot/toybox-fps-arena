@@ -11,11 +11,11 @@ import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from 
 import {
   addBaccaratPlayer,
   baccaratSnapshotFor,
-  baccaratStartingDon,
   baccaratVersion,
   clearBaccaratBets,
   createBaccaratTable,
   globalBaccaratTableCode,
+  initialSharedDon,
   lockBaccaratBets,
   placeBaccaratBet,
   reconnectBaccaratPlayer,
@@ -553,22 +553,22 @@ function secureBaccaratRandomInt(maxExclusive) {
   return cryptoRandomInt(Math.max(1, Math.floor(Number(maxExclusive) || 1)));
 }
 
-function getGuestWallet(token, create = true) {
+function getGuestWallet(token, create = false) {
   const normalized = normalizeGuestWalletToken(token);
   if (!normalized) return null;
   if (!guestWallets.has(normalized) && create) {
-    guestWallets.set(normalized, { don: baccaratStartingDon, updatedAt: Date.now() });
+    guestWallets.set(normalized, { don: initialSharedDon, updatedAt: Date.now() });
   }
   return guestWallets.get(normalized) || null;
 }
 
 function walletDon(profileRecord, guestToken) {
   if (profileRecord?.profile) return sanitizeInventory(profileRecord.profile.inventory).don;
-  return getGuestWallet(guestToken)?.don ?? baccaratStartingDon;
+  return getGuestWallet(guestToken)?.don ?? null;
 }
 
 function persistPlayerWallet(player, amount = player?.chips) {
-  if (!player) return baccaratStartingDon;
+  if (!player) return 0;
   const don = clamp(Math.floor(Number(amount) || 0), 0, 999_999);
   player.chips = don;
   if (player.profileKey && profileStore.profiles[player.profileKey]) {
@@ -589,7 +589,7 @@ function playerWalletDon(player) {
   if (player?.profileKey && profileStore.profiles[player.profileKey]) {
     return sanitizeInventory(profileStore.profiles[player.profileKey].inventory).don;
   }
-  return getGuestWallet(player?.guestToken)?.don ?? baccaratStartingDon;
+  return getGuestWallet(player?.guestToken)?.don ?? 0;
 }
 
 function creditPlayerWallet(player, amount) {
@@ -642,7 +642,7 @@ function sanitizeProgress(progress = {}) {
 function sanitizeInventory(inventory = {}) {
   const healPacks = Number.isFinite(Number(inventory.healPacks)) ? Number(inventory.healPacks) : initialHealPacks;
   const storedDon = inventory.don ?? inventory.pokerDon;
-  const don = Number.isFinite(Number(storedDon)) ? Number(storedDon) : baccaratStartingDon;
+  const don = Number.isFinite(Number(storedDon)) ? Number(storedDon) : initialSharedDon;
   return {
     healPacks: clamp(Math.floor(healPacks), 0, 12),
     don: clamp(Math.floor(don), 0, 999_999),
@@ -685,10 +685,16 @@ async function saveProfileStore() {
   await writeFile(profileStorePath, JSON.stringify(profileStore, null, 2), "utf8");
 }
 
-function getProfile(loginId) {
+function getProfileRecord(loginId) {
   const normalized = normalizeLoginId(loginId);
   if (normalized.length < 6) return null;
-  return profileStore.profiles[profileHash(normalized)] || null;
+  const key = profileHash(normalized);
+  const profile = profileStore.profiles[key];
+  return profile ? { key, profile } : null;
+}
+
+function getProfile(loginId) {
+  return getProfileRecord(loginId)?.profile || null;
 }
 
 function getOrCreateProfile(loginId) {
@@ -815,6 +821,46 @@ async function handleProfileRequest(req, res) {
   }
 }
 
+async function handleWalletRequest(req, res) {
+  if (req.method !== "POST") {
+    res.writeHead(405, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: false, message: "method not allowed" }));
+    return;
+  }
+  try {
+    const payload = await readJsonRequest(req);
+    const loginId = normalizeLoginId(payload.loginId);
+    if (loginId) {
+      const record = getProfileRecord(loginId);
+      if (!record) {
+        res.writeHead(404, securityHeaders("application/json; charset=utf-8"));
+        res.end(JSON.stringify({ ok: false, message: "ログインIDを確認してから共通Donを同期してください。" }));
+        return;
+      }
+      res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({
+        ok: true,
+        scope: "account",
+        balance: sanitizeInventory(record.profile.inventory).don,
+        guestToken: ""
+      }));
+      return;
+    }
+    const guestToken = normalizeGuestWalletToken(payload.guestToken) || crypto.randomUUID();
+    const wallet = getGuestWallet(guestToken, true);
+    res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({
+      ok: true,
+      scope: "guest",
+      balance: wallet.don,
+      guestToken
+    }));
+  } catch (error) {
+    res.writeHead(error?.status || 500, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: false, message: "共通Donの同期に失敗しました。" }));
+  }
+}
+
 const rooms = new Map();
 const pokerRooms = new Map();
 const guestWallets = new Map();
@@ -840,6 +886,11 @@ const server = createServer(async (req, res) => {
 
   if (String(req.url || "").split("?")[0] === "/api/profile") {
     await handleProfileRequest(req, res);
+    return;
+  }
+
+  if (String(req.url || "").split("?")[0] === "/api/wallet") {
+    await handleWalletRequest(req, res);
     return;
   }
 
@@ -2594,21 +2645,23 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "baccarat_join") {
-      const hadProfile = Boolean(getProfile(message.loginId));
-      const profileRecord = getOrCreateProfile(message.loginId);
+      const requestedLoginId = normalizeLoginId(message.loginId);
+      const profileRecord = requestedLoginId ? getProfileRecord(requestedLoginId) : null;
+      if (requestedLoginId && !profileRecord) {
+        send(ws, { type: "baccarat_error", message: "ログインIDを確認してから共通Donを同期してください。" });
+        return;
+      }
       if (profileRecord) {
-        mergeProfile(profileRecord.profile, hadProfile
-          ? { progress: message.progress }
-          : {
-            name: message.name,
-            skin: message.skin,
-            cosmeticColor: message.cosmeticColor,
-            progress: message.progress
-          });
+        mergeProfile(profileRecord.profile, { progress: message.progress });
         saveProfileSoon();
       }
       const profile = profileRecord?.profile || null;
-      const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken) || crypto.randomUUID();
+      const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken);
+      const balance = walletDon(profileRecord, guestToken);
+      if (balance === null) {
+        send(ws, { type: "baccarat_error", message: "ロビーで共通Donを同期してからバカラに入室してください。" });
+        return;
+      }
       const existing = [...baccaratTable.players.values()].find((player) => (
         profileRecord?.key ? player.profileKey === profileRecord.key : player.guestToken === guestToken
       ));
@@ -2624,7 +2677,7 @@ wss.on("connection", (ws) => {
           profileKey: profileRecord?.key || "",
           guestToken,
           name: sanitizePlayerName(profile?.name || message.name),
-          chips: walletDon(profileRecord, guestToken)
+          chips: balance
         });
       if (!player) {
         send(ws, { type: "baccarat_error", message: "バカラ卓への接続に失敗しました。" });
@@ -2637,7 +2690,8 @@ wss.on("connection", (ws) => {
         id: player.id,
         table: globalBaccaratTableCode,
         version: baccaratVersion,
-        startingDon: baccaratStartingDon,
+        walletDon: player.chips,
+        walletScope: profileRecord ? "account" : "guest",
         guestToken,
         profile: profile ? publicProfile(profile) : null
       });
@@ -2677,23 +2731,19 @@ wss.on("connection", (ws) => {
       const requestedPartySize = normalizePartySize(message.partySize);
       const requestedCpuFill = normalizeCpuFill(message.cpuFill);
       const requestedRelationMode = normalizeRelationMode(message.relationMode);
-      const hadProfile = Boolean(getProfile(message.loginId));
-      const profileRecord = getOrCreateProfile(message.loginId);
+      const requestedLoginId = normalizeLoginId(message.loginId);
+      const profileRecord = requestedLoginId ? getProfileRecord(requestedLoginId) : null;
+      if (requestedLoginId && !profileRecord) {
+        send(ws, { type: "error", message: "ログインIDを確認してから共通Donを同期してください。" });
+        return;
+      }
       if (profileRecord) {
-        mergeProfile(profileRecord.profile, hadProfile
-          ? { progress: message.progress }
-          : {
-            name: message.name,
-            skin: message.skin,
-            cosmeticColor: message.cosmeticColor,
-            progress: message.progress,
-            inventory: message.inventory
-          });
+        mergeProfile(profileRecord.profile, { progress: message.progress });
         saveProfileSoon();
       }
       const loginProfile = profileRecord?.profile || null;
       const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken) || crypto.randomUUID();
-      if (!profileRecord) getGuestWallet(guestToken);
+      if (!profileRecord) getGuestWallet(guestToken, true);
       const room = getRoom(globalFpsRoomCode, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
       const requestedResumeToken = normalizeResumeToken(message.resumeToken);
       const now = Date.now();

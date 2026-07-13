@@ -7,6 +7,8 @@ import { settleBaccaratBets } from "../baccarat-systems.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const port = 59_000 + Math.floor(Math.random() * 700);
 const endpoint = `ws://127.0.0.1:${port}/ws`;
+const walletEndpoint = `http://127.0.0.1:${port}/api/wallet`;
+const profileEndpoint = `http://127.0.0.1:${port}/api/profile`;
 const profileStore = `/tmp/donpachi-baccarat-live-${process.pid}.json`;
 let serverOutput = "";
 const server = spawn(process.execPath, ["server.mjs"], {
@@ -51,13 +53,72 @@ function openClient(name, guestToken) {
   });
 }
 
+async function initializeWallet(guestToken) {
+  const response = await fetch(walletEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ guestToken })
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.scope, "guest");
+  assert.equal(payload.balance, 2000);
+  assert.equal(payload.guestToken, guestToken);
+  return payload;
+}
+
+function expectWalletRequired(name, guestToken) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(endpoint);
+    const timeout = setTimeout(() => reject(new Error(`timeout rejecting uninitialized wallet ${name}`)), 6000);
+    ws.on("open", () => ws.send(JSON.stringify({ type: "baccarat_join", name, guestToken })));
+    ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type !== "baccarat_error") return;
+      clearTimeout(timeout);
+      ws.close(1000, "expected-rejection");
+      resolve(String(message.message || ""));
+    });
+    ws.on("error", reject);
+  });
+}
+
 const latest = (client) => client.state.snapshots.at(-1);
 const send = (client, payload) => client.ws.send(JSON.stringify(payload));
 
 try {
   await waitFor(() => serverOutput.includes("listening") || serverOutput.includes(String(port)), "baccarat server start");
-  const alpha = await openClient("BaccaratAlpha", `alpha-${process.pid}-wallet`);
-  const beta = await openClient("BaccaratBeta", `beta-${process.pid}-wallet`);
+  const accountLoginId = `Wallet${process.pid}Account`;
+  const accountProfileResponse = await fetch(profileEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode: "create", loginId: accountLoginId, name: "WalletAccount" })
+  });
+  const accountProfile = await accountProfileResponse.json();
+  assert.equal(accountProfileResponse.status, 200);
+  assert.equal(accountProfile.profile.inventory.don, 2000, "account creation owns the initial shared Don");
+  const accountWalletResponse = await fetch(walletEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ loginId: accountLoginId })
+  });
+  const accountWallet = await accountWalletResponse.json();
+  assert.equal(accountWallet.scope, "account");
+  assert.equal(accountWallet.balance, 2000);
+
+  const rejectedMessage = await expectWalletRequired("NoLobbyGrant", `uninitialized-${process.pid}-wallet`);
+  assert.match(rejectedMessage, /ロビーで共通Donを同期/);
+
+  const alphaToken = `alpha-${process.pid}-wallet`;
+  const betaToken = `beta-${process.pid}-wallet`;
+  await initializeWallet(alphaToken);
+  await initializeWallet(betaToken);
+  const alpha = await openClient("BaccaratAlpha", alphaToken);
+  const beta = await openClient("BaccaratBeta", betaToken);
+  assert.equal(alpha.state.welcome.walletDon, 2000);
+  assert.equal(beta.state.welcome.walletDon, 2000);
+  assert.equal("startingDon" in alpha.state.welcome, false, "baccarat welcome must not grant starting chips");
 
   await waitFor(() => latest(alpha)?.phase === "betting" && latest(alpha)?.participantCount === 2 && latest(beta)?.participantCount === 2, "two players share global table");
   assert.equal(latest(alpha).table, "DONBAC");
@@ -90,11 +151,18 @@ try {
   assert.equal(alpha.state.errors.length, 0);
   assert.equal(beta.state.errors.length, 0);
 
+  const alphaWallet = await fetch(walletEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ guestToken: alphaToken })
+  }).then((response) => response.json());
+  assert.equal(alphaWallet.balance, alphaResult.viewer.chips, "lobby wallet and baccarat result must share one balance");
+
   for (const client of [alpha, beta]) {
     send(client, { type: "baccarat_leave" });
     client.ws.close(1000, "leave");
   }
-  console.log(`baccarat live passed: two players shared DONBAC, locked server bets, revealed one outcome, and settled balances (${alphaResult.outcome.winner})`);
+  console.log(`baccarat live passed: lobby/account initialized shared Don, direct baccarat grant was rejected, and two players settled one shared balance (${alphaResult.outcome.winner})`);
 } finally {
   if (server.exitCode === null) {
     server.kill("SIGTERM");

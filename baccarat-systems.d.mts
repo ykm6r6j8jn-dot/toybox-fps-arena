@@ -3,7 +3,7 @@ export type BaccaratBets = Record<BaccaratTarget, number>;
 
 export const baccaratVersion: string;
 export const globalBaccaratTableCode: string;
-export const baccaratStartingDon: number;
+export const initialSharedDon: number;
 export const baccaratBettingMs: number;
 export const baccaratDealingMs: number;
 export const baccaratResultMs: number;

@@ -1,6 +1,6 @@
-export const baccaratVersion = "BACCARAT 1.0";
+export const baccaratVersion = "BACCARAT 1.1";
 export const globalBaccaratTableCode = "DONBAC";
-export const baccaratStartingDon = 2000;
+export const initialSharedDon = 2000;
 export const baccaratBettingMs = 12_000;
 export const baccaratDealingMs = 2_600;
 export const baccaratResultMs = 5_000;
@@ -155,7 +155,7 @@ export function addBaccaratPlayer(table, player, now = Date.now()) {
     ws: player.ws || null,
     profileKey: String(player.profileKey || ""),
     name: String(player.name || "プレイヤー"),
-    chips: Math.max(0, Math.floor(finite(player.chips, baccaratStartingDon))),
+    chips: Math.max(0, Math.floor(finite(player.chips, 0))),
     bets: emptyBets(),
     lastBets: emptyBets(),
     betStack: [],

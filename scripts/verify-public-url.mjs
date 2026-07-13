@@ -28,7 +28,7 @@ const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
 if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
-if (!pageHtml.includes("BACCARAT 1.0 共通チップ卓")) throw new Error("public page is missing the BACCARAT 1.0 update marker");
+if (!pageHtml.includes("ECONOMY 1.1 共通Donウォレット")) throw new Error("public page is missing the ECONOMY 1.1 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 
@@ -78,12 +78,29 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
+async function initializeSharedWallet(guestToken) {
+  const response = await fetch(new URL("/api/wallet", baseUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ guestToken })
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload?.ok || payload.balance !== 2000 || payload.guestToken !== guestToken) {
+    throw new Error(`shared wallet initialization failed: ${JSON.stringify(payload)}`);
+  }
+  return payload;
+}
+
 const probeName = `Probe${Math.random().toString(36).slice(2, 7)}`;
+const probeWalletToken = `public-fps-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+await initializeSharedWallet(probeWalletToken);
 const probe = await openClient(probeName, "DONPCH", {
   cpuFill: false,
   gameMode: "oneLife",
   partySize: 1,
-  relationMode: "versus"
+  relationMode: "versus",
+  guestToken: probeWalletToken
 });
 
 await waitFor(
@@ -137,6 +154,8 @@ send(probe.ws, { type: "leave" });
 await new Promise((resolve) => setTimeout(resolve, 80));
 probe.ws.close(1000, "leave");
 
+const baccaratWalletToken = `public-baccarat-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+await initializeSharedWallet(baccaratWalletToken);
 const baccaratProbe = await new Promise((resolve, reject) => {
   const ws = new WebSocket(wsUrl);
   const state = { welcome: null, snapshots: [], errors: [] };
@@ -144,7 +163,7 @@ const baccaratProbe = await new Promise((resolve, reject) => {
   ws.on("open", () => ws.send(JSON.stringify({
     type: "baccarat_join",
     name: `Table${Math.random().toString(36).slice(2, 7)}`,
-    guestToken: `public-verify-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    guestToken: baccaratWalletToken
   })));
   ws.on("message", (raw) => {
     const message = JSON.parse(String(raw));
@@ -163,12 +182,12 @@ const baccaratProbe = await new Promise((resolve, reject) => {
 });
 
 await waitFor(() => baccaratProbe.state.snapshots.some((table) => (
-  table.version === "BACCARAT 1.0"
+  table.version === "BACCARAT 1.1"
   && table.table === "DONBAC"
   && table.phase === "betting"
   && table.viewer?.chips >= 10
   && table.participantCount >= 1
-)), "public BACCARAT 1.0 shared table accepts a player", 20_000);
+)), "public BACCARAT 1.1 shared table accepts a lobby wallet", 20_000);
 send(baccaratProbe.ws, { type: "baccarat_action", action: "bet", target: "player", amount: 10 });
 await waitFor(() => baccaratProbe.state.snapshots.some((table) => table.viewer?.bets?.player === 10), "public baccarat table records an authoritative bet");
 send(baccaratProbe.ws, { type: "baccarat_action", action: "undo" });
@@ -176,4 +195,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 and BACCARAT 1.0 active, movement corrected, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 and BACCARAT 1.1 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);

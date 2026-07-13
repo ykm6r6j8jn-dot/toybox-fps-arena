@@ -330,8 +330,14 @@
           </div>
           <div class="progress-card" id="progressCard" aria-label="Donランク">
             <header>
-              <span>Donランク</span>
-              <strong id="progressRank">読み込み中</strong>
+              <div>
+                <span>Donランク</span>
+                <strong id="progressRank">読み込み中</strong>
+              </div>
+              <div class="shared-wallet-summary">
+                <span>全ゲーム共通Don</span>
+                <strong id="lobbyWalletDon">2,000 Don</strong>
+              </div>
             </header>
             <div class="progress-meter"><i id="progressMeter"></i></div>
             <div class="progress-stats" id="progressStats">連続 0日 / 最高 0pt</div>
@@ -422,7 +428,7 @@
                 <span>8デッキ / 12秒ベット / 全員共通卓</span>
               </header>
               <button id="joinBaccaratRoom" type="button">共通チップバカラへ</button>
-              <small>初回2,000Don。仮想チップのみで、現金への交換や購入はありません。</small>
+              <small>ロビーの共通Don残高をそのまま使用。FPS報酬も同じ残高へ加算されます。</small>
             </div>
           </div>
           <div class="online-panel">
@@ -446,8 +452,8 @@
           <div class="update-log-list">
             <article>
               <b>最新</b>
-              <strong>BACCARAT 1.0 共通チップ卓</strong>
-              <p>ポーカーを廃止し、全プレイヤーが同じ卓に集まる8デッキ・標準ルールのチップバカラへ刷新。FPSのキル、ダメージ、アイテム取得、勝利に応じてDonを獲得できます。</p>
+              <strong>ECONOMY 1.1 共通Donウォレット</strong>
+              <p>初期2,000DonをロビーとログインIDに紐づく全ゲーム共通残高へ修正。バカラ入室時の新規付与を廃止し、FPS報酬とバカラ収支を同じ残高へ反映します。</p>
             </article>
             <article>
               <b>マッチ</b>
@@ -542,7 +548,7 @@
             <button class="baccarat-mobile-drawer" id="baccaratHistoryToggle" type="button" aria-label="ロード履歴">履歴</button>
             <button class="baccarat-mobile-drawer" id="baccaratPlayersToggle" type="button" aria-label="参加者">参加者</button>
             <div class="baccarat-crowd"><span>参加</span><strong id="baccaratParticipantCount">0</strong></div>
-            <div class="baccarat-wallet"><span>残高</span><strong id="baccaratWallet">2,000 Don</strong></div>
+            <div class="baccarat-wallet"><span>共通Don</span><strong id="baccaratWallet">2,000 Don</strong></div>
             <button id="copyBaccaratInvite" type="button">友達招待</button>
             <button id="leaveBaccarat" type="button">ロビーへ</button>
           </header>

@@ -63,6 +63,9 @@ assert.deepEqual(
 );
 
 const table = createBaccaratTable(1000, () => 0);
+const noGrantTable = createBaccaratTable(1000, () => 0);
+const noGrantPlayer = addBaccaratPlayer(noGrantTable, { id: "no-grant", name: "NoGrant" }, 1000);
+assert.equal(noGrantPlayer.chips, 0, "entering baccarat must never create the initial shared balance");
 const player = addBaccaratPlayer(table, { id: "p1", name: "Test", chips: 2000 }, 1000);
 assert.equal(table.phase, "betting");
 assert.equal(table.phaseEndsAt, 1000 + baccaratBettingMs);
