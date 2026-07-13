@@ -104,7 +104,7 @@ body.keyboard-open .chat-panel:not(:focus-within) {
 .settings-panel,
 .result-panel,
 .update-log-panel,
-.poker-panel {
+.baccarat-panel {
   pointer-events: auto;
 }
 
@@ -180,19 +180,19 @@ body.keyboard-open .chat-panel:not(:focus-within) {
   font-weight: 850;
 }
 
-body.poker-open .top-left,
-body.poker-open .top-right,
-body.poker-open .top-center,
-body.poker-open .minimap,
-body.poker-open .feed,
-body.poker-open .damage-feed,
-body.poker-open .flow-card,
-body.poker-open .focus-task-card,
-body.poker-open .status-strip,
-body.poker-open .lobby-strip,
-body.poker-open .chat-panel,
-body.poker-open .mobile-controls,
-body.poker-open .center-reticle {
+body.baccarat-open .top-left,
+body.baccarat-open .top-right,
+body.baccarat-open .top-center,
+body.baccarat-open .minimap,
+body.baccarat-open .feed,
+body.baccarat-open .damage-feed,
+body.baccarat-open .flow-card,
+body.baccarat-open .focus-task-card,
+body.baccarat-open .status-strip,
+body.baccarat-open .lobby-strip,
+body.baccarat-open .chat-panel,
+body.baccarat-open .mobile-controls,
+body.baccarat-open .center-reticle {
   display: none;
 }
 
@@ -2492,53 +2492,49 @@ body.keyboard-open .join-card {
   font-weight: 850;
 }
 
-.poker-lobby-card {
+.baccarat-lobby-band {
   display: grid;
   gap: 9px;
   padding: 12px;
-  border: 1px solid rgba(255, 210, 58, 0.34);
+  border: 1px solid rgba(205, 167, 84, 0.42);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(28, 99, 71, 0.72), rgba(13, 25, 37, 0.9)),
-    radial-gradient(circle at 80% 0%, rgba(255, 210, 58, 0.24), transparent 32%);
+    linear-gradient(135deg, rgba(17, 89, 61, 0.86), rgba(8, 23, 27, 0.94)),
+    radial-gradient(circle at 80% 0%, rgba(205, 167, 84, 0.22), transparent 32%);
 }
 
-.poker-lobby-card header {
+.baccarat-lobby-band header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.poker-lobby-card strong {
+.baccarat-lobby-band header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.baccarat-lobby-band strong {
   color: #fff;
   font-size: 15px;
   font-weight: 950;
 }
 
-.poker-lobby-card span {
+.baccarat-lobby-band span,
+.baccarat-lobby-band small {
   color: rgba(255, 255, 255, 0.72);
   font-size: 12px;
   font-weight: 800;
 }
 
-.poker-cpu-select {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
-}
-
-.poker-cpu-select button {
-  min-height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font-size: 12px;
-}
-
-.poker-cpu-select button.active {
-  background: #ffd23a;
-  color: #243018;
+.baccarat-lobby-band > button {
+  min-height: 44px;
+  border: 1px solid rgba(244, 218, 159, 0.34);
+  border-radius: 7px;
+  background: #d7b35d;
+  color: #17241f;
+  font-weight: 950;
 }
 
 .online-panel {
@@ -4194,25 +4190,25 @@ body.celebrating::after {
     display: block;
   }
 
-  body:not(.game-active):not(.poker-open) .mobile-controls,
-  body:not(.game-active):not(.poker-open) .top-left,
-  body:not(.game-active):not(.poker-open) .top-center,
-  body:not(.game-active):not(.poker-open) .top-right,
-  body:not(.game-active):not(.poker-open) .minimap,
-  body:not(.game-active):not(.poker-open) .center-reticle,
-  body:not(.game-active):not(.poker-open) .status-strip,
-  body:not(.game-active):not(.poker-open) .donpunch-button,
-  body:not(.game-active):not(.poker-open) .damage-feedback,
-  body:not(.game-active):not(.poker-open) .flow-card,
-  body:not(.game-active):not(.poker-open) .focus-task-card,
-  body:not(.game-active):not(.poker-open) .killcam-card,
-  body:not(.game-active):not(.poker-open) .spectator-card,
-  body:not(.game-active):not(.poker-open) .zone-status,
-  body:not(.game-active):not(.poker-open) .vehicle-status,
-  body:not(.game-active):not(.poker-open) .interaction-hint,
-  body:not(.game-active):not(.poker-open) .damage-feed,
-  body:not(.game-active):not(.poker-open) .lobby-strip,
-  body:not(.game-active):not(.poker-open) .player-slots {
+  body:not(.game-active) .mobile-controls,
+  body:not(.game-active) .top-left,
+  body:not(.game-active) .top-center,
+  body:not(.game-active) .top-right,
+  body:not(.game-active) .minimap,
+  body:not(.game-active) .center-reticle,
+  body:not(.game-active) .status-strip,
+  body:not(.game-active) .donpunch-button,
+  body:not(.game-active) .damage-feedback,
+  body:not(.game-active) .flow-card,
+  body:not(.game-active) .focus-task-card,
+  body:not(.game-active) .killcam-card,
+  body:not(.game-active) .spectator-card,
+  body:not(.game-active) .zone-status,
+  body:not(.game-active) .vehicle-status,
+  body:not(.game-active) .interaction-hint,
+  body:not(.game-active) .damage-feed,
+  body:not(.game-active) .lobby-strip,
+  body:not(.game-active) .player-slots {
     display: none !important;
   }
 
@@ -4374,7 +4370,7 @@ body.celebrating::after {
     padding: 9px;
   }
 
-  .poker-lobby-card {
+  .baccarat-lobby-band {
     padding: 8px;
   }
 
@@ -4862,6 +4858,754 @@ body.celebrating::after {
     font-weight: 900;
     letter-spacing: 0;
   }
+}
+
+/* BACCARAT 1.0: lightweight shared table */
+.baccarat-panel {
+  --baccarat-ink: #07110f;
+  --baccarat-panel: #0c1717;
+  --baccarat-line: rgba(226, 203, 143, 0.24);
+  --baccarat-brass: #d3af59;
+  --baccarat-player: #268bc8;
+  --baccarat-banker: #c84d45;
+  --baccarat-tie: #3da66d;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  width: var(--app-width, 100vw);
+  height: var(--app-height, 100dvh);
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(#101d1c, #06100f);
+  color: #f7f4e9;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.baccarat-panel.open {
+  display: block;
+}
+
+.baccarat-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: 62px minmax(0, 1fr) 86px;
+  padding: max(7px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(7px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  gap: 8px;
+}
+
+.baccarat-header,
+.baccarat-controls {
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  border: 1px solid var(--baccarat-line);
+  border-radius: 7px;
+  background: rgba(5, 13, 13, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+}
+
+.baccarat-header {
+  grid-template-columns: minmax(132px, 1.2fr) auto auto auto 1fr auto minmax(126px, auto) auto auto;
+  gap: 12px;
+  padding: 7px 10px;
+}
+
+.baccarat-brand,
+.baccarat-table-id,
+.baccarat-round,
+.baccarat-crowd,
+.baccarat-wallet,
+.baccarat-selection {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.baccarat-header span,
+.baccarat-selection span,
+.baccarat-shoe span {
+  color: rgba(247, 244, 233, 0.58);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.baccarat-brand strong {
+  color: #f5e4b4;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.baccarat-table-id strong,
+.baccarat-round strong,
+.baccarat-crowd strong,
+.baccarat-wallet strong,
+.baccarat-selection strong {
+  overflow: hidden;
+  color: #fffdf5;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.baccarat-connection {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid rgba(81, 209, 139, 0.28);
+  border-radius: 999px;
+  background: rgba(44, 138, 88, 0.14);
+  color: #79e6aa;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.baccarat-connection::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #52d98c;
+  box-shadow: 0 0 9px rgba(82, 217, 140, 0.7);
+}
+
+.baccarat-connection.reconnecting {
+  border-color: rgba(224, 183, 89, 0.35);
+  color: #e8c978;
+}
+
+.baccarat-connection.reconnecting::before {
+  background: #d9ad4b;
+  box-shadow: none;
+}
+
+.baccarat-header > button,
+.baccarat-road-panel button,
+.baccarat-players-panel button {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f7f4e9;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.baccarat-mobile-drawer,
+.baccarat-road-panel header button,
+.baccarat-players-panel header button {
+  display: none;
+}
+
+.baccarat-layout {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(176px, 220px) minmax(500px, 1fr) minmax(198px, 250px);
+  gap: 8px;
+}
+
+.baccarat-road-panel,
+.baccarat-players-panel {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--baccarat-line);
+  border-radius: 7px;
+  background: rgba(7, 17, 17, 0.9);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.baccarat-road-panel > header,
+.baccarat-players-panel > header {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #ead9aa;
+  font-size: 12px;
+}
+
+.baccarat-road {
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  grid-auto-rows: 28px;
+  gap: 6px;
+  align-content: start;
+  min-height: 130px;
+}
+
+.baccarat-road > span {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.04);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.baccarat-road > span.player { color: #59b6ed; }
+.baccarat-road > span.banker { color: #ed756d; }
+.baccarat-road > span.tie { color: #68d596; }
+
+.baccarat-road > span i {
+  position: absolute;
+  right: -2px;
+  bottom: -4px;
+  color: #f2ce72;
+  font-style: normal;
+  font-size: 15px;
+}
+
+.baccarat-road > small,
+.baccarat-participants > small,
+.baccarat-recent > small {
+  grid-column: 1 / -1;
+  color: rgba(247, 244, 233, 0.45);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.baccarat-shoe {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.baccarat-shoe strong {
+  color: #f7f4e9;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.baccarat-shoe::after {
+  content: "";
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.baccarat-shoe i {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  z-index: 1;
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: #d6b35d;
+  transition: width 0.25s ease;
+}
+
+.baccarat-rules {
+  display: grid;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.baccarat-rules strong { color: #ead9aa; font-size: 11px; }
+.baccarat-rules span { color: rgba(247, 244, 233, 0.74); font-size: 10px; font-weight: 800; }
+.baccarat-rules small { color: rgba(247, 244, 233, 0.45); font-size: 9px; line-height: 1.45; }
+
+.baccarat-table {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+}
+
+.baccarat-felt {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 78px 18px 16px;
+  border: 2px solid #b18e45;
+  border-radius: 36px;
+  background:
+    linear-gradient(115deg, transparent 49.5%, rgba(255, 255, 255, 0.018) 50%, transparent 50.5%) 0 0 / 26px 26px,
+    radial-gradient(ellipse at 50% 35%, #1b704f, #0c4b36 66%, #073427);
+  box-shadow: inset 0 0 0 5px rgba(4, 22, 17, 0.54), inset 0 -34px 76px rgba(0, 0, 0, 0.22), 0 18px 42px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.baccarat-felt::before {
+  content: "DONPACHI BACCARAT";
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  color: rgba(235, 220, 173, 0.08);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(24px, 4vw, 52px);
+  font-weight: 900;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.baccarat-phase {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  z-index: 3;
+  width: 74px;
+  height: 62px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  place-content: center;
+  place-items: center;
+  column-gap: 2px;
+  border: 1px solid rgba(231, 208, 151, 0.48);
+  border-radius: 50%;
+  background: rgba(6, 22, 17, 0.9);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+  transform: translateX(-50%);
+}
+
+.baccarat-phase span {
+  grid-column: 1 / -1;
+  max-width: 64px;
+  overflow: hidden;
+  color: #ead9aa;
+  font-size: 8px;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.baccarat-phase strong {
+  color: #fffdf5;
+  font-size: 27px;
+  font-variant-numeric: tabular-nums;
+  line-height: 0.9;
+}
+
+.baccarat-phase small {
+  align-self: end;
+  color: rgba(247, 244, 233, 0.55);
+  font-size: 8px;
+}
+
+.baccarat-phase strong.danger { color: #ff766d; }
+
+.baccarat-result-ribbon {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  z-index: 4;
+  min-width: min(390px, 62%);
+  min-height: 58px;
+  display: none;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 16px;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 7px;
+  background: rgba(7, 17, 17, 0.94);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+}
+
+.baccarat-result-ribbon.show { display: grid; }
+.baccarat-result-ribbon.player { border-color: rgba(76, 171, 226, 0.68); }
+.baccarat-result-ribbon.banker { border-color: rgba(229, 102, 94, 0.68); }
+.baccarat-result-ribbon.tie { border-color: rgba(92, 207, 141, 0.68); }
+
+.baccarat-result-ribbon strong { color: #fff; font-family: Georgia, "Times New Roman", serif; font-size: 18px; }
+.baccarat-result-ribbon span { grid-column: 1; color: rgba(247, 244, 233, 0.6); font-size: 9px; font-weight: 850; }
+.baccarat-result-ribbon b { grid-column: 2; grid-row: 1 / span 2; color: #f0cf78; font-size: 13px; }
+
+.baccarat-hands {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 32px;
+}
+
+.baccarat-hand {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.baccarat-hand header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 900;
+}
+
+.baccarat-hand header span { font-size: 16px; }
+.baccarat-hand.player header { color: #7cc8f2; }
+.baccarat-hand.banker header { color: #f08b83; }
+
+.baccarat-hand header strong {
+  min-width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: rgba(4, 17, 13, 0.54);
+  color: #fff;
+  font-size: 18px;
+}
+
+.baccarat-cards {
+  min-height: 124px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.playing-card.baccarat-card {
+  width: clamp(62px, 6.2vw, 88px);
+  border-color: rgba(45, 38, 26, 0.45);
+  border-radius: 7px;
+  background: linear-gradient(135deg, #fffef8, #e9e6dc);
+  box-shadow: 0 12px 20px rgba(0, 0, 0, 0.3), inset 0 0 0 2px rgba(255, 255, 255, 0.82);
+}
+
+.playing-card.baccarat-card .card-corner strong { font-size: clamp(16px, 1.7vw, 23px); }
+.playing-card.baccarat-card .card-corner span { font-size: clamp(14px, 1.5vw, 21px); }
+.playing-card.baccarat-card .card-pip { font-size: clamp(30px, 3.4vw, 48px); }
+
+.playing-card.card-placeholder {
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(236, 220, 175, 0.28);
+  background: rgba(3, 20, 14, 0.18);
+  box-shadow: none;
+  color: rgba(236, 220, 175, 0.2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.baccarat-bet-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 1.2fr;
+  gap: 5px;
+}
+
+.baccarat-bet-grid button {
+  min-width: 0;
+  min-height: 96px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-content: center;
+  gap: 3px 8px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: rgba(6, 25, 19, 0.7);
+  color: #fff;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+
+.baccarat-bet-grid button.player { border-color: rgba(61, 161, 219, 0.55); }
+.baccarat-bet-grid button.banker { border-color: rgba(219, 84, 76, 0.55); }
+.baccarat-bet-grid button.tie { border-color: rgba(73, 188, 120, 0.55); }
+.baccarat-bet-grid button.player-pair,
+.baccarat-bet-grid button.banker-pair { border-color: rgba(217, 180, 91, 0.48); }
+
+.baccarat-bet-grid button:active:not(:disabled) { transform: scale(0.98); }
+.baccarat-bet-grid button.has-bet { background: rgba(220, 181, 88, 0.18); box-shadow: inset 0 0 0 1px rgba(241, 207, 125, 0.38); }
+.baccarat-bet-grid button.winner { border-color: #f2d47f; background: rgba(218, 177, 78, 0.26); }
+.baccarat-bet-grid button:disabled { cursor: default; opacity: 0.6; }
+
+.baccarat-bet-grid button > span {
+  overflow: hidden;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(10px, 1vw, 14px);
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.baccarat-bet-grid button.player-pair > span,
+.baccarat-bet-grid button.banker-pair > span {
+  line-height: 1.05;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.baccarat-bet-grid button > strong { color: rgba(247, 244, 233, 0.62); font-size: 10px; }
+.baccarat-bet-grid button > b { grid-column: 1 / -1; color: #f3d482; font-size: 13px; font-variant-numeric: tabular-nums; }
+.baccarat-bet-grid button > small { grid-column: 1 / -1; color: rgba(247, 244, 233, 0.5); font-size: 9px; font-weight: 800; }
+
+.baccarat-participants,
+.baccarat-recent {
+  display: grid;
+  gap: 5px;
+}
+
+.baccarat-participant {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 2px 6px;
+  align-items: center;
+  min-height: 43px;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.baccarat-participant.self { border-left: 2px solid #d5b15b; background: rgba(213, 177, 91, 0.08); }
+.baccarat-participant > span { grid-row: 1 / span 2; color: rgba(247, 244, 233, 0.42); font-size: 10px; }
+.baccarat-participant > strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.baccarat-participant > b { color: #ead9aa; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.baccarat-participant > small { grid-column: 2 / -1; color: rgba(247, 244, 233, 0.48); font-size: 9px; font-weight: 800; }
+
+.baccarat-players-panel .recent-title { margin-top: 4px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+
+.baccarat-recent > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 7px;
+  padding: 5px 1px;
+}
+
+.baccarat-recent strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.baccarat-recent span { color: rgba(247, 244, 233, 0.5); font-size: 8px; font-weight: 850; }
+.baccarat-recent b { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: #e8c978; font-size: 10px; white-space: nowrap; }
+
+.baccarat-controls {
+  grid-template-columns: minmax(100px, 0.5fr) minmax(330px, 1.5fr) minmax(360px, 1fr);
+  gap: 14px;
+  padding: 8px 12px;
+}
+
+.baccarat-chip-rail,
+.baccarat-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.baccarat-chip-rail { justify-content: center; }
+
+.baccarat-chip-rail button {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  display: grid;
+  place-items: center;
+  border: 5px dashed rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  background: #2b7db4;
+  color: #fff;
+  box-shadow: inset 0 0 0 3px rgba(4, 21, 30, 0.38), 0 5px 12px rgba(0, 0, 0, 0.24);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.baccarat-chip-rail button:nth-child(2) { background: #348a5e; }
+.baccarat-chip-rail button:nth-child(3) { background: #a53f3a; }
+.baccarat-chip-rail button:nth-child(4) { background: #8d5f9f; }
+.baccarat-chip-rail button:nth-child(5) { background: #25272b; }
+.baccarat-chip-rail button.active { outline: 3px solid #f0ce73; outline-offset: 2px; transform: translateY(-3px); }
+
+.baccarat-actions { justify-content: flex-end; }
+
+.baccarat-actions button {
+  min-width: 66px;
+  min-height: 46px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f7f4e9;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.baccarat-actions #baccaratConfirm {
+  min-width: 126px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-color: rgba(231, 198, 112, 0.48);
+  background: #d3af59;
+  color: #17231e;
+}
+
+.baccarat-actions #baccaratConfirm.locked { background: #3d8d62; color: #fff; }
+.baccarat-actions button:disabled { opacity: 0.42; cursor: default; }
+
+@media (max-width: 1080px) {
+  .baccarat-header {
+    grid-template-columns: minmax(112px, 1fr) auto auto auto 1fr auto minmax(112px, auto) auto auto;
+    gap: 7px;
+  }
+
+  .baccarat-layout { grid-template-columns: minmax(150px, 185px) minmax(450px, 1fr) minmax(168px, 205px); }
+  .baccarat-road { grid-template-columns: repeat(4, 26px); grid-auto-rows: 26px; }
+  .baccarat-controls { grid-template-columns: 90px minmax(300px, 1fr) minmax(330px, 1fr); gap: 8px; }
+}
+
+@media (pointer: coarse), (max-width: 860px) {
+  .baccarat-shell {
+    grid-template-rows: 50px minmax(0, 1fr) 72px;
+    padding: max(4px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
+    gap: 4px;
+  }
+
+  .baccarat-header {
+    grid-template-columns: minmax(74px, 1fr) auto auto auto auto minmax(92px, auto) auto;
+    gap: 5px;
+    padding: 4px 6px;
+  }
+
+  .baccarat-brand span,
+  .baccarat-table-id,
+  .baccarat-round,
+  .baccarat-connection,
+  .baccarat-crowd,
+  #copyBaccaratInvite {
+    display: none;
+  }
+
+  .baccarat-brand strong { font-size: 15px; }
+  .baccarat-mobile-drawer { display: inline-flex; align-items: center; justify-content: center; }
+  .baccarat-header > button { min-height: 34px; padding: 0 9px; font-size: 10px; }
+  .baccarat-wallet strong { font-size: 13px; }
+
+  .baccarat-layout { display: block; min-height: 0; }
+
+  .baccarat-road-panel,
+  .baccarat-players-panel {
+    position: fixed;
+    top: calc(max(4px, env(safe-area-inset-top)) + 54px);
+    bottom: calc(max(4px, env(safe-area-inset-bottom)) + 76px);
+    z-index: 90;
+    width: min(310px, 82vw);
+    border-color: rgba(222, 193, 124, 0.4);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.48);
+    transition: transform 0.18s ease;
+  }
+
+  .baccarat-road-panel { left: max(5px, env(safe-area-inset-left)); transform: translateX(calc(-100% - 14px)); }
+  .baccarat-players-panel { right: max(5px, env(safe-area-inset-right)); transform: translateX(calc(100% + 14px)); }
+  body.baccarat-history-open .baccarat-road-panel { transform: translateX(0); }
+  body.baccarat-players-open .baccarat-players-panel { transform: translateX(0); }
+  .baccarat-road-panel header button,
+  .baccarat-players-panel header button { display: inline-flex; align-items: center; }
+
+  .baccarat-table,
+  .baccarat-felt { width: 100%; height: 100%; }
+
+  .baccarat-felt {
+    padding: 56px 7px 7px;
+    border-radius: 24px;
+  }
+
+  .baccarat-felt::before { font-size: 24px; }
+  .baccarat-phase { top: 4px; width: 62px; height: 50px; }
+  .baccarat-phase span { max-width: 54px; font-size: 7px; }
+  .baccarat-phase strong { font-size: 22px; }
+
+  .baccarat-result-ribbon {
+    top: 4px;
+    min-width: min(330px, 70%);
+    min-height: 50px;
+    padding: 5px 10px;
+  }
+
+  .baccarat-result-ribbon strong { font-size: 15px; }
+  .baccarat-result-ribbon b { font-size: 11px; }
+  .baccarat-result-ribbon span { font-size: 7px; }
+
+  .baccarat-hands { gap: 8px; }
+  .baccarat-hand { gap: 3px; }
+  .baccarat-hand header { gap: 6px; }
+  .baccarat-hand header span { font-size: 11px; }
+  .baccarat-hand header strong { width: 25px; min-width: 25px; height: 25px; font-size: 13px; }
+  .baccarat-cards { min-height: 70px; gap: 4px; }
+  .playing-card.baccarat-card { width: clamp(42px, 7vw, 58px); border-radius: 5px; }
+  .playing-card.baccarat-card .card-corner.top { top: 3px; left: 3px; }
+  .playing-card.baccarat-card .card-corner.bottom { right: 3px; bottom: 3px; }
+  .playing-card.baccarat-card .card-corner strong { font-size: 13px; }
+  .playing-card.baccarat-card .card-corner span { font-size: 11px; }
+  .playing-card.baccarat-card .card-pip { font-size: 24px; }
+
+  .baccarat-bet-grid { gap: 3px; }
+  .baccarat-bet-grid button { min-height: 62px; gap: 1px 3px; padding: 4px 5px; border-radius: 5px; }
+  .baccarat-bet-grid button > span { font-size: 8px; }
+  .baccarat-bet-grid button > strong { font-size: 7px; }
+  .baccarat-bet-grid button > b { font-size: 9px; }
+  .baccarat-bet-grid button > small { font-size: 7px; }
+
+  .baccarat-controls {
+    grid-template-columns: minmax(260px, 1fr) minmax(270px, auto);
+    gap: 6px;
+    padding: 4px 6px;
+    overflow: hidden;
+  }
+
+  .baccarat-selection { display: none; }
+  .baccarat-chip-rail { gap: 5px; }
+  .baccarat-chip-rail button { width: 43px; height: 43px; flex-basis: 43px; border-width: 4px; font-size: 9px; }
+  .baccarat-actions { gap: 4px; }
+  .baccarat-actions button { min-width: 48px; min-height: 42px; padding: 0 6px; font-size: 9px; }
+  .baccarat-actions #baccaratConfirm { min-width: 98px; }
+  .baccarat-actions svg { width: 15px; height: 15px; }
+}
+
+@media (pointer: coarse) and (orientation: portrait), (max-width: 620px) and (orientation: portrait) {
+  .baccarat-panel { overflow: auto; overscroll-behavior: contain; }
+  .baccarat-shell { min-height: 720px; height: auto; grid-template-rows: 50px 590px 72px; }
+  .baccarat-header { grid-template-columns: auto auto minmax(96px, 1fr) auto; }
+  .baccarat-brand { display: none; }
+  .baccarat-felt { padding-top: 66px; }
+  .baccarat-hands { grid-template-columns: 1fr; gap: 4px; }
+  .baccarat-hand { grid-template-columns: 72px 1fr; align-items: center; justify-items: start; }
+  .baccarat-cards { justify-content: start; }
+  .baccarat-bet-grid { grid-template-columns: repeat(2, 1fr); }
+  .baccarat-bet-grid button.tie { grid-column: 1 / -1; }
+  .baccarat-controls { position: sticky; bottom: 0; grid-template-columns: 1fr; min-height: 118px; }
+  .baccarat-actions { justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .baccarat-road-panel,
+  .baccarat-players-panel,
+  .baccarat-chip-rail button,
+  .baccarat-bet-grid button { transition: none; }
 }
 
 @media (min-width: 861px) and (pointer: fine) {

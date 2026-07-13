@@ -142,3 +142,33 @@ No actionable P0, P1, or P2 findings remain for this pass.
 - `tsc --noEmit`: stopped after it made no progress for 30 seconds; this repository's narrower build/runtime checks completed normally.
 
 final result: passed
+
+## BACCARAT 1.0 pass
+
+### Scope
+
+- Replaced the user-facing Texas Poker flow with one server-authoritative global Baccarat table, `DONBAC`.
+- Added an eight-deck cryptographically shuffled shoe, standard third-card rules, timed deal/reveal/result phases, Player/Banker/Tie/Pair bets, pushes, and exact payout settlement.
+- Added one shared Don wallet per account or guest token. New wallets start at `2,000 Don`; there is no purchase, cash-out, or real-money value.
+- Added capped FPS match rewards from completion, kills, verified damage, item pickups, and victory. The server awards and persists the result once per match.
+
+### Visual direction
+
+- Desktop concept: `/Users/hideo2112/.codex/generated_images/019f0963-5b5c-7b30-bdfd-a0cf426115b2/exec-868ab559-f6ca-45ca-8149-6b939243da21.png`.
+- Mobile concept: `/Users/hideo2112/.codex/generated_images/019f0963-5b5c-7b30-bdfd-a0cf426115b2/exec-53d2116c-04a1-413b-899f-1f6df3778819.png`.
+- Final browser captures: `/tmp/donpachi-baccarat-final-desktop.png`, `/tmp/donpachi-baccarat-final-mobile.png`, and `/tmp/donpachi-baccarat-final-portrait.png`.
+- The final implementation keeps the concept's deep green felt, charcoal lacquer, restrained brass edge, ivory cards, and distinct Player/Banker/Tie colors. Decorative avatars and a rendered shoe were intentionally omitted to protect the browser performance budget; live cards, totals, bets, history, participants, and settlement remain authoritative and functional.
+
+### Verification
+
+- Desktop `1280 x 720`: panel and document both measured exactly `1280 x 720`; no horizontal or vertical overflow. Pair labels wrap without clipping.
+- Mobile landscape `844 x 390`: panel and document both measured exactly `844 x 390`; cards, five bet targets, chips, and actions remain visible without overlap.
+- Mobile portrait `390 x 844`: panel and document both measured exactly `390 x 844`; the compact four-column header measured `380 x 50`, and the overlap probe found zero conflicting leaf elements.
+- Touch-sized betting flow: selected `50 Don`, placed it on Banker, observed the server-owned wallet change from `2,000` to `1,950`, then undid it and observed both the wager and wallet return to zero and `2,000`.
+- `test:baccarat`: passed eight-deck construction, standard draw rules, payouts, locked authoritative bets, reveal timing, and settlement.
+- `test:baccarat-live`: passed two-client shared-table synchronization, one shared result, and server balance settlement.
+- `test:economy`: passed completion, kill, damage, pickup, victory, sanitization, and `350 Don` match cap cases.
+- `test:match-live`: passed warmup, ready flow, active combat, respawn, and CPU-free match requirements after the economy integration.
+- Production build: CSS `97.85 kB` (`20.01 kB` gzip), app JS `176.92 kB` (`62.84 kB` gzip), shared Three.js chunk `505.62 kB` (`127.25 kB` gzip).
+
+final result: passed

@@ -82,6 +82,7 @@ type PlayerState = {
   healsUsed?: number;
   specialsUsed?: number;
   barrierPickups?: number;
+  itemPickups?: number;
   lives?: number;
   eliminated?: boolean;
   creative?: boolean;
@@ -237,42 +238,55 @@ type CastleCoreSnapshot = {
   maxHealth: number;
 };
 
-type PokerPlayer = {
-  id: string;
-  name: string;
-  chips: number;
-  bet: number;
-  folded: boolean;
-  allIn: boolean;
-  acted: boolean;
-  isBot: boolean;
-  seat: number;
-  lastAction?: string;
-  mood?: string;
-  streak?: number;
-  cards: string[];
-  cardCount: number;
-};
+const baccaratTargets = ["player", "playerPair", "tie", "bankerPair", "banker"] as const;
+type BaccaratTarget = typeof baccaratTargets[number];
+type BaccaratBets = Record<BaccaratTarget, number>;
+type BaccaratPhase = "waiting" | "betting" | "dealing" | "result";
 
-type PokerSnapshot = {
-  room: string;
+type BaccaratSnapshot = {
+  version: string;
+  table: string;
   selfId: string;
-  players: PokerPlayer[];
-  community: string[];
-  pot: number;
-  stage: string;
-  dealerSeat: number;
-  turnId: string;
-  turnEndsAt: number;
-  now: number;
-  toCall: number;
-  currentBet: number;
-  minRaise: number;
-  lastEvent: string;
-  showdown?: {
-    winners: { id: string; name: string; label: string; amount: number }[];
-    revealed: { id: string; hand: string[] }[];
-  };
+  phase: BaccaratPhase;
+  phaseEndsAt: number;
+  serverNow: number;
+  round: number;
+  participantCount: number;
+  players: { id: string; name: string; chips: number; bet: number; locked: boolean }[];
+  viewer: {
+    chips: number;
+    bets: BaccaratBets;
+    lastBets: BaccaratBets;
+    locked: boolean;
+    lastPayout: number;
+    lastNet: number;
+  } | null;
+  betTotals: BaccaratBets;
+  playerCards: string[];
+  bankerCards: string[];
+  playerCardCount: number;
+  bankerCardCount: number;
+  revealCount: number;
+  playerTotal: number | null;
+  bankerTotal: number | null;
+  outcome: {
+    winner: "player" | "banker" | "tie";
+    playerPair: boolean;
+    bankerPair: boolean;
+    natural: boolean;
+  } | null;
+  cardsRemaining: number;
+  shoeSize: number;
+  history: {
+    round: number;
+    winner: "player" | "banker" | "tie";
+    playerTotal: number;
+    bankerTotal: number;
+    playerPair: boolean;
+    bankerPair: boolean;
+    at: number;
+  }[];
+  recentBets: { id: string; playerId: string; name: string; target: BaccaratTarget | "repeat"; amount: number; at: number }[];
 };
 
 type ProgressState = {
@@ -282,13 +296,13 @@ type ProgressState = {
   lastPlayDate: string;
   bestScore: number;
   bestKills: number;
-  pokerWins: number;
+  baccaratWins: number;
   lastReward: string;
 };
 
 type ProfileInventory = {
   healPacks: number;
-  pokerDon: number;
+  don: number;
   barrierCharges: number;
   boostTickets: number;
 };
@@ -396,28 +410,38 @@ const settingsRelationSelect = $("#settingsRelationSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
 const roomInput = $("#roomInput") as HTMLInputElement;
 const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
-const joinPokerRoomButton = $("#joinPokerRoom") as HTMLButtonElement;
-const createPokerRoomButton = $("#createPokerRoom") as HTMLButtonElement;
-const pokerCpuSelect = $("#pokerCpuSelect");
-const pokerPanel = $("#pokerPanel");
-const pokerRoomCodeEl = $("#pokerRoomCode");
-const pokerPotEl = $("#pokerPot");
-const pokerStageEl = $("#pokerStage");
-const pokerEventEl = $("#pokerEvent");
-const pokerTimerEl = $("#pokerTimer");
-const pokerHeaderTimerEl = $("#pokerHeaderTimer");
-const pokerCommunityEl = $("#pokerCommunity");
-const pokerSeatsEl = $("#pokerSeats");
-const pokerMyCardsEl = $("#pokerMyCards");
-const pokerStackLineEl = $("#pokerStackLine");
-const pokerFoldButton = $("#pokerFold") as HTMLButtonElement;
-const pokerCallButton = $("#pokerCall") as HTMLButtonElement;
-const pokerRaiseButton = $("#pokerRaise") as HTMLButtonElement;
-const pokerRaiseAmountInput = $("#pokerRaiseAmount") as HTMLInputElement;
-const pokerRaisePresets = $("#pokerRaisePresets") as HTMLElement;
-const pokerJankenPanel = $("#pokerJankenPanel") as HTMLElement;
-const copyPokerInviteButton = $("#copyPokerInvite") as HTMLButtonElement;
-const leavePokerButton = $("#leavePoker") as HTMLButtonElement;
+const joinBaccaratRoomButton = $("#joinBaccaratRoom") as HTMLButtonElement;
+const baccaratPanel = $("#baccaratPanel");
+const baccaratTableCodeEl = $("#baccaratTableCode");
+const baccaratRoundEl = $("#baccaratRound");
+const baccaratConnectionEl = $("#baccaratConnection");
+const baccaratHistoryToggle = $("#baccaratHistoryToggle") as HTMLButtonElement;
+const baccaratPlayersToggle = $("#baccaratPlayersToggle") as HTMLButtonElement;
+const closeBaccaratHistory = $("#closeBaccaratHistory") as HTMLButtonElement;
+const closeBaccaratPlayers = $("#closeBaccaratPlayers") as HTMLButtonElement;
+const baccaratParticipantCountEl = $("#baccaratParticipantCount");
+const baccaratWalletEl = $("#baccaratWallet");
+const baccaratRoadEl = $("#baccaratRoad");
+const baccaratShoeEl = $("#baccaratShoe");
+const baccaratShoeMeterEl = $("#baccaratShoeMeter") as HTMLElement;
+const baccaratPhaseEl = $("#baccaratPhase");
+const baccaratTimerEl = $("#baccaratTimer");
+const baccaratResultEl = $("#baccaratResult");
+const baccaratPlayerTotalEl = $("#baccaratPlayerTotal");
+const baccaratBankerTotalEl = $("#baccaratBankerTotal");
+const baccaratPlayerCardsEl = $("#baccaratPlayerCards");
+const baccaratBankerCardsEl = $("#baccaratBankerCards");
+const baccaratBettingGrid = $("#baccaratBettingGrid");
+const baccaratParticipantsEl = $("#baccaratParticipants");
+const baccaratRecentBetsEl = $("#baccaratRecentBets");
+const baccaratSelectedChipEl = $("#baccaratSelectedChip");
+const baccaratChipRail = $("#baccaratChipRail");
+const baccaratUndoButton = $("#baccaratUndo") as HTMLButtonElement;
+const baccaratClearButton = $("#baccaratClear") as HTMLButtonElement;
+const baccaratRepeatButton = $("#baccaratRepeat") as HTMLButtonElement;
+const baccaratConfirmButton = $("#baccaratConfirm") as HTMLButtonElement;
+const copyBaccaratInviteButton = $("#copyBaccaratInvite") as HTMLButtonElement;
+const leaveBaccaratButton = $("#leaveBaccarat") as HTMLButtonElement;
 const roomCodeEl = $("#roomCode");
 const copyInviteButton = $("#copyInvite") as HTMLButtonElement;
 const inviteButton = $("#inviteButton") as HTMLButtonElement;
@@ -531,16 +555,19 @@ const progressStorageKey = "donpachi-progress-v1";
 const inventoryStorageKey = "donpachi-inventory-v1";
 const loginStorageKey = "donpachi-login-id";
 const inviteRoomStorageKey = "donpachi-last-invite-room";
+const guestWalletStorageKey = "donpachi-guest-wallet-v1";
 const globalFpsRoomCode = "DONPCH";
+const globalBaccaratTableCode = "DONBAC";
 const installInviteRequested = launchParams.get("install") === "1";
-const invitePlayMode = launchParams.get("play") === "poker" ? "poker" : "fps";
+const invitePlayMode = launchParams.get("play") === "baccarat" ? "baccarat" : "fps";
 const autoJoinInviteRequested = launchParams.get("join") === "1" || (installInviteRequested && Boolean(launchParams.get("room")));
 let progressState = loadProgressState();
 let profileInventory = loadProfileInventory();
 let loggedInLoginId = sanitizeLoginId(localStorage.getItem(loginStorageKey) || "");
 let profileSyncTimer = 0;
 let applyingProfile = false;
-let lastPokerRewardKey = "";
+let lastBaccaratRewardKey = "";
+let guestWalletToken = getOrCreateGuestWalletToken();
 
 nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Player${Math.floor(Math.random() * 90 + 10)}`).replace(/[<>]/g, "");
 nameInput.addEventListener("input", () => {
@@ -555,7 +582,7 @@ loginIdInput.addEventListener("input", () => {
 });
 const urlRoomCode = sanitizeRoomCode(launchParams.get("room") || "");
 if (urlRoomCode) localStorage.setItem(inviteRoomStorageKey, urlRoomCode);
-const initialRoomCode = urlRoomCode || (invitePlayMode === "poker" ? sanitizeRoomCode(localStorage.getItem(inviteRoomStorageKey) || "") : globalFpsRoomCode);
+const initialRoomCode = invitePlayMode === "baccarat" ? globalBaccaratTableCode : (urlRoomCode || globalFpsRoomCode);
 roomInput.value = initialRoomCode || globalFpsRoomCode;
 roomInput.addEventListener("input", () => {
   const nextCode = sanitizeRoomCode(roomInput.value);
@@ -583,16 +610,16 @@ function appWebSocketUrl() {
   return base.toString();
 }
 
-function publicShareUrl(room: string, play: "fps" | "poker" = "fps") {
+function publicShareUrl(room: string, play: "fps" | "baccarat" = "fps") {
   const url = new URL("/", publicBaseUrl);
   url.searchParams.set("room", play === "fps" ? globalFpsRoomCode : room);
   url.searchParams.set("install", "1");
   url.searchParams.set("join", "1");
-  if (play === "poker") url.searchParams.set("play", "poker");
+  if (play === "baccarat") url.searchParams.set("play", "baccarat");
   return url.toString();
 }
 
-function inviteShareUrl(room: string, play: "fps" | "poker" = "fps") {
+function inviteShareUrl(room: string, play: "fps" | "baccarat" = "fps") {
   if (runningInNativeShell()) return publicShareUrl(room, play);
   const url = new URL(location.href);
   url.search = "";
@@ -600,7 +627,7 @@ function inviteShareUrl(room: string, play: "fps" | "poker" = "fps") {
   url.searchParams.set("room", play === "fps" ? globalFpsRoomCode : room);
   url.searchParams.set("install", "1");
   url.searchParams.set("join", "1");
-  if (play === "poker") url.searchParams.set("play", "poker");
+  if (play === "baccarat") url.searchParams.set("play", "baccarat");
   return url.toString();
 }
 
@@ -638,11 +665,12 @@ const bulletDecals: { mesh: THREE.Mesh; expiresAt: number }[] = [];
 const fireworks: { mesh: THREE.Points; velocities: THREE.Vector3[]; life: number }[] = [];
 const donPunches = new Map<string, { mesh: THREE.Group; expiresAt: number; targetId: string }>();
 const players = new Map<string, PlayerState>();
-let pokerJoined = false;
-let pokerSelfId = "";
-let pokerRoomCode = "";
-let pokerCpuCount = Number(localStorage.getItem("donpachi-poker-cpu") || "2") || 2;
-let latestPokerSnapshot: PokerSnapshot | null = null;
+let baccaratJoined = false;
+let baccaratSelfId = "";
+let latestBaccaratSnapshot: BaccaratSnapshot | null = null;
+let selectedBaccaratChip = 100;
+let baccaratReconnectWanted = false;
+let baccaratReconnectTimer = 0;
 const arenaObjects: THREE.Object3D[] = [];
 const minimapBoxes: { x: number; z: number; w: number; h: number }[] = [];
 const keys = new Set<string>();
@@ -1075,14 +1103,14 @@ function emptyProgressState(): ProgressState {
     lastPlayDate: "",
     bestScore: 0,
     bestKills: 0,
-    pokerWins: 0,
+    baccaratWins: 0,
     lastReward: ""
   };
 }
 
 function loadProgressState(): ProgressState {
   try {
-    const parsed = JSON.parse(localStorage.getItem(progressStorageKey) || "{}") as Partial<ProgressState>;
+    const parsed = JSON.parse(localStorage.getItem(progressStorageKey) || "{}") as Partial<ProgressState> & { pokerWins?: number };
     const base = emptyProgressState();
     return {
       xp: Math.max(0, Math.floor(Number(parsed.xp) || base.xp)),
@@ -1091,7 +1119,7 @@ function loadProgressState(): ProgressState {
       lastPlayDate: typeof parsed.lastPlayDate === "string" ? parsed.lastPlayDate : base.lastPlayDate,
       bestScore: Math.max(0, Math.floor(Number(parsed.bestScore) || base.bestScore)),
       bestKills: Math.max(0, Math.floor(Number(parsed.bestKills) || base.bestKills)),
-      pokerWins: Math.max(0, Math.floor(Number(parsed.pokerWins) || base.pokerWins)),
+      baccaratWins: Math.max(0, Math.floor(Number(parsed.baccaratWins ?? parsed.pokerWins) || base.baccaratWins)),
       lastReward: typeof parsed.lastReward === "string" ? parsed.lastReward.slice(0, 48) : base.lastReward
     };
   } catch {
@@ -1106,17 +1134,17 @@ function saveProgressState() {
 function emptyProfileInventory(): ProfileInventory {
   return {
     healPacks: 5,
-    pokerDon: 2000,
+    don: 2000,
     barrierCharges: 0,
     boostTickets: 0
   };
 }
 
-function normalizeInventory(inventory?: Partial<ProfileInventory>): ProfileInventory {
+function normalizeInventory(inventory?: Partial<ProfileInventory> & { pokerDon?: number }): ProfileInventory {
   const base = emptyProfileInventory();
   return {
     healPacks: THREE.MathUtils.clamp(Math.floor(Number(inventory?.healPacks ?? base.healPacks)), 0, 12),
-    pokerDon: THREE.MathUtils.clamp(Math.floor(Number(inventory?.pokerDon ?? base.pokerDon)), 0, 999999),
+    don: THREE.MathUtils.clamp(Math.floor(Number(inventory?.don ?? inventory?.pokerDon ?? base.don)), 0, 999999),
     barrierCharges: THREE.MathUtils.clamp(Math.floor(Number(inventory?.barrierCharges ?? base.barrierCharges)), 0, 9),
     boostTickets: THREE.MathUtils.clamp(Math.floor(Number(inventory?.boostTickets ?? base.boostTickets)), 0, 99)
   };
@@ -1150,7 +1178,18 @@ function generateLoginId() {
   return id;
 }
 
+function getOrCreateGuestWalletToken() {
+  const stored = String(localStorage.getItem(guestWalletStorageKey) || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
+  if (stored.length >= 12) return stored;
+  const created = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replace(/-/g, "")
+    : generateLoginId() + generateLoginId();
+  localStorage.setItem(guestWalletStorageKey, created);
+  return created;
+}
+
 function normalizeProgressState(progress?: Partial<ProgressState>): ProgressState {
+  const legacy = progress as Partial<ProgressState> & { pokerWins?: number } | undefined;
   const base = emptyProgressState();
   return {
     xp: Math.max(0, Math.floor(Number(progress?.xp) || base.xp)),
@@ -1159,7 +1198,7 @@ function normalizeProgressState(progress?: Partial<ProgressState>): ProgressStat
     lastPlayDate: typeof progress?.lastPlayDate === "string" ? progress.lastPlayDate : base.lastPlayDate,
     bestScore: Math.max(0, Math.floor(Number(progress?.bestScore) || base.bestScore)),
     bestKills: Math.max(0, Math.floor(Number(progress?.bestKills) || base.bestKills)),
-    pokerWins: Math.max(0, Math.floor(Number(progress?.pokerWins) || base.pokerWins)),
+    baccaratWins: Math.max(0, Math.floor(Number(progress?.baccaratWins ?? legacy?.pokerWins) || base.baccaratWins)),
     lastReward: typeof progress?.lastReward === "string" ? progress.lastReward.slice(0, 48) : base.lastReward
   };
 }
@@ -1254,12 +1293,12 @@ function renderProgressCard(note = "") {
   const remaining = Math.max(0, info.next - progressState.xp);
   progressRank.textContent = `${info.title} Lv.${info.level}`;
   progressMeter.style.width = `${Math.round(info.progress * 100)}%`;
-  progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / 回復${profileInventory.healPacks} / ${profileInventory.pokerDon}Don`;
+  progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / バカラ的中${progressState.baccaratWins} / ${profileInventory.don.toLocaleString()}Don`;
   progressHint.textContent = note || (progressState.lastReward ? `${progressState.lastReward} / 次まで ${remaining}XP` : `次のランクまで ${remaining}XP`);
   if (loggedInLoginId) loginStatus.textContent = `ログイン中 Lv.${info.level}`;
 }
 
-function touchProgressSession(kind: "fps" | "poker") {
+function touchProgressSession(kind: "fps" | "baccarat") {
   const today = todayInJapan();
   if (progressState.lastPlayDate !== today) {
     const diff = dayNumber(today) - dayNumber(progressState.lastPlayDate);
@@ -1267,7 +1306,7 @@ function touchProgressSession(kind: "fps" | "poker") {
     progressState.lastPlayDate = today;
   }
   progressState.sessions += 1;
-  progressState.lastReward = kind === "poker" ? "ポーカー卓に着席" : "アリーナ出撃";
+  progressState.lastReward = kind === "baccarat" ? "共通バカラ卓に着席" : "アリーナ出撃";
   saveProgressState();
   renderProgressCard();
   scheduleProfileSync();
@@ -1308,16 +1347,14 @@ function awardRoundProgress(winner: string, rows: PlayerState[]) {
   return { ...reward, reason: won ? "勝利ボーナス" : "バトル完走" };
 }
 
-function awardPokerProgress(snapshot: PokerSnapshot) {
-  if (snapshot.stage !== "showdown" || !snapshot.showdown) return;
-  const winner = snapshot.showdown.winners.find((item) => item.id === snapshot.selfId);
-  if (!winner) return;
-  const key = `${snapshot.room}:${snapshot.community.join("")}:${snapshot.pot}:${winner.id}:${winner.amount}`;
-  if (key === lastPokerRewardKey) return;
-  lastPokerRewardKey = key;
-  progressState.pokerWins += 1;
-  const reward = awardProgressXp(Math.min(180, 42 + Math.floor(winner.amount / 22)), "ポーカー勝利");
-  if (reward.gained) showToast(`+${reward.gained}XP ポーカー勝利`);
+function awardBaccaratProgress(snapshot: BaccaratSnapshot) {
+  if (snapshot.phase !== "result" || !snapshot.outcome || !snapshot.viewer || snapshot.viewer.lastNet <= 0) return;
+  const key = `${snapshot.table}:${snapshot.round}:${snapshot.selfId}:${snapshot.viewer.lastNet}`;
+  if (key === lastBaccaratRewardKey) return;
+  lastBaccaratRewardKey = key;
+  progressState.baccaratWins += 1;
+  const reward = awardProgressXp(Math.min(160, 25 + Math.floor(snapshot.viewer.lastNet / 25)), "バカラ的中");
+  if (reward.gained) showToast(`+${reward.gained}XP バカラ的中`);
 }
 
 function trackArenaObject<T extends THREE.Object3D>(object: T) {
@@ -3499,7 +3536,7 @@ document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
 createRoomButton.addEventListener("click", () => join(""));
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
-joinPokerRoomButton.addEventListener("click", () => joinTypedPokerRoom());
+joinBaccaratRoomButton.addEventListener("click", joinBaccarat);
 createLoginIdButton.addEventListener("click", () => {
   if (!sanitizeLoginId(loginIdInput.value)) loginIdInput.value = generateLoginId();
   void requestProfile("create")
@@ -3520,35 +3557,29 @@ roomInput.addEventListener("keydown", (event) => {
   event.preventDefault();
   joinTypedRoom();
 });
-for (const button of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button")) {
-  button.classList.toggle("active", Number(button.dataset.pokerCpu) === pokerCpuCount);
-  button.addEventListener("click", () => {
-    pokerCpuCount = Number(button.dataset.pokerCpu) || 0;
-    localStorage.setItem("donpachi-poker-cpu", String(pokerCpuCount));
-    for (const item of pokerCpuSelect.querySelectorAll<HTMLButtonElement>("button")) item.classList.toggle("active", item === button);
-  });
-}
-createPokerRoomButton.addEventListener("click", () => joinPoker(roomInput.value));
-pokerFoldButton.addEventListener("click", () => sendPokerAction("fold"));
-pokerCallButton.addEventListener("click", () => sendPokerAction("call"));
-pokerRaiseButton.addEventListener("click", () => sendPokerAction("raise", currentPokerRaiseAmount()));
-pokerRaiseAmountInput.addEventListener("change", () => {
-  pokerRaiseAmountInput.value = String(currentPokerRaiseAmount());
+baccaratBettingGrid.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-baccarat-target]");
+  const target = button?.dataset.baccaratTarget as BaccaratTarget | undefined;
+  if (!target || !baccaratTargets.includes(target)) return;
+  sendBaccaratAction("bet", { target, amount: selectedBaccaratChip });
 });
-for (const button of pokerRaisePresets.querySelectorAll<HTMLButtonElement>("[data-poker-raise-preset]")) {
+for (const button of baccaratChipRail.querySelectorAll<HTMLButtonElement>("[data-baccarat-chip]")) {
   button.addEventListener("click", () => {
-    const preset = button.dataset.pokerRaisePreset || "";
-    const minimum = Math.max(20, Number(pokerRaiseAmountInput.min) || 20);
-    const maximum = Math.max(minimum, Number(pokerRaiseAmountInput.max) || minimum);
-    const amount = preset === "max" ? maximum : Math.min(maximum, Math.max(minimum, Math.floor(Number(preset) || minimum)));
-    pokerRaiseAmountInput.value = String(amount);
+    selectedBaccaratChip = Math.max(10, Math.floor(Number(button.dataset.baccaratChip) || 100));
+    baccaratSelectedChipEl.textContent = `${selectedBaccaratChip.toLocaleString()} Don`;
+    for (const item of baccaratChipRail.querySelectorAll<HTMLButtonElement>("[data-baccarat-chip]")) item.classList.toggle("active", item === button);
   });
 }
-for (const button of pokerJankenPanel.querySelectorAll<HTMLButtonElement>("[data-poker-janken]")) {
-  button.addEventListener("click", () => sendPokerJanken(button.dataset.pokerJanken || ""));
-}
-copyPokerInviteButton.addEventListener("click", copyInvite);
-leavePokerButton.addEventListener("click", leavePokerRoom);
+baccaratUndoButton.addEventListener("click", () => sendBaccaratAction("undo"));
+baccaratClearButton.addEventListener("click", () => sendBaccaratAction("clear"));
+baccaratRepeatButton.addEventListener("click", () => sendBaccaratAction("repeat"));
+baccaratConfirmButton.addEventListener("click", () => sendBaccaratAction("confirm"));
+copyBaccaratInviteButton.addEventListener("click", copyInvite);
+leaveBaccaratButton.addEventListener("click", leaveBaccaratRoom);
+baccaratHistoryToggle.addEventListener("click", () => document.body.classList.toggle("baccarat-history-open"));
+baccaratPlayersToggle.addEventListener("click", () => document.body.classList.toggle("baccarat-players-open"));
+closeBaccaratHistory.addEventListener("click", () => document.body.classList.remove("baccarat-history-open"));
+closeBaccaratPlayers.addEventListener("click", () => document.body.classList.remove("baccarat-players-open"));
 memberToggle.addEventListener("click", () => {
   const open = !document.body.classList.contains("members-open");
   document.body.classList.toggle("members-open", open);
@@ -3966,7 +3997,7 @@ function applyMobileAimDelta(dx: number, dy: number, scale = 1) {
 
 function isGameplayTouchTarget(target: EventTarget | null) {
   return target instanceof HTMLElement && Boolean(target.closest(
-    "button, input, textarea, select, [contenteditable='true'], .join-panel, .settings-panel, .scoreboard, .chat-panel, .poker-panel, .lobby-strip"
+    "button, input, textarea, select, [contenteditable='true'], .join-panel, .settings-panel, .scoreboard, .chat-panel, .baccarat-panel, .lobby-strip"
   ));
 }
 
@@ -4268,17 +4299,6 @@ function joinTypedRoom() {
   join(globalFpsRoomCode);
 }
 
-function joinTypedPokerRoom() {
-  const code = sanitizeRoomCode(roomInput.value);
-  roomInput.value = code;
-  if (code.length !== 6) {
-    showToast("6文字のポーカールームコードを入力してください");
-    roomInput.focus();
-    return;
-  }
-  joinPoker(code);
-}
-
 function setConnectionRecovery(active: boolean, detail = "試合状態を保持しています") {
   fpsConnectionRecovering = active;
   connectionRecovery.classList.toggle("show", active);
@@ -4337,12 +4357,13 @@ function fpsJoinPayload() {
     loginId: loggedInLoginId,
     progress: progressState,
     inventory: profileInventory,
+    guestToken: guestWalletToken,
     resumeToken: fpsResumeToken
   };
 }
 
 function scheduleFpsReconnect() {
-  if (!fpsReconnectWanted || pokerJoined || fpsReconnectTimer) return;
+  if (!fpsReconnectWanted || baccaratJoined || fpsReconnectTimer) return;
   fpsReconnectAttempt += 1;
   const baseDelay = Math.min(5000, 350 * 2 ** Math.min(4, fpsReconnectAttempt - 1));
   const delay = Math.round(baseDelay + Math.random() * 180);
@@ -4415,60 +4436,78 @@ window.addEventListener("online", () => {
   openFpsSocket(true);
 });
 
-function joinPoker(room: string) {
+function joinBaccarat() {
   const name = sanitizePlayerNameInput();
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
   stopFpsReconnect(true);
   closeCurrentSocket("leave");
   self.joined = false;
-  pokerJoined = false;
-  pokerSelfId = "";
-  latestPokerSnapshot = null;
-  const code = sanitizeRoomCode(room);
-  if (code) roomInput.value = code;
-  socket = new WebSocket(appWebSocketUrl());
-  socket.addEventListener("open", () => {
-    send({ type: "poker_join", name, room: code, cpuCount: pokerCpuCount, loginId: loggedInLoginId, cosmeticColor: customColor, skin: currentSkin, progress: progressState, inventory: profileInventory });
+  baccaratJoined = false;
+  baccaratSelfId = "";
+  latestBaccaratSnapshot = null;
+  baccaratReconnectWanted = true;
+  if (baccaratReconnectTimer) window.clearTimeout(baccaratReconnectTimer);
+  baccaratReconnectTimer = 0;
+  openBaccaratSocket();
+}
+
+function openBaccaratSocket() {
+  if (!baccaratReconnectWanted) return;
+  baccaratConnectionEl.textContent = baccaratJoined ? "再接続中" : "接続中";
+  baccaratConnectionEl.classList.add("reconnecting");
+  const tableSocket = new WebSocket(appWebSocketUrl());
+  socket = tableSocket;
+  tableSocket.addEventListener("open", () => {
+    if (socket !== tableSocket) return;
+    tableSocket.send(JSON.stringify({
+      type: "baccarat_join",
+      name: sanitizePlayerNameInput(),
+      loginId: loggedInLoginId,
+      guestToken: guestWalletToken,
+      cosmeticColor: customColor,
+      skin: currentSkin,
+      progress: progressState
+    }));
   });
-  socket.addEventListener("message", handleMessage);
-  socket.addEventListener("error", () => {
-    if (!pokerJoined) showToast("オンライン接続に失敗しました。通信を確認してください。");
+  tableSocket.addEventListener("message", handleMessage);
+  tableSocket.addEventListener("error", () => {
+    if (!baccaratJoined) showToast("バカラ卓に接続できません。再試行します。");
   });
-  socket.addEventListener("close", () => {
-    if (pokerJoined) showToast("ポーカールームから切断されました。");
+  tableSocket.addEventListener("close", () => {
+    if (socket === tableSocket) socket = null;
+    if (!baccaratReconnectWanted) return;
+    baccaratConnectionEl.textContent = "再接続中";
+    baccaratConnectionEl.classList.add("reconnecting");
+    if (!baccaratJoined) joinPanel.classList.remove("hidden");
+    if (baccaratReconnectTimer) return;
+    baccaratReconnectTimer = window.setTimeout(() => {
+      baccaratReconnectTimer = 0;
+      openBaccaratSocket();
+    }, 1200);
   });
 }
 
-function leavePokerRoom() {
-  pokerJoined = false;
-  pokerSelfId = "";
-  pokerRoomCode = "";
-  latestPokerSnapshot = null;
+function leaveBaccaratRoom() {
+  baccaratReconnectWanted = false;
+  if (baccaratReconnectTimer) window.clearTimeout(baccaratReconnectTimer);
+  baccaratReconnectTimer = 0;
+  send({ type: "baccarat_leave" });
+  baccaratJoined = false;
+  baccaratSelfId = "";
+  latestBaccaratSnapshot = null;
   setFpsActive(false);
-  pokerPanel.classList.remove("open");
-  document.body.classList.remove("poker-open");
+  baccaratPanel.classList.remove("open");
+  document.body.classList.remove("baccarat-open", "baccarat-history-open", "baccarat-players-open");
   joinPanel.classList.remove("hidden");
   history.replaceState(null, "", location.pathname);
   closeCurrentSocket("leave");
   updateLobbyBgm();
 }
 
-function currentPokerRaiseAmount() {
-  const parsed = Math.floor(Number(pokerRaiseAmountInput.value) || 0);
-  const minimum = Math.max(20, Number(pokerRaiseAmountInput.min) || 20);
-  const maximum = Math.max(minimum, Number(pokerRaiseAmountInput.max) || minimum);
-  return Math.min(Math.max(parsed, minimum), maximum);
-}
-
-function sendPokerAction(action: "fold" | "call" | "raise", raiseBy = 0) {
-  if (!pokerJoined) return;
-  send({ type: "poker_action", action, raiseBy });
-}
-
-function sendPokerJanken(choice: string) {
-  if (!pokerJoined) return;
-  send({ type: "poker_janken", choice });
+function sendBaccaratAction(action: "bet" | "undo" | "clear" | "repeat" | "confirm", detail: Record<string, unknown> = {}) {
+  if (!baccaratJoined) return;
+  send({ type: "baccarat_action", action, ...detail });
 }
 
 function join(room: string) {
@@ -4487,15 +4526,11 @@ function join(room: string) {
 }
 
 function maybeStartInviteAutoJoin() {
-  if (!autoJoinInviteRequested || inviteAutoJoinStarted || self.joined || pokerJoined) return;
+  if (!autoJoinInviteRequested || inviteAutoJoinStarted || self.joined || baccaratJoined) return;
   inviteAutoJoinStarted = true;
-  if (invitePlayMode === "poker") {
-    const code = sanitizeRoomCode(roomInput.value || initialRoomCode);
-    if (code.length === 6) {
-      roomInput.value = code;
-      joinPoker(code);
-      return;
-    }
+  if (invitePlayMode === "baccarat") {
+    joinBaccarat();
+    return;
   }
   roomInput.value = globalFpsRoomCode;
   join(globalFpsRoomCode);
@@ -4510,42 +4545,46 @@ function handleMessage(event: MessageEvent<string>) {
     return;
   }
   if (!message || typeof message !== "object") return;
-  if (message.type === "poker_welcome") {
+  if (message.type === "baccarat_welcome") {
+    const firstEntry = !baccaratJoined;
     setFpsActive(false);
-    pokerJoined = true;
-    pokerSelfId = String(message.id || "");
-    pokerRoomCode = String(message.room || "");
-    roomInput.value = pokerRoomCode;
-    pokerRoomCodeEl.textContent = pokerRoomCode;
-    roomCodeEl.textContent = pokerRoomCode;
+    baccaratJoined = true;
+    baccaratSelfId = String(message.id || "");
+    const tableCode = String(message.table || globalBaccaratTableCode);
+    if (typeof message.guestToken === "string" && message.guestToken) {
+      guestWalletToken = message.guestToken;
+      localStorage.setItem(guestWalletStorageKey, guestWalletToken);
+    }
+    roomInput.value = globalFpsRoomCode;
+    baccaratTableCodeEl.textContent = tableCode;
+    roomCodeEl.textContent = tableCode;
     joinPanel.classList.add("hidden");
-    pokerPanel.classList.add("open");
-    document.body.classList.add("poker-open");
+    baccaratPanel.classList.add("open");
+    document.body.classList.add("baccarat-open");
+    baccaratConnectionEl.textContent = "オンライン";
+    baccaratConnectionEl.classList.remove("reconnecting");
     updateLobbyBgm();
-    history.replaceState(null, "", `?room=${pokerRoomCode}`);
+    history.replaceState(null, "", `?play=baccarat&room=${globalBaccaratTableCode}&join=1`);
     if (message.profile) applyLoginProfile(message.profile as LoginProfile);
-    touchProgressSession("poker");
-    showToast("テキサスポーカーに参加しました。");
+    if (firstEntry) touchProgressSession("baccarat");
+    showToast(firstEntry ? "共通チップバカラに参加しました。" : "バカラ卓へ再接続しました。");
     return;
   }
-  if (message.type === "poker_snapshot") {
-    latestPokerSnapshot = message as PokerSnapshot;
-    const pokerMe = latestPokerSnapshot.players.find((player) => player.id === latestPokerSnapshot?.selfId);
-    if (loggedInLoginId && pokerMe && pokerMe.chips !== profileInventory.pokerDon) {
-      profileInventory.pokerDon = THREE.MathUtils.clamp(Math.floor(pokerMe.chips), 0, 999999);
+  if (message.type === "baccarat_snapshot") {
+    latestBaccaratSnapshot = message as BaccaratSnapshot;
+    if (latestBaccaratSnapshot.viewer && latestBaccaratSnapshot.viewer.chips !== profileInventory.don) {
+      profileInventory.don = THREE.MathUtils.clamp(Math.floor(latestBaccaratSnapshot.viewer.chips), 0, 999999);
       saveProfileInventory();
       renderProgressCard();
     }
-    renderPoker(latestPokerSnapshot);
-    awardPokerProgress(latestPokerSnapshot);
+    renderBaccarat(latestBaccaratSnapshot);
+    awardBaccaratProgress(latestBaccaratSnapshot);
     return;
   }
-  if (message.type === "poker_error") {
-    showToast(String(message.message || "ポーカーエラー"));
-    return;
-  }
-  if (message.type === "poker_janken_result") {
-    showToast(`CPじゃんけん ${message.result} / +${message.amount}Don`);
+  if (message.type === "baccarat_error") {
+    const detail = String(message.message || "バカラ卓でエラーが発生しました");
+    if (!baccaratJoined && detail.includes("別の画面")) baccaratReconnectWanted = false;
+    showToast(detail);
     return;
   }
   if (message.type === "welcome") {
@@ -4553,6 +4592,15 @@ function handleMessage(event: MessageEvent<string>) {
     if (typeof message.resumeToken === "string" && message.resumeToken) {
       fpsResumeToken = message.resumeToken;
       sessionStorage.setItem(fpsResumeStorageKey, fpsResumeToken);
+    }
+    if (typeof message.guestToken === "string" && message.guestToken) {
+      guestWalletToken = message.guestToken;
+      localStorage.setItem(guestWalletStorageKey, guestWalletToken);
+    }
+    if (typeof message.walletDon === "number") {
+      profileInventory.don = THREE.MathUtils.clamp(Math.floor(message.walletDon), 0, 999999);
+      saveProfileInventory();
+      renderProgressCard();
     }
     fpsReconnectAttempt = 0;
     setConnectionRecovery(false);
@@ -4617,6 +4665,16 @@ function handleMessage(event: MessageEvent<string>) {
     if (!resumed) touchProgressSession("fps");
     showToast(resumed ? "接続を復旧しました" : "ルームに参加しました。画面をクリックして開始。");
     ping();
+    return;
+  }
+  if (message.type === "fps_don_reward") {
+    const amount = Math.max(0, Math.floor(Number(message.amount) || 0));
+    const balance = THREE.MathUtils.clamp(Math.floor(Number(message.balance) || profileInventory.don), 0, 999999);
+    profileInventory.don = balance;
+    saveProfileInventory();
+    renderProgressCard(`+${amount}Don FPS報酬 / 残高 ${balance.toLocaleString()}Don`);
+    const breakdown = message.breakdown as { kills?: number; damage?: number; items?: number; won?: boolean } | undefined;
+    showToast(`+${amount}Don / ${breakdown?.kills || 0}K 与${breakdown?.damage || 0} 拾${breakdown?.items || 0}${breakdown?.won ? " 勝利" : ""}`);
     return;
   }
   if (message.type === "snapshot") {
@@ -7327,21 +7385,10 @@ function updateChat(chat: ChatItem[]) {
   `).join("");
 }
 
-function pokerStageLabel(stage: string) {
-  return {
-    waiting: "待機中",
-    preflop: "プリフロップ",
-    flop: "フロップ",
-    turn: "ターン",
-    river: "リバー",
-    showdown: "ショーダウン"
-  }[stage] || stage;
-}
-
 function parseCard(card: string) {
   const suit = card.slice(-1);
   const rankValue = Number(card.slice(0, -1));
-  const rank = { 14: "A", 13: "K", 12: "Q", 11: "J" }[rankValue as 11 | 12 | 13 | 14] || String(rankValue);
+  const rank = { 1: "A", 11: "J", 12: "Q", 13: "K", 14: "A" }[rankValue as 1 | 11 | 12 | 13 | 14] || String(rankValue);
   const symbol = { S: "♠", H: "♥", D: "♦", C: "♣" }[suit as "S" | "H" | "D" | "C"] || "?";
   const red = suit === "H" || suit === "D";
   return { rank, symbol, red };
@@ -7363,62 +7410,109 @@ function renderCard(card?: string, hidden = false, variant = "") {
   `;
 }
 
-function renderPoker(snapshot: PokerSnapshot) {
-  pokerRoomCodeEl.textContent = snapshot.room;
-  pokerPotEl.textContent = `${snapshot.pot}Don`;
-  pokerStageEl.textContent = pokerStageLabel(snapshot.stage);
-  pokerEventEl.textContent = snapshot.lastEvent || "進行中";
-  const remaining = snapshot.turnEndsAt ? Math.max(0, Math.ceil((snapshot.turnEndsAt - snapshot.now) / 1000)) : 0;
-  const timerText = snapshot.stage === "showdown" || snapshot.stage === "waiting" ? "--" : `${remaining}s`;
-  pokerTimerEl.textContent = timerText;
-  pokerHeaderTimerEl.textContent = timerText;
-  pokerTimerEl.classList.toggle("danger", remaining <= 3 && remaining > 0);
-  pokerHeaderTimerEl.classList.toggle("danger", remaining <= 3 && remaining > 0);
-  pokerCommunityEl.innerHTML = [0, 1, 2, 3, 4].map((index) => renderCard(snapshot.community[index], !snapshot.community[index])).join("");
+function baccaratTargetLabel(target: BaccaratTarget | "repeat") {
+  return {
+    player: "PLAYER",
+    playerPair: "PLAYER PAIR",
+    tie: "TIE",
+    bankerPair: "BANKER PAIR",
+    banker: "BANKER",
+    repeat: "REPEAT"
+  }[target];
+}
 
-  const revealed = new Map((snapshot.showdown?.revealed || []).map((item) => [item.id, item.hand]));
-  pokerSeatsEl.innerHTML = snapshot.players.map((player) => {
-    const isMe = player.id === snapshot.selfId;
-    const isTurn = player.id === snapshot.turnId;
-    const winner = snapshot.showdown?.winners.find((item) => item.id === player.id);
-    const cards = isMe ? player.cards : revealed.get(player.id) || [];
-    const streak = player.streak && player.streak > 1 ? `<b class="poker-streak">${player.streak}連勝</b>` : "";
-    const cardHtml = player.cardCount
-      ? [0, 1].map((index) => renderCard(cards[index], !cards[index])).join("")
-      : "";
-    return `
-      <div class="poker-seat ${isMe ? "me" : ""} ${isTurn ? "turn" : ""} ${player.folded ? "folded" : ""}">
-        <div class="seat-cards">${cardHtml}</div>
-        <strong>${escapeHtml(player.name)}</strong>
-        <span>${player.chips}Don</span>
-        <small>${escapeHtml(player.bet ? `BET ${player.bet}` : player.lastAction || (player.isBot ? "CP" : "PLAYER"))}</small>
-        ${streak}
-        ${winner ? `<em>${escapeHtml(winner.label)} +${winner.amount}Don</em>` : ""}
-      </div>
-    `;
+function renderBaccaratCards(cards: string[], cardCount: number, phase: BaccaratPhase) {
+  const slots = phase === "waiting" || phase === "betting" ? 2 : Math.max(2, cardCount, cards.length);
+  return Array.from({ length: slots }, (_, index) => {
+    const card = cards[index];
+    return card
+      ? renderCard(card, false, "baccarat-card")
+      : `<div class="playing-card baccarat-card card-placeholder"><span>${index + 1}</span></div>`;
   }).join("");
+}
 
-  const me = snapshot.players.find((player) => player.id === snapshot.selfId);
-  pokerMyCardsEl.innerHTML = me?.cards?.length ? me.cards.map((card) => renderCard(card, false, "my-card")).join("") : `${renderCard("", true, "my-card")}${renderCard("", true, "my-card")}`;
-  const bankrupt = Boolean(me && me.chips <= 0 && me.bet <= 0);
-  pokerJankenPanel.hidden = !bankrupt;
-  pokerStackLineEl.textContent = me ? `${me.name} / ${me.chips}Don / コール ${snapshot.toCall}Don${bankrupt ? " / じゃんけん復帰待ち" : ""}` : "2000Don";
-  const myTurn = snapshot.turnId === snapshot.selfId && snapshot.stage !== "showdown" && snapshot.stage !== "waiting";
-  const requestedMinRaise = Math.max(20, Math.floor(Number(snapshot.minRaise) || 20));
-  const maxRaise = me ? Math.max(0, me.chips - snapshot.toCall) : 0;
-  const minRaise = maxRaise > 0 ? Math.min(requestedMinRaise, maxRaise) : requestedMinRaise;
-  const canRaise = Boolean(myTurn && me && maxRaise > 0 && !bankrupt);
-  pokerRaiseAmountInput.min = String(minRaise);
-  pokerRaiseAmountInput.max = String(Math.max(minRaise, maxRaise));
-  pokerRaiseAmountInput.step = "10";
-  const sanitizedRaise = currentPokerRaiseAmount();
-  if (pokerRaiseAmountInput.value !== String(sanitizedRaise)) pokerRaiseAmountInput.value = String(sanitizedRaise);
-  pokerRaiseAmountInput.disabled = !canRaise;
-  pokerFoldButton.disabled = !myTurn || bankrupt;
-  pokerCallButton.disabled = !myTurn || bankrupt;
-  pokerRaiseButton.disabled = !canRaise;
-  pokerCallButton.textContent = snapshot.toCall > 0 ? `コール ${snapshot.toCall}` : "チェック";
-  pokerRaiseButton.textContent = canRaise && sanitizedRaise >= maxRaise ? `オールイン ${maxRaise}` : `レイズ ${sanitizedRaise}`;
+function renderBaccarat(snapshot: BaccaratSnapshot) {
+  const viewer = snapshot.viewer;
+  const remainingMs = snapshot.phaseEndsAt ? Math.max(0, snapshot.phaseEndsAt - snapshot.serverNow) : 0;
+  const remaining = Math.ceil(remainingMs / 1000);
+  const phaseLabel = {
+    waiting: "参加者を待っています",
+    betting: viewer?.locked ? "ベット確定済み" : "ベット受付中",
+    dealing: "カード公開中",
+    result: "ラウンド結果"
+  }[snapshot.phase];
+
+  baccaratPanel.dataset.phase = snapshot.phase;
+  baccaratTableCodeEl.textContent = snapshot.table;
+  baccaratRoundEl.textContent = `#${snapshot.round}`;
+  baccaratParticipantCountEl.textContent = snapshot.participantCount.toLocaleString();
+  baccaratWalletEl.textContent = `${(viewer?.chips ?? profileInventory.don).toLocaleString()} Don`;
+  baccaratPhaseEl.textContent = phaseLabel;
+  baccaratTimerEl.textContent = snapshot.phase === "waiting" ? "--" : String(remaining);
+  baccaratTimerEl.classList.toggle("danger", snapshot.phase === "betting" && remaining <= 3);
+  baccaratShoeEl.textContent = `${snapshot.cardsRemaining} / ${snapshot.shoeSize}`;
+  baccaratShoeMeterEl.style.width = `${Math.round(THREE.MathUtils.clamp(snapshot.cardsRemaining / Math.max(1, snapshot.shoeSize), 0, 1) * 100)}%`;
+
+  baccaratPlayerCardsEl.innerHTML = renderBaccaratCards(snapshot.playerCards, snapshot.playerCardCount, snapshot.phase);
+  baccaratBankerCardsEl.innerHTML = renderBaccaratCards(snapshot.bankerCards, snapshot.bankerCardCount, snapshot.phase);
+  baccaratPlayerTotalEl.textContent = snapshot.playerTotal === null ? "-" : String(snapshot.playerTotal);
+  baccaratBankerTotalEl.textContent = snapshot.bankerTotal === null ? "-" : String(snapshot.bankerTotal);
+
+  if (snapshot.outcome) {
+    const winner = snapshot.outcome.winner;
+    const winnerLabel = winner === "player" ? "PLAYER WIN" : winner === "banker" ? "BANKER WIN" : "TIE";
+    const details = [snapshot.outcome.natural ? "NATURAL" : "", snapshot.outcome.playerPair ? "PLAYER PAIR" : "", snapshot.outcome.bankerPair ? "BANKER PAIR" : ""].filter(Boolean).join(" / ");
+    const net = viewer?.lastNet || 0;
+    const netLabel = net > 0 ? `あなた +${net.toLocaleString()} Don` : net < 0 ? `あなた ${net.toLocaleString()} Don` : "あなた ±0 Don";
+    baccaratResultEl.className = `baccarat-result-ribbon show ${winner}`;
+    baccaratResultEl.innerHTML = `<strong>${winnerLabel}</strong><span>${details || "STANDARD RESULT"}</span><b>${netLabel}</b>`;
+  } else {
+    baccaratResultEl.className = "baccarat-result-ribbon";
+    baccaratResultEl.textContent = "";
+  }
+
+  const canEditBet = snapshot.phase === "betting" && remainingMs > 0 && Boolean(viewer) && !viewer?.locked;
+  const betTotal = viewer ? baccaratTargets.reduce((sum, target) => sum + (viewer.bets[target] || 0), 0) : 0;
+  const previousBetTotal = viewer ? baccaratTargets.reduce((sum, target) => sum + (viewer.lastBets[target] || 0), 0) : 0;
+  for (const target of baccaratTargets) {
+    const ownBet = viewer?.bets[target] || 0;
+    const crowdBet = snapshot.betTotals[target] || 0;
+    const button = baccaratBettingGrid.querySelector<HTMLButtonElement>(`[data-baccarat-target="${target}"]`);
+    const personal = document.getElementById(`baccaratBet-${target}`);
+    const crowd = document.getElementById(`baccaratCrowd-${target}`);
+    if (personal) personal.textContent = `${ownBet.toLocaleString()} Don`;
+    if (crowd) crowd.textContent = `卓 ${crowdBet.toLocaleString()}`;
+    if (button) {
+      button.disabled = !canEditBet || selectedBaccaratChip > (viewer?.chips || 0);
+      button.classList.toggle("has-bet", ownBet > 0);
+      button.classList.toggle("winner", snapshot.outcome?.winner === target || (target === "playerPair" && snapshot.outcome?.playerPair) || (target === "bankerPair" && snapshot.outcome?.bankerPair));
+    }
+  }
+
+  baccaratUndoButton.disabled = !canEditBet || betTotal <= 0;
+  baccaratClearButton.disabled = !canEditBet || betTotal <= 0;
+  baccaratRepeatButton.disabled = !canEditBet || betTotal > 0 || previousBetTotal <= 0 || previousBetTotal > (viewer?.chips || 0);
+  baccaratConfirmButton.disabled = !canEditBet || betTotal <= 0;
+  baccaratConfirmButton.classList.toggle("locked", Boolean(viewer?.locked));
+  const confirmLabel = baccaratConfirmButton.querySelector("span");
+  if (confirmLabel) confirmLabel.textContent = viewer?.locked ? `確定 ${betTotal.toLocaleString()} Don` : `ベット確定 ${betTotal ? betTotal.toLocaleString() : ""}`.trim();
+
+  baccaratRoadEl.innerHTML = snapshot.history.length
+    ? snapshot.history.slice(0, 40).map((item) => `<span class="${item.winner}" title="#${item.round} PLAYER ${item.playerTotal} / BANKER ${item.bankerTotal}">${item.winner === "player" ? "P" : item.winner === "banker" ? "B" : "T"}${item.playerPair || item.bankerPair ? "<i>•</i>" : ""}</span>`).join("")
+    : `<small>最初の結果がここに記録されます</small>`;
+
+  baccaratParticipantsEl.innerHTML = snapshot.players.length
+    ? snapshot.players.map((player, index) => `
+      <div class="baccarat-participant ${player.id === snapshot.selfId ? "self" : ""}">
+        <span>${index + 1}</span><strong>${escapeHtml(player.name)}</strong>
+        <b>${player.chips.toLocaleString()} Don</b><small>${player.bet ? `BET ${player.bet.toLocaleString()}` : player.locked ? "LOCKED" : "WATCHING"}</small>
+      </div>`).join("")
+    : `<small>参加者を待っています</small>`;
+
+  baccaratRecentBetsEl.innerHTML = snapshot.recentBets.length
+    ? snapshot.recentBets.slice(0, 10).map((bet) => `
+      <div><strong>${escapeHtml(bet.name)}</strong><span>${baccaratTargetLabel(bet.target)}</span><b>${bet.amount.toLocaleString()} Don</b></div>`).join("")
+    : `<small>ベットが置かれると表示されます</small>`;
 }
 
 function drawMinimap() {
@@ -7520,11 +7614,11 @@ function drawMinimap() {
   }
 }
 
-function flashPokerInviteButton(label: string) {
-  if (!pokerJoined) return;
-  copyPokerInviteButton.textContent = label;
+function flashBaccaratInviteButton(label: string) {
+  if (!baccaratJoined) return;
+  copyBaccaratInviteButton.textContent = label;
   window.setTimeout(() => {
-    copyPokerInviteButton.textContent = "友達招待";
+    copyBaccaratInviteButton.textContent = "友達招待";
   }, 1400);
 }
 
@@ -7556,8 +7650,8 @@ async function writeClipboardText(text: string) {
 }
 
 async function copyInvite() {
-  const play = pokerJoined && pokerRoomCode ? "poker" : "fps";
-  const room = play === "poker" ? pokerRoomCode : (self.room || globalFpsRoomCode);
+  const play = baccaratJoined ? "baccarat" : "fps";
+  const room = play === "baccarat" ? globalBaccaratTableCode : (self.room || globalFpsRoomCode);
   if (!room) {
     showToast("先にルームを作成してください。");
     return;
@@ -7565,12 +7659,12 @@ async function copyInvite() {
   const url = inviteShareUrl(room, play);
   const copied = await writeClipboardText(url);
   if (copied) {
-    flashPokerInviteButton("コピー済み");
-    showToast(play === "poker" ? "ポーカー招待リンクをコピーしました" : "共通ルーム招待リンクをコピーしました");
+    flashBaccaratInviteButton("コピー済み");
+    showToast(play === "baccarat" ? "共通バカラ卓の招待リンクをコピーしました" : "共通ルーム招待リンクをコピーしました");
     return;
   }
   roomInput.value = room;
-  flashPokerInviteButton("コード表示");
+  flashBaccaratInviteButton("コード表示");
   showToast(`コピー不可: コード ${room} を入力欄に表示`);
 }
 

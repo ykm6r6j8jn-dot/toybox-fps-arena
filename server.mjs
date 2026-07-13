@@ -1,12 +1,29 @@
 import { createServer } from "node:http";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomInt as cryptoRandomInt } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
+import { calculateFpsDonReward } from "./economy-systems.mjs";
 import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from "./match-systems.mjs";
+import {
+  addBaccaratPlayer,
+  baccaratSnapshotFor,
+  baccaratStartingDon,
+  baccaratVersion,
+  clearBaccaratBets,
+  createBaccaratTable,
+  globalBaccaratTableCode,
+  lockBaccaratBets,
+  placeBaccaratBet,
+  reconnectBaccaratPlayer,
+  removeBaccaratPlayer,
+  repeatBaccaratBets,
+  undoBaccaratBet,
+  updateBaccaratTable
+} from "./baccarat-systems.mjs";
 import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
 import { clampMovementRequest, isNearToyboxTrampoline, wrapAngle } from "./movement-systems.mjs";
@@ -527,6 +544,70 @@ function normalizeLoginId(value) {
     .slice(0, 32);
 }
 
+function normalizeGuestWalletToken(value) {
+  const token = String(value || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+  return token.length >= 16 ? token : "";
+}
+
+function secureBaccaratRandomInt(maxExclusive) {
+  return cryptoRandomInt(Math.max(1, Math.floor(Number(maxExclusive) || 1)));
+}
+
+function getGuestWallet(token, create = true) {
+  const normalized = normalizeGuestWalletToken(token);
+  if (!normalized) return null;
+  if (!guestWallets.has(normalized) && create) {
+    guestWallets.set(normalized, { don: baccaratStartingDon, updatedAt: Date.now() });
+  }
+  return guestWallets.get(normalized) || null;
+}
+
+function walletDon(profileRecord, guestToken) {
+  if (profileRecord?.profile) return sanitizeInventory(profileRecord.profile.inventory).don;
+  return getGuestWallet(guestToken)?.don ?? baccaratStartingDon;
+}
+
+function persistPlayerWallet(player, amount = player?.chips) {
+  if (!player) return baccaratStartingDon;
+  const don = clamp(Math.floor(Number(amount) || 0), 0, 999_999);
+  player.chips = don;
+  if (player.profileKey && profileStore.profiles[player.profileKey]) {
+    const profile = profileStore.profiles[player.profileKey];
+    profile.inventory = { ...sanitizeInventory(profile.inventory), don };
+    profile.updatedAt = Date.now();
+    return don;
+  }
+  const wallet = getGuestWallet(player.guestToken);
+  if (wallet) {
+    wallet.don = don;
+    wallet.updatedAt = Date.now();
+  }
+  return don;
+}
+
+function playerWalletDon(player) {
+  if (player?.profileKey && profileStore.profiles[player.profileKey]) {
+    return sanitizeInventory(profileStore.profiles[player.profileKey].inventory).don;
+  }
+  return getGuestWallet(player?.guestToken)?.don ?? baccaratStartingDon;
+}
+
+function creditPlayerWallet(player, amount) {
+  const next = clamp(playerWalletDon(player) + Math.max(0, Math.floor(Number(amount) || 0)), 0, 999_999);
+  if (player?.profileKey && profileStore.profiles[player.profileKey]) {
+    const profile = profileStore.profiles[player.profileKey];
+    profile.inventory = { ...sanitizeInventory(profile.inventory), don: next };
+    profile.updatedAt = Date.now();
+  } else {
+    const wallet = getGuestWallet(player?.guestToken);
+    if (wallet) {
+      wallet.don = next;
+      wallet.updatedAt = Date.now();
+    }
+  }
+  return next;
+}
+
 function profileHash(loginId) {
   return createHash("sha256").update(`donpachi-profile-v1:${loginId}`).digest("hex");
 }
@@ -539,7 +620,7 @@ function emptyProgress() {
     lastPlayDate: "",
     bestScore: 0,
     bestKills: 0,
-    pokerWins: 0,
+    baccaratWins: 0,
     lastReward: ""
   };
 }
@@ -553,17 +634,18 @@ function sanitizeProgress(progress = {}) {
     lastPlayDate: /^\d{4}-\d{2}-\d{2}$/.test(String(progress.lastPlayDate || "")) ? String(progress.lastPlayDate) : base.lastPlayDate,
     bestScore: clamp(Math.floor(Number(progress.bestScore) || base.bestScore), 0, 999_999),
     bestKills: clamp(Math.floor(Number(progress.bestKills) || base.bestKills), 0, 99_999),
-    pokerWins: clamp(Math.floor(Number(progress.pokerWins) || base.pokerWins), 0, 99_999),
+    baccaratWins: clamp(Math.floor(Number(progress.baccaratWins ?? progress.pokerWins) || base.baccaratWins), 0, 99_999),
     lastReward: cleanText(progress.lastReward, 48, base.lastReward)
   };
 }
 
 function sanitizeInventory(inventory = {}) {
   const healPacks = Number.isFinite(Number(inventory.healPacks)) ? Number(inventory.healPacks) : initialHealPacks;
-  const pokerDon = Number.isFinite(Number(inventory.pokerDon)) ? Number(inventory.pokerDon) : pokerStartingChips;
+  const storedDon = inventory.don ?? inventory.pokerDon;
+  const don = Number.isFinite(Number(storedDon)) ? Number(storedDon) : baccaratStartingDon;
   return {
     healPacks: clamp(Math.floor(healPacks), 0, 12),
-    pokerDon: clamp(Math.floor(pokerDon), 0, 999_999),
+    don: clamp(Math.floor(don), 0, 999_999),
     barrierCharges: clamp(Math.floor(Number(inventory.barrierCharges) || 0), 0, 9),
     boostTickets: clamp(Math.floor(Number(inventory.boostTickets) || 0), 0, 99)
   };
@@ -633,7 +715,7 @@ function mergeProfile(profile, payload = {}) {
       streakDays: Math.max(current.streakDays, next.streakDays),
       bestScore: Math.max(current.bestScore, next.bestScore),
       bestKills: Math.max(current.bestKills, next.bestKills),
-      pokerWins: Math.max(current.pokerWins, next.pokerWins),
+      baccaratWins: Math.max(current.baccaratWins, next.baccaratWins),
       lastReward: next.lastReward || current.lastReward
     };
   } else {
@@ -644,7 +726,7 @@ function mergeProfile(profile, payload = {}) {
     const current = sanitizeInventory(profile.inventory);
     profile.inventory = {
       healPacks: clamp(Math.floor(Number(next.healPacks)), 0, 12),
-      pokerDon: Math.max(current.pokerDon, next.pokerDon),
+      don: current.don,
       barrierCharges: Math.max(current.barrierCharges, next.barrierCharges),
       boostTickets: Math.max(current.boostTickets, next.boostTickets)
     };
@@ -735,8 +817,10 @@ async function handleProfileRequest(req, res) {
 
 const rooms = new Map();
 const pokerRooms = new Map();
+const guestWallets = new Map();
 const profileStorePath = resolve(process.env.DONPACHI_PROFILE_STORE || join(__dirname, "data", "profiles.json"));
 const profileStore = await loadProfileStore();
+const baccaratTable = createBaccaratTable(Date.now(), secureBaccaratRandomInt);
 let vite;
 
 if (!isProd) {
@@ -1688,6 +1772,13 @@ function broadcastPoker(room) {
   }
 }
 
+function broadcastBaccarat(now = Date.now()) {
+  for (const player of baccaratTable.players.values()) {
+    if (!player.connected || !player.ws || player.ws.readyState !== 1) continue;
+    send(player.ws, baccaratSnapshotFor(baccaratTable, player.id, now));
+  }
+}
+
 function spawnPoint(index = 0) {
   const points = [
     [-36, 1.6, 16],
@@ -1758,6 +1849,7 @@ function publicPlayer(player) {
     healsUsed: player.healsUsed || 0,
     specialsUsed: player.specialsUsed || 0,
     barrierPickups: player.barrierPickups || 0,
+    itemPickups: player.itemPickups || 0,
     lives: player.lives || 0,
     eliminated: Boolean(player.eliminated),
     creative: Boolean(player.creative),
@@ -1820,6 +1912,8 @@ function fpsWelcomePayload(player, room, profile, resumed = false) {
     ...publicMatchLifecycle(room),
     spawn: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
     profile: profile ? publicProfile(profile) : null,
+    guestToken: player.guestToken || "",
+    walletDon: playerWalletDon(player),
     resumeToken: player.resumeToken,
     resumed
   };
@@ -2474,8 +2568,7 @@ function updateSafeZone(room, now) {
 wss.on("connection", (ws) => {
   let currentRoom;
   let currentPlayer;
-  let currentPokerRoom;
-  let currentPokerPlayer;
+  let currentBaccaratPlayer;
 
   ws.on("error", () => {
     if (ws.readyState === ws.OPEN) ws.close(1009, "invalid websocket message");
@@ -2495,82 +2588,88 @@ wss.on("connection", (ws) => {
     }
     if (!message || typeof message !== "object") return;
 
-    if (message.type === "poker_join") {
-      const requestedCpuCount = normalizePokerCpuCount(message.cpuCount);
-      const room = getPokerRoom(message.room, requestedCpuCount);
-      if (room.players.size >= maxPokerSeats) {
-        const removableCpu = [...room.players.values()].find((player) => player.isBot);
-        if (removableCpu) {
-          room.players.delete(removableCpu.id);
-          room.seats = room.seats.filter((id) => id !== removableCpu.id);
-        }
-      }
-      if (room.players.size >= maxPokerSeats) {
-        send(ws, { type: "poker_error", message: "このポーカールームは満席です。" });
-        return;
-      }
-      const hadPokerProfile = Boolean(getProfile(message.loginId));
-      const pokerProfileRecord = getOrCreateProfile(message.loginId);
-      if (pokerProfileRecord) {
-        mergeProfile(pokerProfileRecord.profile, hadPokerProfile
+    if (String(message.type || "").startsWith("poker_")) {
+      send(ws, { type: "baccarat_error", message: "ポーカーは廃止され、共通チップバカラへ移行しました。" });
+      return;
+    }
+
+    if (message.type === "baccarat_join") {
+      const hadProfile = Boolean(getProfile(message.loginId));
+      const profileRecord = getOrCreateProfile(message.loginId);
+      if (profileRecord) {
+        mergeProfile(profileRecord.profile, hadProfile
           ? { progress: message.progress }
           : {
             name: message.name,
             skin: message.skin,
             cosmeticColor: message.cosmeticColor,
-            progress: message.progress,
-            inventory: message.inventory
+            progress: message.progress
           });
         saveProfileSoon();
       }
-      const pokerProfile = pokerProfileRecord?.profile || null;
-      const id = crypto.randomUUID();
-      const player = {
-        id,
-        ws,
-        profileKey: pokerProfileRecord?.key || "",
-        name: sanitizePlayerName(pokerProfile?.name || message.name),
-        chips: sanitizeInventory(pokerProfile?.inventory).pokerDon,
-        hand: [],
-        bet: 0,
-        folded: false,
-        allIn: false,
-        acted: false,
-        isBot: false,
-        seat: room.seats.length,
-        lastAction: "参加",
-        mood: "",
-        streak: 0,
-        thinkUntil: 0
-      };
-      if (room.stage !== "waiting" && room.stage !== "showdown") {
-        player.folded = true;
-        player.acted = true;
-        player.lastAction = "次ハンド待ち";
+      const profile = profileRecord?.profile || null;
+      const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken) || crypto.randomUUID();
+      const existing = [...baccaratTable.players.values()].find((player) => (
+        profileRecord?.key ? player.profileKey === profileRecord.key : player.guestToken === guestToken
+      ));
+      if (existing?.connected) {
+        send(ws, { type: "baccarat_error", message: "同じウォレットが別の画面で使用中です。" });
+        return;
       }
-      room.players.set(id, player);
-      room.seats.push(id);
-      syncPokerCpus(room, requestedCpuCount);
-      currentPokerRoom = room;
-      currentPokerPlayer = player;
-      room.lastEvent = `${player.name} がポーカールームに参加`;
-      maybeStartPokerHand(room);
-      send(ws, { type: "poker_welcome", id, room: room.code, startingChips: pokerStartingChips, turnMs: pokerTurnMs, profile: pokerProfile ? publicProfile(pokerProfile) : null });
-      broadcastPoker(room);
+      const player = existing
+        ? reconnectBaccaratPlayer(baccaratTable, existing, { ws, name: sanitizePlayerName(profile?.name || message.name) }, Date.now())
+        : addBaccaratPlayer(baccaratTable, {
+          id: crypto.randomUUID(),
+          ws,
+          profileKey: profileRecord?.key || "",
+          guestToken,
+          name: sanitizePlayerName(profile?.name || message.name),
+          chips: walletDon(profileRecord, guestToken)
+        });
+      if (!player) {
+        send(ws, { type: "baccarat_error", message: "バカラ卓への接続に失敗しました。" });
+        return;
+      }
+      player.guestToken = guestToken;
+      currentBaccaratPlayer = player;
+      send(ws, {
+        type: "baccarat_welcome",
+        id: player.id,
+        table: globalBaccaratTableCode,
+        version: baccaratVersion,
+        startingDon: baccaratStartingDon,
+        guestToken,
+        profile: profile ? publicProfile(profile) : null
+      });
+      broadcastBaccarat();
       return;
     }
 
-    if (message.type === "poker_action") {
-      if (!currentPokerRoom || !currentPokerPlayer) return;
-      handlePokerAction(currentPokerRoom, currentPokerPlayer, String(message.action || "call"), Number(message.raiseBy) || 0, false);
-      broadcastPoker(currentPokerRoom);
+    if (message.type === "baccarat_action") {
+      if (!currentBaccaratPlayer || !baccaratTable.players.has(currentBaccaratPlayer.id)) return;
+      const action = String(message.action || "");
+      const now = Date.now();
+      let result;
+      if (action === "bet") result = placeBaccaratBet(baccaratTable, currentBaccaratPlayer, String(message.target || ""), Number(message.amount), now);
+      else if (action === "undo") result = undoBaccaratBet(baccaratTable, currentBaccaratPlayer, now);
+      else if (action === "clear") result = clearBaccaratBets(baccaratTable, currentBaccaratPlayer, now);
+      else if (action === "repeat") result = repeatBaccaratBets(baccaratTable, currentBaccaratPlayer, now);
+      else if (action === "confirm") result = lockBaccaratBets(baccaratTable, currentBaccaratPlayer, now);
+      else result = { ok: false, message: "操作が正しくありません。" };
+      currentBaccaratPlayer.lastSeen = now;
+      if (!result.ok) send(ws, { type: "baccarat_error", message: result.message });
+      broadcastBaccarat();
       return;
     }
 
-    if (message.type === "poker_janken") {
-      if (!currentPokerRoom || !currentPokerPlayer) return;
-      handlePokerJanken(currentPokerRoom, currentPokerPlayer, String(message.choice || ""));
-      broadcastPoker(currentPokerRoom);
+    if (message.type === "baccarat_ping") {
+      if (currentBaccaratPlayer) currentBaccaratPlayer.lastSeen = Date.now();
+      send(ws, { type: "baccarat_pong", at: Number(message.at) || 0, serverAt: Date.now() });
+      return;
+    }
+
+    if (message.type === "baccarat_leave") {
+      ws.close(1000, "leave");
       return;
     }
 
@@ -2593,6 +2692,8 @@ wss.on("connection", (ws) => {
         saveProfileSoon();
       }
       const loginProfile = profileRecord?.profile || null;
+      const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken) || crypto.randomUUID();
+      if (!profileRecord) getGuestWallet(guestToken);
       const room = getRoom(globalFpsRoomCode, message.gameMode, "toybox", requestedPartySize, true, requestedCpuFill, requestedRelationMode);
       const requestedResumeToken = normalizeResumeToken(message.resumeToken);
       const now = Date.now();
@@ -2614,6 +2715,7 @@ wss.on("connection", (ws) => {
         resumedPlayer.spawnProtectedUntil = Math.max(resumedPlayer.spawnProtectedUntil || 0, now + 1600);
         resumedPlayer.nextZoneDamageAt = Math.max(resumedPlayer.nextZoneDamageAt || 0, now + 1600);
         if (profileRecord?.key) resumedPlayer.profileKey = profileRecord.key;
+        resumedPlayer.guestToken = guestToken || resumedPlayer.guestToken || "";
         currentRoom = room;
         currentPlayer = resumedPlayer;
         recordPlayerPose(resumedPlayer, now);
@@ -2656,6 +2758,7 @@ wss.on("connection", (ws) => {
         explicitLeave: false,
         poseHistory: [],
         profileKey: profileRecord?.key || "",
+        guestToken,
         name: sanitizePlayerName(loginProfile?.name || message.name),
         color: team,
         cosmeticColor: safeColor(loginProfile?.cosmeticColor || message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
@@ -2671,6 +2774,7 @@ wss.on("connection", (ws) => {
         healsUsed: 0,
         specialsUsed: 0,
         barrierPickups: 0,
+        itemPickups: 0,
         lives: initialLivesForMode(room.mode),
         eliminated: false,
         creative: false,
@@ -3123,18 +3227,13 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", (code, reason) => {
-    if (currentPokerRoom && currentPokerPlayer) {
-      currentPokerRoom.players.delete(currentPokerPlayer.id);
-      currentPokerRoom.seats = currentPokerRoom.seats.filter((id) => id !== currentPokerPlayer.id);
-      currentPokerRoom.lastEvent = `${currentPokerPlayer.name} が退出`;
-      if (pokerHumans(currentPokerRoom).length === 0) pokerRooms.delete(currentPokerRoom.code);
-      else {
-        syncPokerCpus(currentPokerRoom, currentPokerRoom.cpuTarget);
-        if (currentPokerRoom.stage !== "waiting" && pokerLivePlayers(currentPokerRoom).length <= 1) {
-          awardPokerPot(currentPokerRoom, pokerLivePlayers(currentPokerRoom)[0], "退出によりハンド終了");
-        }
-        broadcastPoker(currentPokerRoom);
+    if (currentBaccaratPlayer) {
+      const removed = removeBaccaratPlayer(baccaratTable, currentBaccaratPlayer, Date.now());
+      if (removed.removed) {
+        persistPlayerWallet(currentBaccaratPlayer);
+        if (currentBaccaratPlayer.profileKey) saveProfileSoon();
       }
+      broadcastBaccarat();
     }
     if (!currentRoom || !currentPlayer || !currentRoom.players.has(currentPlayer.id)) return;
     if (currentPlayer.vehicleId) releasePlayerVehicle(currentRoom, currentPlayer, false);
@@ -3249,11 +3348,26 @@ setInterval(() => {
 
 setInterval(() => {
   const now = Date.now();
-  for (const room of pokerRooms.values()) {
-    updatePokerRoom(room, now);
-    if (pokerRooms.has(room.code)) broadcastPoker(room);
+  const update = updateBaccaratTable(baccaratTable, now, secureBaccaratRandomInt);
+  if (update.transition === "settled") {
+    let profileChanged = false;
+    for (const settlement of update.settledPlayers) {
+      const player = settlement.player;
+      persistPlayerWallet(player);
+      const profile = player.profileKey ? profileStore.profiles[player.profileKey] : null;
+      if (profile && settlement.net > 0) {
+        const progress = sanitizeProgress(profile.progress);
+        progress.baccaratWins += 1;
+        progress.lastReward = `バカラ +${settlement.net}Don`;
+        profile.progress = sanitizeProgress(progress);
+        profile.updatedAt = now;
+        profileChanged = true;
+      }
+    }
+    if (profileChanged) saveProfileSoon();
   }
-}, 450);
+  broadcastBaccarat(now);
+}, 220);
 
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
@@ -3871,6 +3985,7 @@ function setCpuCount(room, count) {
       healsUsed: 0,
       specialsUsed: 0,
       barrierPickups: 0,
+      itemPickups: 0,
       lives: initialLivesForMode(room.mode),
       eliminated: false,
       creative: false,
@@ -3923,6 +4038,7 @@ function createCpuPlayer(room, id, index, team) {
     healsUsed: 0,
     specialsUsed: 0,
     barrierPickups: 0,
+    itemPickups: 0,
     lives: initialLivesForMode(room.mode),
     eliminated: false,
     creative: false,
@@ -3975,6 +4091,42 @@ function publicMatchLifecycle(room) {
   };
 }
 
+function fpsPlayerWon(room, player) {
+  const winner = room.winner;
+  if (!winner || winner.name === "引き分け") return false;
+  return winner.color === player.color || winner.name === player.name;
+}
+
+function fpsDonReward(room, player) {
+  return calculateFpsDonReward(player, fpsPlayerWon(room, player));
+}
+
+function awardFpsDonRewards(room) {
+  if (room.donRewardsAwardedForRound) return;
+  room.donRewardsAwardedForRound = true;
+  let profileChanged = false;
+  for (const player of room.players.values()) {
+    if (player.isBot || player.disconnectedAt) continue;
+    const breakdown = fpsDonReward(room, player);
+    const balance = creditPlayerWallet(player, breakdown.total);
+    const profile = profileForPlayer(player);
+    if (profile) {
+      const progress = sanitizeProgress(profile.progress);
+      progress.lastReward = `FPS +${breakdown.total}Don`;
+      profile.progress = progress;
+      profile.updatedAt = Date.now();
+      profileChanged = true;
+    }
+    send(player.ws, {
+      type: "fps_don_reward",
+      amount: breakdown.total,
+      balance,
+      breakdown
+    });
+  }
+  if (profileChanged) saveProfileSoon();
+}
+
 function updateMatchLifecycle(room, now = Date.now()) {
   const humans = connectedHumanPlayers(room);
   const next = stepMatchLifecycle(room, {
@@ -3998,6 +4150,8 @@ function updateMatchLifecycle(room, now = Date.now()) {
     room.roundStartedAt = now;
     room.castleEndsAt = room.mode === "castle" ? now + castleRoundMs : 0;
     addFeed(room, `${modeLabel(room.mode)} BATTLE START`, "blue");
+  } else if (next.transition === "result") {
+    awardFpsDonRewards(room);
   }
   return next;
 }
@@ -4094,6 +4248,7 @@ function resetRoomScores(room, now = Date.now()) {
   room.winner = null;
   room.roundStartedAt = room.matchStarted ? now : 0;
   room.weaponStats = Object.create(null);
+  room.donRewardsAwardedForRound = false;
   room.movementStats = { samples: 0, moving: 0, airborne: 0 };
   if (room.mode === "castle" && !room.playerTeam) {
     const firstHuman = [...room.players.values()].find((player) => !player.isBot);
@@ -4111,6 +4266,7 @@ function resetRoomScores(room, now = Date.now()) {
     player.healsUsed = 0;
     player.specialsUsed = 0;
     player.barrierPickups = 0;
+    player.itemPickups = 0;
     player.lives = initialLivesForMode(room.mode);
     player.eliminated = false;
     player.creative = false;
@@ -4165,6 +4321,7 @@ function tryPickupBarrier(room, player) {
   room.barrier.respawnAt = Date.now() + barrierRespawnMs;
   player.shieldUntil = Date.now() + barrierDurationMs;
   player.barrierPickups = (player.barrierPickups || 0) + 1;
+  player.itemPickups = (player.itemPickups || 0) + 1;
   progressFocusTask(room, player, "recover", 1);
   progressFocusTask(room, player, "item", 1);
   addFeed(room, `${player.name} が隠しバリアを拾った`, player.color);
@@ -4186,6 +4343,7 @@ function tryPickupHealth(room, player) {
   if (distance > 1.9) return;
   player.health = maxHealth;
   player.healsUsed = (player.healsUsed || 0) + 1;
+  player.itemPickups = (player.itemPickups || 0) + 1;
   room.healthPickup.available = false;
   room.healthPickup.respawnAt = nextHealthPickupAt();
   progressFocusTask(room, player, "recover", 1);
@@ -4229,6 +4387,7 @@ function tryPickupPowerups(room, player) {
     powerup.available = false;
     powerup.pickedBy = player.name;
     powerup.respawnAt = now + powerupRespawnMs + Math.floor(Math.random() * 6500);
+    player.itemPickups = (player.itemPickups || 0) + 1;
     if (powerup.kind === "speed") {
       player.speedBoostUntil = now + powerupDurationMs;
       addFeed(room, `${player.name} がスピードブーストを取得`, player.color);

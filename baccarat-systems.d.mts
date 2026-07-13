@@ -1,0 +1,32 @@
+export type BaccaratTarget = "player" | "tie" | "banker" | "playerPair" | "bankerPair";
+export type BaccaratBets = Record<BaccaratTarget, number>;
+
+export const baccaratVersion: string;
+export const globalBaccaratTableCode: string;
+export const baccaratStartingDon: number;
+export const baccaratBettingMs: number;
+export const baccaratDealingMs: number;
+export const baccaratResultMs: number;
+export const baccaratMinBet: number;
+export const baccaratMaxBetPerRound: number;
+export const baccaratTargets: readonly BaccaratTarget[];
+
+export function baccaratBetTotal(bets?: Partial<BaccaratBets>): number;
+export function baccaratCardValue(card: string | { rank: number }): number;
+export function baccaratHandTotal(cards?: Array<string | { rank: number }>): number;
+export function bankerDrawsThirdCard(bankerTotal: number, playerThirdValue?: number | null): boolean;
+export function createBaccaratShoe(deckCount?: number, randomInt?: (max: number) => number): string[];
+export function resolveBaccaratRound(shoe: string[]): Record<string, any>;
+export function settleBaccaratBets(bets: Partial<BaccaratBets>, outcome: Record<string, any>): { stake: number; payout: number; net: number };
+export function createBaccaratTable(now?: number, randomInt?: (max: number) => number): Record<string, any>;
+export function addBaccaratPlayer(table: Record<string, any>, player: Record<string, any>, now?: number): Record<string, any>;
+export function reconnectBaccaratPlayer(table: Record<string, any>, player: Record<string, any>, connection: Record<string, any>, now?: number): Record<string, any> | null;
+export function removeBaccaratPlayer(table: Record<string, any>, player: Record<string, any>, now?: number): { removed: boolean; refunded: number };
+export function startBaccaratBetting(table: Record<string, any>, now?: number, randomInt?: (max: number) => number): void;
+export function placeBaccaratBet(table: Record<string, any>, player: Record<string, any>, target: BaccaratTarget, amount: number, now?: number): Record<string, any>;
+export function undoBaccaratBet(table: Record<string, any>, player: Record<string, any>, now?: number): Record<string, any>;
+export function clearBaccaratBets(table: Record<string, any>, player: Record<string, any>, now?: number): Record<string, any>;
+export function repeatBaccaratBets(table: Record<string, any>, player: Record<string, any>, now?: number): Record<string, any>;
+export function lockBaccaratBets(table: Record<string, any>, player: Record<string, any>, now?: number): Record<string, any>;
+export function updateBaccaratTable(table: Record<string, any>, now?: number, randomInt?: (max: number) => number): Record<string, any>;
+export function baccaratSnapshotFor(table: Record<string, any>, viewerId: string, now?: number): Record<string, any>;

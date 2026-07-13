@@ -28,6 +28,7 @@ const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
 if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
+if (!pageHtml.includes("BACCARAT 1.0 共通チップ卓")) throw new Error("public page is missing the BACCARAT 1.0 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 
@@ -136,4 +137,43 @@ send(probe.ws, { type: "leave" });
 await new Promise((resolve) => setTimeout(resolve, 80));
 probe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 lifecycle, VERTICAL 4.0 elevators, doors, and TACTICS 2.0 active, movement corrected, assets ${assetNames.join(", ")}`);
+const baccaratProbe = await new Promise((resolve, reject) => {
+  const ws = new WebSocket(wsUrl);
+  const state = { welcome: null, snapshots: [], errors: [] };
+  const timeout = setTimeout(() => reject(new Error("timeout joining public baccarat table")), 10_000);
+  ws.on("open", () => ws.send(JSON.stringify({
+    type: "baccarat_join",
+    name: `Table${Math.random().toString(36).slice(2, 7)}`,
+    guestToken: `public-verify-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  })));
+  ws.on("message", (raw) => {
+    const message = JSON.parse(String(raw));
+    if (message.type === "baccarat_welcome") {
+      state.welcome = message;
+      clearTimeout(timeout);
+      resolve({ ws, state });
+    } else if (message.type === "baccarat_snapshot") {
+      state.snapshots.push(message);
+      if (state.snapshots.length > 120) state.snapshots.shift();
+    } else if (message.type === "baccarat_error") {
+      state.errors.push(String(message.message || ""));
+    }
+  });
+  ws.on("error", reject);
+});
+
+await waitFor(() => baccaratProbe.state.snapshots.some((table) => (
+  table.version === "BACCARAT 1.0"
+  && table.table === "DONBAC"
+  && table.phase === "betting"
+  && table.viewer?.chips >= 10
+  && table.participantCount >= 1
+)), "public BACCARAT 1.0 shared table accepts a player", 20_000);
+send(baccaratProbe.ws, { type: "baccarat_action", action: "bet", target: "player", amount: 10 });
+await waitFor(() => baccaratProbe.state.snapshots.some((table) => table.viewer?.bets?.player === 10), "public baccarat table records an authoritative bet");
+send(baccaratProbe.ws, { type: "baccarat_action", action: "undo" });
+await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player === 0, "public baccarat table refunds an undo");
+send(baccaratProbe.ws, { type: "baccarat_leave" });
+baccaratProbe.ws.close(1000, "leave");
+
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 and BACCARAT 1.0 active, movement corrected, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);

@@ -411,22 +411,18 @@
                 <input id="roomInput" maxlength="6" placeholder="ABC123" autocomplete="off" autocapitalize="characters" inputmode="latin" />
               </label>
               <button id="joinRoom" type="button">FPS入室</button>
-              <button id="joinPokerRoom" type="button">ポーカー入室</button>
             </div>
             <small class="global-room-note">FPSは全員が共通ルーム DONPCH に入ります。招待リンクを開くと自動参加できます。</small>
-            <div class="poker-lobby-card">
+            <div class="baccarat-lobby-band">
               <header>
-                <strong>テキサスポーカー</strong>
-                <span>2000Don / 10秒ターン</span>
+                <div>
+                  <span>DonPaChi TABLE</span>
+                  <strong>チップバカラ</strong>
+                </div>
+                <span>8デッキ / 12秒ベット / 全員共通卓</span>
               </header>
-              <div class="poker-cpu-select" id="pokerCpuSelect" role="group" aria-label="ポーカーCP数">
-                <button type="button" data-poker-cpu="0">CP0</button>
-                <button type="button" data-poker-cpu="1">CP1</button>
-                <button type="button" class="active" data-poker-cpu="2">CP2</button>
-                <button type="button" data-poker-cpu="3">CP3</button>
-                <button type="button" data-poker-cpu="5">CP5</button>
-              </div>
-              <button id="createPokerRoom" type="button">テキサスポーカー入室</button>
+              <button id="joinBaccaratRoom" type="button">共通チップバカラへ</button>
+              <small>初回2,000Don。仮想チップのみで、現金への交換や購入はありません。</small>
             </div>
           </div>
           <div class="online-panel">
@@ -450,6 +446,11 @@
           <div class="update-log-list">
             <article>
               <b>最新</b>
+              <strong>BACCARAT 1.0 共通チップ卓</strong>
+              <p>ポーカーを廃止し、全プレイヤーが同じ卓に集まる8デッキ・標準ルールのチップバカラへ刷新。FPSのキル、ダメージ、アイテム取得、勝利に応じてDonを獲得できます。</p>
+            </article>
+            <article>
+              <b>マッチ</b>
               <strong>MATCH 5.0 マッチ進行更新</strong>
               <p>待機・準備完了・開始カウントダウン・戦闘・結果をサーバー同期。待機中のCP射撃を止め、開始時に全員を公平に再配置し、PCとスマホの戦闘HUDを自動で整理します。</p>
             </article>
@@ -510,8 +511,8 @@
             </article>
             <article>
               <b>オンライン</b>
-              <strong>チャット・招待・ポーカー対応</strong>
-              <p>リアルタイムチャット、友達招待リンク、ルームコード参加、テキサスポーカー、公開URL向けの安定化を追加。</p>
+              <strong>チャット・招待・共通バカラ対応</strong>
+              <p>リアルタイムチャット、友達招待リンク、共通FPSルーム、全員共通のチップバカラ、公開URL向けの安定化を追加。</p>
             </article>
             <article>
               <b>継続要素</b>
@@ -522,60 +523,109 @@
         </div>
       </section>
 
-      <section class="poker-panel" id="pokerPanel" aria-label="テキサスポーカー">
-        <div class="poker-shell">
-          <header class="poker-header">
-            <div>
-              <span>Texas Poker</span>
-              <strong id="pokerRoomCode">------</strong>
+      <section class="baccarat-panel" id="baccaratPanel" aria-label="DonPaChi チップバカラ">
+        <div class="baccarat-shell">
+          <header class="baccarat-header">
+            <div class="baccarat-brand">
+              <span>DonPaChi</span>
+              <strong>BACCARAT</strong>
             </div>
-            <div class="poker-pot">
-              <span>Pot</span>
-              <strong id="pokerPot">0Don</strong>
+            <div class="baccarat-table-id">
+              <span>GLOBAL TABLE</span>
+              <strong id="baccaratTableCode">DONBAC</strong>
             </div>
-            <div class="poker-countdown">
-              <span>残り</span>
-              <strong id="pokerHeaderTimer">--</strong>
+            <div class="baccarat-round">
+              <span>ROUND</span>
+              <strong id="baccaratRound">#0</strong>
             </div>
-            <button id="copyPokerInvite" type="button">友達招待</button>
-            <button id="leavePoker" type="button">ロビーへ</button>
+            <div class="baccarat-connection" id="baccaratConnection">接続中</div>
+            <button class="baccarat-mobile-drawer" id="baccaratHistoryToggle" type="button" aria-label="ロード履歴">履歴</button>
+            <button class="baccarat-mobile-drawer" id="baccaratPlayersToggle" type="button" aria-label="参加者">参加者</button>
+            <div class="baccarat-crowd"><span>参加</span><strong id="baccaratParticipantCount">0</strong></div>
+            <div class="baccarat-wallet"><span>残高</span><strong id="baccaratWallet">2,000 Don</strong></div>
+            <button id="copyBaccaratInvite" type="button">友達招待</button>
+            <button id="leaveBaccarat" type="button">ロビーへ</button>
           </header>
-          <div class="poker-table">
-            <div class="poker-felt">
-              <div class="poker-stage">
-                <span id="pokerStage">待機中</span>
-                <strong id="pokerEvent">テキサスポーカーへようこそ</strong>
-                <small id="pokerTimer">10</small>
+
+          <div class="baccarat-layout">
+            <aside class="baccarat-road-panel">
+              <header><strong>ビーズロード</strong><button id="closeBaccaratHistory" type="button" aria-label="閉じる">閉じる</button></header>
+              <div class="baccarat-road" id="baccaratRoad" aria-label="直近の勝敗"></div>
+              <div class="baccarat-shoe">
+                <span>シュー残り</span>
+                <strong id="baccaratShoe">416 / 416</strong>
+                <i id="baccaratShoeMeter"></i>
               </div>
-              <div class="community-cards" id="pokerCommunity"></div>
-              <div class="poker-seats" id="pokerSeats"></div>
+              <div class="baccarat-rules">
+                <strong>標準ルール</strong>
+                <span>PLAYER 1:1 / BANKER 0.95:1</span>
+                <span>TIE 8:1 / PAIR 11:1</span>
+                <small>8デッキ・3枚目は標準判定。仮想Donに現金価値はありません。</small>
+              </div>
+            </aside>
+
+            <div class="baccarat-table">
+              <div class="baccarat-felt">
+                <div class="baccarat-phase">
+                  <span id="baccaratPhase">テーブル待機</span>
+                  <strong id="baccaratTimer">--</strong>
+                  <small>秒</small>
+                </div>
+                <div class="baccarat-result-ribbon" id="baccaratResult" aria-live="polite"></div>
+
+                <div class="baccarat-hands">
+                  <section class="baccarat-hand player">
+                    <header><span>PLAYER</span><strong id="baccaratPlayerTotal">-</strong></header>
+                    <div class="baccarat-cards" id="baccaratPlayerCards"></div>
+                  </section>
+                  <section class="baccarat-hand banker">
+                    <header><span>BANKER</span><strong id="baccaratBankerTotal">-</strong></header>
+                    <div class="baccarat-cards" id="baccaratBankerCards"></div>
+                  </section>
+                </div>
+
+                <div class="baccarat-bet-grid" id="baccaratBettingGrid">
+                  <button type="button" class="player" data-baccarat-target="player">
+                    <span>PLAYER</span><strong>1:1</strong><b id="baccaratBet-player">0 Don</b><small id="baccaratCrowd-player">卓 0</small>
+                  </button>
+                  <button type="button" class="player-pair" data-baccarat-target="playerPair">
+                    <span>PLAYER PAIR</span><strong>11:1</strong><b id="baccaratBet-playerPair">0 Don</b><small id="baccaratCrowd-playerPair">卓 0</small>
+                  </button>
+                  <button type="button" class="tie" data-baccarat-target="tie">
+                    <span>TIE</span><strong>8:1</strong><b id="baccaratBet-tie">0 Don</b><small id="baccaratCrowd-tie">卓 0</small>
+                  </button>
+                  <button type="button" class="banker-pair" data-baccarat-target="bankerPair">
+                    <span>BANKER PAIR</span><strong>11:1</strong><b id="baccaratBet-bankerPair">0 Don</b><small id="baccaratCrowd-bankerPair">卓 0</small>
+                  </button>
+                  <button type="button" class="banker" data-baccarat-target="banker">
+                    <span>BANKER</span><strong>0.95:1</strong><b id="baccaratBet-banker">0 Don</b><small id="baccaratCrowd-banker">卓 0</small>
+                  </button>
+                </div>
+              </div>
             </div>
+
+            <aside class="baccarat-players-panel">
+              <header><strong>参加者</strong><button id="closeBaccaratPlayers" type="button" aria-label="閉じる">閉じる</button></header>
+              <div class="baccarat-participants" id="baccaratParticipants"></div>
+              <header class="recent-title"><strong>最近のベット</strong></header>
+              <div class="baccarat-recent" id="baccaratRecentBets"></div>
+            </aside>
           </div>
-          <footer class="poker-actions">
-            <div class="my-cards" id="pokerMyCards"></div>
-            <div class="poker-action-buttons">
-              <button id="pokerFold" type="button">フォールド</button>
-              <button id="pokerCall" type="button">チェック</button>
-              <label class="raise-input" for="pokerRaiseAmount">
-                <span>レイズ額</span>
-                <input id="pokerRaiseAmount" type="number" min="20" max="2000" step="10" value="50" inputmode="numeric" />
-              </label>
-              <button id="pokerRaise" type="button">レイズ</button>
+
+          <footer class="baccarat-controls">
+            <div class="baccarat-selection"><span>選択チップ</span><strong id="baccaratSelectedChip">100 Don</strong></div>
+            <div class="baccarat-chip-rail" id="baccaratChipRail" role="group" aria-label="チップ選択">
+              <button type="button" data-baccarat-chip="10"><span>10</span></button>
+              <button type="button" data-baccarat-chip="50"><span>50</span></button>
+              <button type="button" class="active" data-baccarat-chip="100"><span>100</span></button>
+              <button type="button" data-baccarat-chip="500"><span>500</span></button>
+              <button type="button" data-baccarat-chip="1000"><span>1000</span></button>
             </div>
-            <div class="poker-raise-presets" id="pokerRaisePresets" aria-label="クイックレイズ">
-              <button type="button" data-poker-raise-preset="50">+50</button>
-              <button type="button" data-poker-raise-preset="100">+100</button>
-              <button type="button" data-poker-raise-preset="max">MAX</button>
-            </div>
-            <div class="poker-stack-line" id="pokerStackLine">2000Don</div>
-            <div class="poker-janken" id="pokerJankenPanel" hidden>
-              <strong>Donがなくなりました。CPじゃんけんで復帰</strong>
-              <span>負け +500 / あいこ +1000 / 勝ち +2000</span>
-              <div>
-                <button type="button" data-poker-janken="rock">グー</button>
-                <button type="button" data-poker-janken="scissors">チョキ</button>
-                <button type="button" data-poker-janken="paper">パー</button>
-              </div>
+            <div class="baccarat-actions">
+              <button id="baccaratUndo" type="button" aria-label="1つ戻す">戻す</button>
+              <button id="baccaratClear" type="button">クリア</button>
+              <button id="baccaratRepeat" type="button">リピート</button>
+              <button id="baccaratConfirm" type="button"><i data-lucide="check"></i><span>ベット確定</span></button>
             </div>
           </footer>
         </div>
