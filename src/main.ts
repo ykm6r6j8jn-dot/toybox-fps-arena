@@ -247,7 +247,6 @@ type BaccaratSnapshot = {
   version: string;
   table: string;
   chaosMode: boolean;
-  chaosFavoredName: string;
   chaosWinPermille: number;
   selfId: string;
   phase: BaccaratPhase;
@@ -278,7 +277,6 @@ type BaccaratSnapshot = {
     bankerPair: boolean;
     natural: boolean;
     chaosApplied?: boolean;
-    chaosFavoredName?: string;
     chaosTarget?: BaccaratTarget;
     chaosShouldWin?: boolean;
   } | null;
@@ -420,7 +418,7 @@ const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
 const joinBaccaratRoomButton = $("#joinBaccaratRoom") as HTMLButtonElement;
 const joinBaccaratQaRoomButton = $("#joinBaccaratQaRoom") as HTMLButtonElement;
 const baccaratQaEntryNote = $("#baccaratQaEntryNote");
-const baccaratChaosConsent = $("#baccaratChaosConsent") as HTMLInputElement;
+const baccaratChaosConsent = $("#baccaratChaosConsent") as HTMLButtonElement;
 const baccaratPanel = $("#baccaratPanel");
 const baccaratChaosBanner = $("#baccaratChaosBanner");
 const baccaratChaosStatus = $("#baccaratChaosStatus");
@@ -570,7 +568,6 @@ const inventoryStorageKey = "donpachi-inventory-v1";
 const loginStorageKey = "donpachi-login-id";
 const inviteRoomStorageKey = "donpachi-last-invite-room";
 const guestWalletStorageKey = "donpachi-guest-wallet-v1";
-const baccaratChaosConsentStorageKey = "donpachi-baccarat-chaos-consent-v1";
 const globalFpsRoomCode = "DONPCH";
 const globalBaccaratTableCode = "DONBAC";
 const installInviteRequested = launchParams.get("install") === "1";
@@ -588,11 +585,18 @@ let sharedWalletSyncIdentity = "";
 let sharedWalletSyncPromise: Promise<number> | null = null;
 
 nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Player${Math.floor(Math.random() * 90 + 10)}`).replace(/[<>]/g, "");
-baccaratChaosConsent.checked = localStorage.getItem(baccaratChaosConsentStorageKey) === "accepted";
-baccaratChaosConsent.addEventListener("change", () => {
-  if (baccaratChaosConsent.checked) localStorage.setItem(baccaratChaosConsentStorageKey, "accepted");
-  else localStorage.removeItem(baccaratChaosConsentStorageKey);
-});
+let baccaratChaosConsentAccepted = false;
+function setBaccaratChaosConsent(accepted: boolean) {
+  baccaratChaosConsentAccepted = accepted;
+  baccaratChaosConsent.classList.toggle("accepted", accepted);
+  baccaratChaosConsent.setAttribute("aria-pressed", String(accepted));
+  const label = baccaratChaosConsent.querySelector("strong");
+  if (label) label.textContent = accepted ? "公開CHAOSルールに同意済み" : "公開CHAOSルールに同意する";
+  joinBaccaratRoomButton.disabled = !accepted;
+  joinBaccaratRoomButton.textContent = accepted ? "共通チップバカラへ" : "同意後にバカラへ";
+}
+baccaratChaosConsent.addEventListener("click", () => setBaccaratChaosConsent(true));
+setBaccaratChaosConsent(false);
 nameInput.addEventListener("input", () => {
   const name = sanitizeTextInput(nameInput.value, 14).replace(/[<>]/g, "");
   if (name) localStorage.setItem("toybox-name", name);
@@ -793,6 +797,7 @@ const self = {
   id: "",
   room: "",
   joined: false,
+  isHost: false,
   ready: false,
   health: maxHealth,
   ammo: guns[0].magSize,
@@ -1133,13 +1138,13 @@ function setSkin(skin: SkinId | string) {
 }
 
 function isHostPlayer() {
-  return (nameInput.value.trim() || "プレイヤー") === "ひでお";
+  return self.isHost;
 }
 
 function requestRoomConfig(nextMode = gameMode, nextTeam = teamChoice, nextCpuFill = cpuFillEnabled, nextRelation = relationMode) {
   if (!self.joined) return false;
   if (!isHostPlayer()) {
-    showToast("試合設定はホスト「ひでお」が変更できます。");
+    showToast("試合設定はホストのみ変更できます。");
     setGameMode(gameMode);
     setTeamChoice(teamChoice);
     setCpuFill(cpuFillEnabled);
@@ -4421,9 +4426,8 @@ function sanitizePlayerNameInput() {
 }
 
 function refreshBaccaratQaAccess() {
-  const eligible = loggedInLoginId === "HIDEO0000" && sanitizePlayerNameInput() === "ひでお";
-  joinBaccaratQaRoomButton.hidden = !eligible;
-  baccaratQaEntryNote.hidden = !eligible;
+  joinBaccaratQaRoomButton.hidden = true;
+  baccaratQaEntryNote.hidden = true;
 }
 
 function joinTypedRoom() {
@@ -4573,7 +4577,7 @@ window.addEventListener("online", () => {
 async function joinBaccarat(qaMode = false) {
   const entryButton = qaMode ? joinBaccaratQaRoomButton : joinBaccaratRoomButton;
   if (entryButton.disabled || (qaMode && entryButton.hidden)) return;
-  if (!qaMode && !baccaratChaosConsent.checked) {
+  if (!qaMode && !baccaratChaosConsentAccepted) {
     showToast("公開CHAOSルールを確認して同意してください。");
     baccaratChaosConsent.focus({ preventScroll: false });
     return;
@@ -4621,7 +4625,7 @@ function openBaccaratSocket() {
       skin: currentSkin,
       progress: progressState,
       qaMode: baccaratQaRequested,
-      chaosConsent: baccaratQaRequested || baccaratChaosConsent.checked
+      chaosConsent: baccaratQaRequested || baccaratChaosConsentAccepted
     }));
   });
   tableSocket.addEventListener("message", handleMessage);
@@ -4662,6 +4666,7 @@ function leaveBaccaratRoom() {
   baccaratWalletLabelEl.textContent = "共通Don";
   copyBaccaratInviteButton.hidden = false;
   document.body.classList.remove("baccarat-open", "baccarat-history-open", "baccarat-players-open");
+  setBaccaratChaosConsent(false);
   joinPanel.classList.remove("hidden");
   history.replaceState(null, "", location.pathname);
   closeCurrentSocket("leave");
@@ -4811,6 +4816,7 @@ function handleMessage(event: MessageEvent<string>) {
     self.id = message.id;
     self.room = message.room;
     self.joined = true;
+    self.isHost = Boolean(message.isHost);
     if (lobbyReturnTimer) {
       window.clearTimeout(lobbyReturnTimer);
       lobbyReturnTimer = 0;
@@ -6294,6 +6300,7 @@ function scheduleLobbyReturn() {
 function returnToLobbyAfterRound() {
   lobbyReturnTimer = 0;
   self.joined = false;
+  self.isHost = false;
   self.ready = false;
   matchPhase = "waiting";
   matchPhaseEndsAt = 0;
@@ -7945,9 +7952,8 @@ function renderBaccarat(snapshot: BaccaratSnapshot) {
   baccaratPanel.classList.toggle("showing-result", Boolean(snapshot.outcome));
   baccaratChaosBanner.hidden = !snapshot.chaosMode;
   if (snapshot.chaosMode) {
-    const favoredName = snapshot.chaosFavoredName || "ひでお";
     const winRate = (snapshot.chaosWinPermille / 10).toFixed(1);
-    baccaratChaosBanner.querySelector("span")!.textContent = `名前「${favoredName}」の最大ベット先は${winRate}%で的中`;
+    baccaratChaosBanner.querySelector("span")!.textContent = `優遇対象プレイヤーの最大ベット先は${winRate}%で的中`;
     baccaratChaosStatus.textContent = snapshot.outcome?.chaosApplied
       ? `この結果は公開補正済み: ${baccaratTargetLabel(snapshot.outcome.chaosTarget || "player")} / ${snapshot.outcome.chaosShouldWin ? "優遇成立" : "0.1%非成立"}`
       : "結果はサーバーで補正され、全員の共通Donに反映されます。";

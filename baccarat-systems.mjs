@@ -1,7 +1,6 @@
 export const baccaratVersion = "BACCARAT 1.3";
 export const globalBaccaratTableCode = "DONBAC";
 export const baccaratQaTableCode = "DONQA";
-export const baccaratChaosFavoredName = "ひでお";
 export const baccaratChaosWinPermille = 999;
 export const initialSharedDon = 2000;
 export const baccaratBettingMs = 12_000;
@@ -171,7 +170,7 @@ export function resolveBaccaratQaRound(table) {
 export function resolveBaccaratChaosRound(table) {
   const favoredPlayer = [...table.players.values()].find((candidate) => (
     candidate.connected
-    && candidate.name === baccaratChaosFavoredName
+    && candidate.chaosEligible
     && baccaratBetTotal(candidate.bets) > 0
   ));
   const target = dominantBaccaratTarget(favoredPlayer?.bets);
@@ -183,7 +182,6 @@ export function resolveBaccaratChaosRound(table) {
   return {
     ...fixedQaOutcome(target, shouldWin),
     chaosApplied: true,
-    chaosFavoredName: baccaratChaosFavoredName,
     chaosTarget: target,
     chaosShouldWin: shouldWin
   };
@@ -243,6 +241,7 @@ export function addBaccaratPlayer(table, player, now = Date.now()) {
     betStack: [],
     locked: false,
     connected: true,
+    chaosEligible: Boolean(player.chaosEligible),
     lastPayout: 0,
     lastNet: 0,
     joinedAt: now,
@@ -253,7 +252,7 @@ export function addBaccaratPlayer(table, player, now = Date.now()) {
   return normalized;
 }
 
-export function reconnectBaccaratPlayer(table, player, { id, ws, name }, now = Date.now()) {
+export function reconnectBaccaratPlayer(table, player, { id, ws, name, chaosEligible }, now = Date.now()) {
   if (!player || !table.players.has(player.id)) return null;
   if (id && id !== player.id) {
     table.players.delete(player.id);
@@ -262,6 +261,7 @@ export function reconnectBaccaratPlayer(table, player, { id, ws, name }, now = D
   }
   player.ws = ws || null;
   player.name = String(name || player.name);
+  player.chaosEligible = Boolean(chaosEligible);
   player.connected = true;
   player.lastSeen = now;
   return player;
@@ -404,7 +404,6 @@ export function updateBaccaratTable(table, now = Date.now(), randomInt) {
       playerPair: table.outcome.playerPair,
       bankerPair: table.outcome.bankerPair,
       chaosApplied: Boolean(table.outcome.chaosApplied),
-      chaosFavoredName: table.outcome.chaosFavoredName || "",
       chaosTarget: table.outcome.chaosTarget || "",
       chaosShouldWin: Boolean(table.outcome.chaosShouldWin),
       at: now
@@ -451,7 +450,6 @@ export function baccaratSnapshotFor(table, viewerId, now = Date.now()) {
     version: baccaratVersion,
     table: table.code,
     chaosMode: Boolean(table.chaosMode),
-    chaosFavoredName: table.chaosMode ? baccaratChaosFavoredName : "",
     chaosWinPermille: table.chaosMode ? baccaratChaosWinPermille : 0,
     selfId: viewerId,
     phase: table.phase,

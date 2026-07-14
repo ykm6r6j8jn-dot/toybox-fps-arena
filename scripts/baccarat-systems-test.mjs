@@ -98,7 +98,7 @@ assert.equal(settled.settledPlayers.length, 1);
 const qaTable = createBaccaratTable(2000, () => 0);
 qaTable.code = "DONQA";
 qaTable.qaMode = true;
-const qaPlayer = addBaccaratPlayer(qaTable, { id: "qa", name: "ひでお", chips: 2000 }, 2000);
+const qaPlayer = addBaccaratPlayer(qaTable, { id: "qa", name: "QA Player", chips: 2000 }, 2000);
 qaPlayer.bets.player = 10;
 let qaPlayerWins = 0;
 for (let round = 0; round < 1000; round += 1) {
@@ -113,7 +113,7 @@ assert.equal(resolveBaccaratQaRound(qaTable).bankerPair, true, "QA table support
 
 const chaosTable = createBaccaratTable(3000, () => 0);
 chaosTable.chaosMode = true;
-const chaosPlayer = addBaccaratPlayer(chaosTable, { id: "chaos", name: "ひでお", chips: 2000 }, 3000);
+const chaosPlayer = addBaccaratPlayer(chaosTable, { id: "chaos", name: "Advantaged Player", chaosEligible: true, chips: 2000 }, 3000);
 chaosPlayer.bets.banker = 10;
 let chaosWins = 0;
 for (let round = 0; round < 1000; round += 1) {
@@ -122,7 +122,7 @@ for (let round = 0; round < 1000; round += 1) {
   assert.equal(outcome.chaosApplied, true, "public CHAOS adjustment must be disclosed in the outcome");
 }
 assert.equal(chaosWins, 999, "public CHAOS table must produce exactly 999 dominant-target wins per 1000 favored bets");
-chaosPlayer.name = "別の名前";
+chaosPlayer.chaosEligible = false;
 chaosTable.shoe = createBaccaratShoe(8, () => 0);
 assert.equal(resolveBaccaratChaosRound(chaosTable).chaosApplied, undefined, "non-favored names must use the standard shoe result");
 

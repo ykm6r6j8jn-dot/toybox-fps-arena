@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { settleBaccaratBets } from "../baccarat-systems.mjs";
@@ -10,10 +11,18 @@ const endpoint = `ws://127.0.0.1:${port}/ws`;
 const walletEndpoint = `http://127.0.0.1:${port}/api/wallet`;
 const profileEndpoint = `http://127.0.0.1:${port}/api/profile`;
 const profileStore = `/tmp/donpachi-baccarat-live-${process.pid}.json`;
+const privilegedLoginId = `Privileged${process.pid}`;
+const privilegedLoginIdHash = createHash("sha256").update(privilegedLoginId).digest("hex");
 let serverOutput = "";
 const server = spawn(process.execPath, ["server.mjs"], {
   cwd: root,
-  env: { ...process.env, PORT: String(port), NODE_ENV: "production", DONPACHI_PROFILE_STORE: profileStore },
+  env: {
+    ...process.env,
+    PORT: String(port),
+    NODE_ENV: "production",
+    DONPACHI_PROFILE_STORE: profileStore,
+    DONPACHI_PRIVILEGED_LOGIN_ID_HASH: privilegedLoginIdHash
+  },
   stdio: ["ignore", "pipe", "pipe"]
 });
 server.stdout.on("data", (chunk) => { serverOutput += String(chunk); });
@@ -72,7 +81,7 @@ function expectWalletRequired(name, guestToken) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
     const timeout = setTimeout(() => reject(new Error(`timeout rejecting uninitialized wallet ${name}`)), 6000);
-    ws.on("open", () => ws.send(JSON.stringify({ type: "baccarat_join", name, guestToken })));
+    ws.on("open", () => ws.send(JSON.stringify({ type: "baccarat_join", name, guestToken, chaosConsent: true })));
     ws.on("message", (raw) => {
       const message = JSON.parse(String(raw));
       if (message.type !== "baccarat_error") return;
@@ -126,17 +135,17 @@ try {
   const qaProfileResponse = await fetch(profileEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ mode: "create", loginId: "HIDEO0000", name: "ひでお" })
+    body: JSON.stringify({ mode: "create", loginId: privilegedLoginId, name: "QA Player" })
   });
   assert.equal(qaProfileResponse.status, 200);
   const qaDenied = await expectBaccaratError({
-    name: "ひでお",
+    name: "QA Player",
     loginId: accountLoginId,
     qaMode: true
   }, "QA access from a display-name impersonator");
   assert.match(qaDenied, /検証アカウント専用/);
 
-  const qa = await openClient("ひでお", "", { loginId: "HIDEO0000", qaMode: true });
+  const qa = await openClient("QA Player", "", { loginId: privilegedLoginId, qaMode: true });
   assert.equal(qa.state.welcome.table, "DONQA");
   assert.equal(qa.state.welcome.qaMode, true);
   assert.equal(qa.state.welcome.walletScope, "qa");
@@ -146,11 +155,17 @@ try {
   const qaWallet = await fetch(walletEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginId: "HIDEO0000" })
+    body: JSON.stringify({ loginId: privilegedLoginId })
   }).then((response) => response.json());
   assert.equal(qaWallet.balance, 2000, "QA table must not alter the shared account wallet");
   send(qa, { type: "baccarat_leave" });
   qa.ws.close(1000, "leave");
+
+  const consentDenied = await expectBaccaratError({
+    name: "NoConsent",
+    guestToken: `no-consent-${process.pid}`
+  }, "shared table entry without consent");
+  assert.match(consentDenied, /同意が必要/);
 
   const rejectedMessage = await expectWalletRequired("NoLobbyGrant", `uninitialized-${process.pid}-wallet`);
   assert.match(rejectedMessage, /ロビーで共通Donを同期/);
@@ -159,8 +174,8 @@ try {
   const betaToken = `beta-${process.pid}-wallet`;
   await initializeWallet(alphaToken);
   await initializeWallet(betaToken);
-  const alpha = await openClient("BaccaratAlpha", alphaToken);
-  const beta = await openClient("BaccaratBeta", betaToken);
+  const alpha = await openClient("BaccaratAlpha", alphaToken, { chaosConsent: true });
+  const beta = await openClient("BaccaratBeta", betaToken, { chaosConsent: true });
   assert.equal(alpha.state.welcome.walletDon, 2000);
   assert.equal(beta.state.welcome.walletDon, 2000);
   assert.equal("startingDon" in alpha.state.welcome, false, "baccarat welcome must not grant starting chips");

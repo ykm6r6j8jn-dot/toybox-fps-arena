@@ -240,7 +240,7 @@
         <div class="setting-block">
           <div class="setting-block-title">
             <span>試合設定</span>
-            <small>ひでおが選ぶと全員に反映</small>
+            <small>ホストが選ぶと全員に反映</small>
           </div>
           <div class="mode-select settings-mode-select" id="settingsModeSelect" role="group" aria-label="プレイ中ゲームモード">
             <button type="button" class="active" data-mode="oneLife">
@@ -427,17 +427,16 @@
                 </div>
                 <span>8デッキ / 12秒ベット / 全員共通卓</span>
               </header>
-              <label class="baccarat-chaos-consent" for="baccaratChaosConsent">
-                <input id="baccaratChaosConsent" type="checkbox" />
+              <button id="baccaratChaosConsent" class="baccarat-chaos-consent" type="button" aria-pressed="false">
                 <span>
                   <strong>公開CHAOSルールに同意する</strong>
-                  <small>名前「ひでお」の最大ベット先は99.9%で的中します。全員の共通Donが実際に増減します。</small>
+                  <small>優遇対象プレイヤーの最大ベット先は99.9%で的中します。全員の共通Donが実際に増減します。</small>
                 </span>
-              </label>
-              <button id="joinBaccaratRoom" type="button">共通チップバカラへ</button>
+              </button>
+              <button id="joinBaccaratRoom" type="button" disabled>同意後にバカラへ</button>
               <button id="joinBaccaratQaRoom" class="baccarat-qa-entry" type="button" hidden>検証用バカラへ</button>
               <small>ロビーの共通Don残高をそのまま使用。FPS報酬も同じ残高へ加算されます。</small>
-              <small id="baccaratQaEntryNote" class="baccarat-qa-note" hidden>HIDEO0000 / ひでお専用・仮想Don・報酬なし・最大ベット先99.9%</small>
+              <small id="baccaratQaEntryNote" class="baccarat-qa-note" hidden>指定検証アカウント専用・仮想Don・報酬なし・最大ベット先99.9%</small>
             </div>
           </div>
           <div class="online-panel">
@@ -569,7 +568,7 @@
 
           <div class="baccarat-chaos-banner" id="baccaratChaosBanner" role="note">
             <strong>公開CHAOSルール</strong>
-            <span>名前「ひでお」の最大ベット先は99.9%で的中</span>
+            <span>優遇対象プレイヤーの最大ベット先は99.9%で的中</span>
             <small id="baccaratChaosStatus">結果はサーバーで補正され、全員の共通Donに反映されます。</small>
           </div>
 
@@ -586,7 +585,7 @@
                 <strong>標準配当 + 公開CHAOS補正</strong>
                 <span>PLAYER 1:1 / BANKER 0.95:1</span>
                 <span>TIE 8:1 / PAIR 11:1</span>
-                <small>8デッキ。名前「ひでお」の最大ベット先は99.9%で的中します。仮想Donに現金価値はありません。</small>
+                <small>8デッキ。優遇対象プレイヤーの最大ベット先は99.9%で的中します。仮想Donに現金価値はありません。</small>
               </div>
             </aside>
 

@@ -9,7 +9,6 @@ import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gam
 import { calculateFpsDonReward } from "./economy-systems.mjs";
 import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from "./match-systems.mjs";
 import {
-  baccaratChaosFavoredName,
   baccaratChaosWinPermille,
   addBaccaratPlayer,
   baccaratQaTableCode,
@@ -53,6 +52,7 @@ import {
   toyboxElevatorDefinitions,
   toyboxTowerDefinitions
 } from "./vertical-systems.mjs";
+
 import {
   chooseCpuTactic,
   computeCpuDestination,
@@ -66,6 +66,17 @@ import {
   scoreCpuTarget,
   selectCpuWeapon
 } from "./ai-systems.mjs";
+
+const configuredPrivilegedLoginIdHash = String(process.env.DONPACHI_PRIVILEGED_LOGIN_ID_HASH || "").trim().toLowerCase();
+const privilegedLoginIdHash = /^[a-f0-9]{64}$/.test(configuredPrivilegedLoginIdHash)
+  ? configuredPrivilegedLoginIdHash
+  : "909f5cb6161de820bee3aa5e94b9ef77d21a6f94578c1b39154364558acbcb38";
+
+function isPrivilegedLoginId(loginId) {
+  const normalized = normalizeLoginId(loginId);
+  if (!normalized) return false;
+  return createHash("sha256").update(normalized).digest("hex") === privilegedLoginIdHash;
+}
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
@@ -1974,6 +1985,7 @@ function fpsWelcomePayload(player, room, profile, resumed = false) {
     profile: profile ? publicProfile(profile) : null,
     guestToken: player.guestToken || "",
     walletDon: playerWalletDon(player),
+    isHost: Boolean(player.isHost),
     resumeToken: player.resumeToken,
     resumed
   };
@@ -2682,16 +2694,13 @@ wss.on("connection", (ws) => {
         saveProfileSoon();
       }
       const profile = profileRecord?.profile || null;
-      const qaAuthorized = requestedLoginId === "HIDEO0000" && sanitizePlayerName(profile?.name) === "ひでお";
+      const qaAuthorized = isPrivilegedLoginId(requestedLoginId);
       if (qaRequested && !qaAuthorized) {
         send(ws, { type: "baccarat_error", message: "検証卓は指定された検証アカウント専用です。" });
         return;
       }
       if (!qaRequested && !chaosConsent) {
-        send(ws, {
-          type: "baccarat_error",
-          message: `公開CHAOSルール（名前「${baccaratChaosFavoredName}」の最大ベット先が${(baccaratChaosWinPermille / 10).toFixed(1)}%で的中）への同意が必要です。`
-        });
+        send(ws, { type: "baccarat_error", message: `公開CHAOSルール（優遇対象プレイヤーの最大ベット先が${(baccaratChaosWinPermille / 10).toFixed(1)}%で的中）への同意が必要です。` });
         return;
       }
       const table = qaRequested ? baccaratQaTable : baccaratTable;
@@ -2709,13 +2718,14 @@ wss.on("connection", (ws) => {
         return;
       }
       const player = existing
-        ? reconnectBaccaratPlayer(table, existing, { ws, name: sanitizePlayerName(profile?.name || message.name) }, Date.now())
+        ? reconnectBaccaratPlayer(table, existing, { ws, name: sanitizePlayerName(profile?.name || message.name), chaosEligible: qaAuthorized }, Date.now())
         : addBaccaratPlayer(table, {
           id: crypto.randomUUID(),
           ws,
           profileKey: profileRecord?.key || "",
           guestToken,
           name: sanitizePlayerName(profile?.name || message.name),
+          chaosEligible: qaAuthorized,
           chips: qaRequested ? initialSharedDon : balance
         });
       if (!player) {
@@ -2734,7 +2744,6 @@ wss.on("connection", (ws) => {
         walletScope: qaRequested ? "qa" : profileRecord ? "account" : "guest",
         qaMode: qaRequested,
         chaosMode: !qaRequested && Boolean(table.chaosMode),
-        chaosFavoredName: !qaRequested ? baccaratChaosFavoredName : "",
         chaosWinPermille: !qaRequested ? baccaratChaosWinPermille : 0,
         guestToken,
         profile: profile ? publicProfile(profile) : null
@@ -2809,6 +2818,7 @@ wss.on("connection", (ws) => {
         resumedPlayer.spawnProtectedUntil = Math.max(resumedPlayer.spawnProtectedUntil || 0, now + 1600);
         resumedPlayer.nextZoneDamageAt = Math.max(resumedPlayer.nextZoneDamageAt || 0, now + 1600);
         if (profileRecord?.key) resumedPlayer.profileKey = profileRecord.key;
+        resumedPlayer.isHost = isPrivilegedLoginId(requestedLoginId);
         resumedPlayer.guestToken = guestToken || resumedPlayer.guestToken || "";
         currentRoom = room;
         currentPlayer = resumedPlayer;
@@ -2852,6 +2862,7 @@ wss.on("connection", (ws) => {
         explicitLeave: false,
         poseHistory: [],
         profileKey: profileRecord?.key || "",
+        isHost: isPrivilegedLoginId(requestedLoginId),
         guestToken,
         name: sanitizePlayerName(loginProfile?.name || message.name),
         color: team,
@@ -2897,9 +2908,9 @@ wss.on("connection", (ws) => {
       recordPlayerPose(player);
       currentRoom = room;
       currentPlayer = player;
-      if (player.name === "ひでお") {
+      if (player.isHost) {
         applyRoomConfig(room, player, message.gameMode, message.team, message.cpuFill, message.relationMode);
-        addFeed(room, `ひでお が ${modeLabel(room.mode)} に変更`, player.color);
+        addFeed(room, `ホストが ${modeLabel(room.mode)} に変更`, player.color);
       }
       syncMatchCpuFill(room);
       addFeed(room, `${player.name} が参加`, player.color);
@@ -3153,7 +3164,7 @@ wss.on("connection", (ws) => {
       if (!teams.has(requestedTeam)) return;
       const targetPlayer = currentRoom.players.get(String(message.targetId || currentPlayer.id));
       if (!targetPlayer) return;
-      if (targetPlayer.id !== currentPlayer.id && currentPlayer.name !== "ひでお") {
+      if (targetPlayer.id !== currentPlayer.id && !currentPlayer.isHost) {
         send(currentPlayer.ws, { type: "error", message: "他プレイヤーのチーム変更はホストのみ可能です。" });
         return;
       }
@@ -3166,12 +3177,12 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "set_room_config") {
-      if (currentPlayer.name !== "ひでお") {
-        send(currentPlayer.ws, { type: "error", message: "試合設定はホスト「ひでお」が変更できます。" });
+      if (!currentPlayer.isHost) {
+        send(currentPlayer.ws, { type: "error", message: "試合設定はホストのみ変更できます。" });
         return;
       }
       applyRoomConfig(currentRoom, currentPlayer, message.gameMode, message.team, message.cpuFill, message.relationMode);
-      addFeed(currentRoom, `ひでお が ${modeLabel(currentRoom.mode)} に変更`, currentPlayer.color);
+      addFeed(currentRoom, `ホストが ${modeLabel(currentRoom.mode)} に変更`, currentPlayer.color);
       broadcast(currentRoom, {
         type: "room_config",
         gameMode: currentRoom.mode,
