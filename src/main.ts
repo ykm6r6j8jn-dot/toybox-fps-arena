@@ -411,6 +411,8 @@ const createRoomButton = $("#createRoom") as HTMLButtonElement;
 const roomInput = $("#roomInput") as HTMLInputElement;
 const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
 const joinBaccaratRoomButton = $("#joinBaccaratRoom") as HTMLButtonElement;
+const joinBaccaratQaRoomButton = $("#joinBaccaratQaRoom") as HTMLButtonElement;
+const baccaratQaEntryNote = $("#baccaratQaEntryNote");
 const baccaratPanel = $("#baccaratPanel");
 const baccaratTableCodeEl = $("#baccaratTableCode");
 const baccaratRoundEl = $("#baccaratRound");
@@ -420,6 +422,7 @@ const baccaratPlayersToggle = $("#baccaratPlayersToggle") as HTMLButtonElement;
 const closeBaccaratHistory = $("#closeBaccaratHistory") as HTMLButtonElement;
 const closeBaccaratPlayers = $("#closeBaccaratPlayers") as HTMLButtonElement;
 const baccaratParticipantCountEl = $("#baccaratParticipantCount");
+const baccaratWalletLabelEl = $("#baccaratWalletLabel");
 const baccaratWalletEl = $("#baccaratWallet");
 const baccaratRoadEl = $("#baccaratRoad");
 const baccaratShoeEl = $("#baccaratShoe");
@@ -561,6 +564,7 @@ const globalFpsRoomCode = "DONPCH";
 const globalBaccaratTableCode = "DONBAC";
 const installInviteRequested = launchParams.get("install") === "1";
 const invitePlayMode = launchParams.get("play") === "baccarat" ? "baccarat" : "fps";
+const inviteBaccaratQaRequested = launchParams.get("baccaratQa") === "1";
 const autoJoinInviteRequested = launchParams.get("join") === "1" || (installInviteRequested && Boolean(launchParams.get("room")));
 let progressState = loadProgressState();
 let profileInventory = loadProfileInventory();
@@ -576,6 +580,7 @@ nameInput.value = sanitizeTextInput(localStorage.getItem("toybox-name"), 14, `Pl
 nameInput.addEventListener("input", () => {
   const name = sanitizeTextInput(nameInput.value, 14).replace(/[<>]/g, "");
   if (name) localStorage.setItem("toybox-name", name);
+  refreshBaccaratQaAccess();
   scheduleProfileSync();
 });
 loginIdInput.value = loggedInLoginId;
@@ -583,6 +588,7 @@ loginIdInput.addEventListener("input", () => {
   const nextId = sanitizeLoginId(loginIdInput.value);
   if (loginIdInput.value !== nextId) loginIdInput.value = nextId;
 });
+refreshBaccaratQaAccess();
 const urlRoomCode = sanitizeRoomCode(launchParams.get("room") || "");
 if (urlRoomCode) localStorage.setItem(inviteRoomStorageKey, urlRoomCode);
 const initialRoomCode = invitePlayMode === "baccarat" ? globalBaccaratTableCode : (urlRoomCode || globalFpsRoomCode);
@@ -670,6 +676,8 @@ const donPunches = new Map<string, { mesh: THREE.Group; expiresAt: number; targe
 const players = new Map<string, PlayerState>();
 let baccaratJoined = false;
 let baccaratSelfId = "";
+let baccaratQaRequested = false;
+let baccaratQaMode = false;
 let latestBaccaratSnapshot: BaccaratSnapshot | null = null;
 let selectedBaccaratChip = 100;
 let baccaratReconnectWanted = false;
@@ -1310,6 +1318,7 @@ function applyLoginProfile(profile: LoginProfile) {
     saveProfileInventory();
   }
   applyingProfile = false;
+  refreshBaccaratQaAccess();
   renderProgressCard(`ログイン済み / 回復${profileInventory.healPacks}個`);
 }
 
@@ -3617,7 +3626,8 @@ document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
 createRoomButton.addEventListener("click", () => { void join(""); });
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
-joinBaccaratRoomButton.addEventListener("click", () => { void joinBaccarat(); });
+joinBaccaratRoomButton.addEventListener("click", () => { void joinBaccarat(false); });
+joinBaccaratQaRoomButton.addEventListener("click", () => { void joinBaccarat(true); });
 createLoginIdButton.addEventListener("click", () => {
   if (!sanitizeLoginId(loginIdInput.value)) loginIdInput.value = generateLoginId();
   void requestProfile("create")
@@ -4394,6 +4404,12 @@ function sanitizePlayerNameInput() {
   return sanitizeTextInput(nameInput.value, 14, "プレイヤー").replace(/[<>]/g, "").trim() || "プレイヤー";
 }
 
+function refreshBaccaratQaAccess() {
+  const eligible = loggedInLoginId === "HIDEO0000" && sanitizePlayerNameInput() === "ひでお";
+  joinBaccaratQaRoomButton.hidden = !eligible;
+  baccaratQaEntryNote.hidden = !eligible;
+}
+
 function joinTypedRoom() {
   const code = sanitizeRoomCode(roomInput.value);
   roomInput.value = globalFpsRoomCode;
@@ -4538,17 +4554,18 @@ window.addEventListener("online", () => {
   openFpsSocket(true);
 });
 
-async function joinBaccarat() {
-  if (joinBaccaratRoomButton.disabled) return;
-  joinBaccaratRoomButton.disabled = true;
+async function joinBaccarat(qaMode = false) {
+  const entryButton = qaMode ? joinBaccaratQaRoomButton : joinBaccaratRoomButton;
+  if (entryButton.disabled || (qaMode && entryButton.hidden)) return;
+  entryButton.disabled = true;
   try {
     await syncSharedWallet(true);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "共通Donを同期できませんでした。");
-    joinBaccaratRoomButton.disabled = false;
+    entryButton.disabled = false;
     return;
   }
-  joinBaccaratRoomButton.disabled = false;
+  entryButton.disabled = false;
   const name = sanitizePlayerNameInput();
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
@@ -4557,6 +4574,8 @@ async function joinBaccarat() {
   self.joined = false;
   baccaratJoined = false;
   baccaratSelfId = "";
+  baccaratQaRequested = qaMode;
+  baccaratQaMode = false;
   latestBaccaratSnapshot = null;
   baccaratReconnectWanted = true;
   if (baccaratReconnectTimer) window.clearTimeout(baccaratReconnectTimer);
@@ -4579,7 +4598,8 @@ function openBaccaratSocket() {
       guestToken: guestWalletToken,
       cosmeticColor: customColor,
       skin: currentSkin,
-      progress: progressState
+      progress: progressState,
+      qaMode: baccaratQaRequested
     }));
   });
   tableSocket.addEventListener("message", handleMessage);
@@ -4607,6 +4627,8 @@ function leaveBaccaratRoom() {
   send({ type: "baccarat_leave" });
   baccaratJoined = false;
   baccaratSelfId = "";
+  baccaratQaRequested = false;
+  baccaratQaMode = false;
   latestBaccaratSnapshot = null;
   baccaratAudioRound = -1;
   baccaratAudioPhase = null;
@@ -4614,6 +4636,9 @@ function leaveBaccaratRoom() {
   baccaratAudioResultRound = -1;
   setFpsActive(false);
   baccaratPanel.classList.remove("open");
+  baccaratPanel.classList.remove("qa-mode");
+  baccaratWalletLabelEl.textContent = "共通Don";
+  copyBaccaratInviteButton.hidden = false;
   document.body.classList.remove("baccarat-open", "baccarat-history-open", "baccarat-players-open");
   joinPanel.classList.remove("hidden");
   history.replaceState(null, "", location.pathname);
@@ -4658,7 +4683,7 @@ function maybeStartInviteAutoJoin() {
   if (!autoJoinInviteRequested || inviteAutoJoinStarted || self.joined || baccaratJoined) return;
   inviteAutoJoinStarted = true;
   if (invitePlayMode === "baccarat") {
-    void joinBaccarat();
+    void joinBaccarat(inviteBaccaratQaRequested);
     return;
   }
   roomInput.value = globalFpsRoomCode;
@@ -4679,12 +4704,14 @@ function handleMessage(event: MessageEvent<string>) {
     setFpsActive(false);
     baccaratJoined = true;
     baccaratSelfId = String(message.id || "");
+    baccaratQaMode = Boolean(message.qaMode);
+    baccaratQaRequested = baccaratQaMode;
     const tableCode = String(message.table || globalBaccaratTableCode);
     if (typeof message.guestToken === "string" && message.guestToken) {
       guestWalletToken = message.guestToken;
       localStorage.setItem(guestWalletStorageKey, guestWalletToken);
     }
-    if (typeof message.walletDon === "number") {
+    if (!baccaratQaMode && typeof message.walletDon === "number") {
       profileInventory.don = THREE.MathUtils.clamp(Math.floor(message.walletDon), 0, 999999);
       saveProfileInventory();
       renderProgressCard();
@@ -4694,31 +4721,38 @@ function handleMessage(event: MessageEvent<string>) {
     roomCodeEl.textContent = tableCode;
     joinPanel.classList.add("hidden");
     baccaratPanel.classList.add("open");
+    baccaratPanel.classList.toggle("qa-mode", baccaratQaMode);
     document.body.classList.add("baccarat-open");
-    baccaratConnectionEl.textContent = "オンライン";
+    baccaratConnectionEl.textContent = baccaratQaMode ? "検証卓" : "オンライン";
     baccaratConnectionEl.classList.remove("reconnecting");
+    baccaratWalletLabelEl.textContent = baccaratQaMode ? "仮想Don" : "共通Don";
+    copyBaccaratInviteButton.hidden = baccaratQaMode;
     baccaratAudioRound = -1;
     baccaratAudioPhase = null;
     baccaratAudioRevealCount = 0;
     baccaratAudioResultRound = -1;
     updateLobbyBgm();
     if (firstEntry) playBaccaratEntrySound();
-    history.replaceState(null, "", `?play=baccarat&room=${globalBaccaratTableCode}&join=1`);
+    history.replaceState(null, "", baccaratQaMode
+      ? `?play=baccarat&room=${tableCode}&join=1&baccaratQa=1`
+      : `?play=baccarat&room=${globalBaccaratTableCode}&join=1`);
     if (message.profile) applyLoginProfile(message.profile as LoginProfile);
-    if (firstEntry) touchProgressSession("baccarat");
-    showToast(firstEntry ? "共通チップバカラに参加しました。" : "バカラ卓へ再接続しました。");
+    if (firstEntry && !baccaratQaMode) touchProgressSession("baccarat");
+    showToast(firstEntry
+      ? baccaratQaMode ? "検証卓に参加しました。仮想Don・報酬なしです。" : "共通チップバカラに参加しました。"
+      : baccaratQaMode ? "検証卓へ再接続しました。" : "バカラ卓へ再接続しました。");
     return;
   }
   if (message.type === "baccarat_snapshot") {
     latestBaccaratSnapshot = message as BaccaratSnapshot;
-    if (latestBaccaratSnapshot.viewer && latestBaccaratSnapshot.viewer.chips !== profileInventory.don) {
+    if (!baccaratQaMode && latestBaccaratSnapshot.viewer && latestBaccaratSnapshot.viewer.chips !== profileInventory.don) {
       profileInventory.don = THREE.MathUtils.clamp(Math.floor(latestBaccaratSnapshot.viewer.chips), 0, 999999);
       saveProfileInventory();
       renderProgressCard();
     }
     renderBaccarat(latestBaccaratSnapshot);
     syncBaccaratSnapshotAudio(latestBaccaratSnapshot);
-    awardBaccaratProgress(latestBaccaratSnapshot);
+    if (!baccaratQaMode) awardBaccaratProgress(latestBaccaratSnapshot);
     return;
   }
   if (message.type === "baccarat_error") {

@@ -183,7 +183,7 @@ const baccaratProbe = await new Promise((resolve, reject) => {
 });
 
 await waitFor(() => baccaratProbe.state.snapshots.some((table) => (
-  table.version === "BACCARAT 1.1"
+  table.version === "BACCARAT 1.2"
   && table.table === "DONBAC"
   && table.phase === "betting"
   && table.viewer?.chips >= 10
@@ -196,4 +196,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 and BACCARAT 1.1 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 and BACCARAT 1.2 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);

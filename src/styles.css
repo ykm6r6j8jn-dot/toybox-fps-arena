@@ -2548,6 +2548,36 @@ body.keyboard-open .join-card {
   font-weight: 950;
 }
 
+.baccarat-lobby-band > .baccarat-qa-entry {
+  border-color: rgba(121, 217, 230, 0.55);
+  background: #8bdbe1;
+  color: #082126;
+}
+
+.baccarat-lobby-band .baccarat-qa-note {
+  padding: 7px 9px;
+  border: 1px solid rgba(121, 217, 230, 0.3);
+  border-radius: 6px;
+  background: rgba(71, 170, 185, 0.13);
+  color: #bceff2;
+}
+
+.baccarat-panel.qa-mode .baccarat-table-id strong,
+.baccarat-panel.qa-mode .baccarat-wallet strong {
+  color: #8ee9ef;
+}
+
+.baccarat-panel.qa-mode .baccarat-connection {
+  border-color: rgba(121, 217, 230, 0.44);
+  background: rgba(71, 170, 185, 0.15);
+  color: #9cebf0;
+}
+
+.baccarat-panel.qa-mode .baccarat-connection::before {
+  background: #7bdce4;
+  box-shadow: 0 0 9px rgba(123, 220, 228, 0.7);
+}
+
 .online-panel {
   display: grid;
   gap: 8px;

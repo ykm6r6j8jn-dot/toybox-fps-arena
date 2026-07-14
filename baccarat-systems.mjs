@@ -1,5 +1,6 @@
-export const baccaratVersion = "BACCARAT 1.1";
+export const baccaratVersion = "BACCARAT 1.2";
 export const globalBaccaratTableCode = "DONBAC";
+export const baccaratQaTableCode = "DONQA";
 export const initialSharedDon = 2000;
 export const baccaratBettingMs = 12_000;
 export const baccaratDealingMs = 2_600;
@@ -111,6 +112,60 @@ export function resolveBaccaratRound(shoe) {
   };
 }
 
+function dominantBaccaratTarget(bets = {}) {
+  return baccaratTargets.reduce((best, target) => {
+    const amount = Math.max(0, Math.floor(finite(bets[target])));
+    return amount > best.amount ? { target, amount } : best;
+  }, { target: "", amount: 0 }).target;
+}
+
+function fixedQaOutcome(target, shouldWin) {
+  let playerCards = ["9S", "13H"];
+  let bankerCards = ["7D", "13C"];
+  if ((target === "banker" && shouldWin) || (target === "player" && !shouldWin) || (target === "tie" && !shouldWin)) {
+    playerCards = ["7S", "13H"];
+    bankerCards = ["9D", "13C"];
+  } else if (target === "tie" && shouldWin) {
+    playerCards = ["1S", "7H"];
+    bankerCards = ["2D", "6C"];
+  } else if (target === "playerPair" && shouldWin) {
+    playerCards = ["4S", "4H"];
+    bankerCards = ["7D", "13C"];
+  } else if (target === "bankerPair" && shouldWin) {
+    playerCards = ["7S", "13H"];
+    bankerCards = ["4D", "4C"];
+  }
+  const playerTotal = baccaratHandTotal(playerCards);
+  const bankerTotal = baccaratHandTotal(bankerCards);
+  return {
+    playerCards,
+    bankerCards,
+    playerTotal,
+    bankerTotal,
+    playerPair: playerCards[0].slice(0, -1) === playerCards[1].slice(0, -1),
+    bankerPair: bankerCards[0].slice(0, -1) === bankerCards[1].slice(0, -1),
+    winner: playerTotal > bankerTotal ? "player" : bankerTotal > playerTotal ? "banker" : "tie",
+    natural: playerTotal >= 8 || bankerTotal >= 8,
+    dealSequence: [
+      { side: "player", card: playerCards[0] },
+      { side: "banker", card: bankerCards[0] },
+      { side: "player", card: playerCards[1] },
+      { side: "banker", card: bankerCards[1] }
+    ]
+  };
+}
+
+export function resolveBaccaratQaRound(table) {
+  const player = [...table.players.values()].find((candidate) => candidate.connected && baccaratBetTotal(candidate.bets) > 0);
+  const target = dominantBaccaratTarget(player?.bets);
+  if (!target) return resolveBaccaratRound(table.shoe);
+  const sequence = Math.max(0, Math.floor(finite(table.qaResolvedRounds)));
+  const shouldWin = sequence % 1000 !== 999;
+  table.qaResolvedRounds = sequence + 1;
+  table.shoe.splice(Math.max(0, table.shoe.length - 4), 4);
+  return fixedQaOutcome(target, shouldWin);
+}
+
 export function settleBaccaratBets(bets, outcome) {
   const normalized = normalizedBets(bets);
   const stake = baccaratBetTotal(normalized);
@@ -145,6 +200,8 @@ export function createBaccaratTable(now = Date.now(), randomInt) {
     outcome: null,
     history: [],
     recentBets: [],
+    qaMode: false,
+    qaResolvedRounds: 0,
     createdAt: now
   };
 }
@@ -290,7 +347,7 @@ export function updateBaccaratTable(table, now = Date.now(), randomInt) {
   }
   if (table.phase === "betting" && now >= table.phaseEndsAt) {
     if (table.shoe.length < 60) table.shoe = createBaccaratShoe(8, randomInt);
-    const outcome = resolveBaccaratRound(table.shoe);
+    const outcome = table.qaMode ? resolveBaccaratQaRound(table) : resolveBaccaratRound(table.shoe);
     table.playerCards = outcome.playerCards;
     table.bankerCards = outcome.bankerCards;
     table.dealSequence = outcome.dealSequence;

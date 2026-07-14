@@ -428,7 +428,9 @@
                 <span>8デッキ / 12秒ベット / 全員共通卓</span>
               </header>
               <button id="joinBaccaratRoom" type="button">共通チップバカラへ</button>
+              <button id="joinBaccaratQaRoom" class="baccarat-qa-entry" type="button" hidden>検証用バカラへ</button>
               <small>ロビーの共通Don残高をそのまま使用。FPS報酬も同じ残高へ加算されます。</small>
+              <small id="baccaratQaEntryNote" class="baccarat-qa-note" hidden>HIDEO0000 / ひでお専用・仮想Don・報酬なし・最大ベット先99.9%</small>
             </div>
           </div>
           <div class="online-panel">
@@ -553,7 +555,7 @@
             <button class="baccarat-mobile-drawer" id="baccaratHistoryToggle" type="button" aria-label="ロード履歴">履歴</button>
             <button class="baccarat-mobile-drawer" id="baccaratPlayersToggle" type="button" aria-label="参加者">参加者</button>
             <div class="baccarat-crowd"><span>参加</span><strong id="baccaratParticipantCount">0</strong></div>
-            <div class="baccarat-wallet"><span>共通Don</span><strong id="baccaratWallet">2,000 Don</strong></div>
+            <div class="baccarat-wallet"><span id="baccaratWalletLabel">共通Don</span><strong id="baccaratWallet">2,000 Don</strong></div>
             <button id="copyBaccaratInvite" type="button">友達招待</button>
             <button id="leaveBaccarat" type="button">ロビーへ</button>
           </header>

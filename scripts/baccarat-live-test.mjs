@@ -30,12 +30,12 @@ async function waitFor(predicate, label, timeoutMs = 8000) {
   throw new Error(`timeout: ${label}\n${serverOutput}`);
 }
 
-function openClient(name, guestToken) {
+function openClient(name, guestToken = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
     const state = { welcome: null, snapshots: [], errors: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 6000);
-    ws.on("open", () => ws.send(JSON.stringify({ type: "baccarat_join", name, guestToken })));
+    ws.on("open", () => ws.send(JSON.stringify({ type: "baccarat_join", name, guestToken, ...options })));
     ws.on("message", (raw) => {
       const message = JSON.parse(String(raw));
       if (message.type === "baccarat_welcome") {
@@ -84,6 +84,22 @@ function expectWalletRequired(name, guestToken) {
   });
 }
 
+function expectBaccaratError(payload, label) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(endpoint);
+    const timeout = setTimeout(() => reject(new Error(`timeout rejecting ${label}`)), 6000);
+    ws.on("open", () => ws.send(JSON.stringify({ type: "baccarat_join", ...payload })));
+    ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type !== "baccarat_error") return;
+      clearTimeout(timeout);
+      ws.close(1000, "expected-rejection");
+      resolve(String(message.message || ""));
+    });
+    ws.on("error", reject);
+  });
+}
+
 const latest = (client) => client.state.snapshots.at(-1);
 const send = (client, payload) => client.ws.send(JSON.stringify(payload));
 
@@ -106,6 +122,35 @@ try {
   const accountWallet = await accountWalletResponse.json();
   assert.equal(accountWallet.scope, "account");
   assert.equal(accountWallet.balance, 2000);
+
+  const qaProfileResponse = await fetch(profileEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode: "create", loginId: "HIDEO0000", name: "ひでお" })
+  });
+  assert.equal(qaProfileResponse.status, 200);
+  const qaDenied = await expectBaccaratError({
+    name: "ひでお",
+    loginId: accountLoginId,
+    qaMode: true
+  }, "QA access from a display-name impersonator");
+  assert.match(qaDenied, /検証アカウント専用/);
+
+  const qa = await openClient("ひでお", "", { loginId: "HIDEO0000", qaMode: true });
+  assert.equal(qa.state.welcome.table, "DONQA");
+  assert.equal(qa.state.welcome.qaMode, true);
+  assert.equal(qa.state.welcome.walletScope, "qa");
+  await waitFor(() => latest(qa)?.phase === "betting" && latest(qa)?.viewer?.chips === 2000, "authorized QA table entry");
+  send(qa, { type: "baccarat_action", action: "bet", target: "player", amount: 10 });
+  await waitFor(() => latest(qa)?.viewer?.bets?.player === 10 && latest(qa)?.viewer?.chips === 1990, "QA table accepts virtual bet");
+  const qaWallet = await fetch(walletEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ loginId: "HIDEO0000" })
+  }).then((response) => response.json());
+  assert.equal(qaWallet.balance, 2000, "QA table must not alter the shared account wallet");
+  send(qa, { type: "baccarat_leave" });
+  qa.ws.close(1000, "leave");
 
   const rejectedMessage = await expectWalletRequired("NoLobbyGrant", `uninitialized-${process.pid}-wallet`);
   assert.match(rejectedMessage, /ロビーで共通Donを同期/);
@@ -162,7 +207,7 @@ try {
     send(client, { type: "baccarat_leave" });
     client.ws.close(1000, "leave");
   }
-  console.log(`baccarat live passed: lobby/account initialized shared Don, direct baccarat grant was rejected, and two players settled one shared balance (${alphaResult.outcome.winner})`);
+  console.log(`baccarat live passed: isolated QA access/wallet rules passed, lobby/account initialized shared Don, direct baccarat grant was rejected, and two players settled one shared balance (${alphaResult.outcome.winner})`);
 } finally {
   if (server.exitCode === null) {
     server.kill("SIGTERM");

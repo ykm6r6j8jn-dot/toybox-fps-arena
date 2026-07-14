@@ -13,6 +13,7 @@ import {
   lockBaccaratBets,
   placeBaccaratBet,
   repeatBaccaratBets,
+  resolveBaccaratQaRound,
   resolveBaccaratRound,
   settleBaccaratBets,
   undoBaccaratBet,
@@ -93,4 +94,20 @@ assert.equal(table.phase, "result");
 assert.equal(table.history.length, 1);
 assert.equal(settled.settledPlayers.length, 1);
 
-console.log("baccarat systems passed: 8-deck shoe, third-card rules, payouts, authoritative bets, reveal timing, and shared settlement");
+const qaTable = createBaccaratTable(2000, () => 0);
+qaTable.code = "DONQA";
+qaTable.qaMode = true;
+const qaPlayer = addBaccaratPlayer(qaTable, { id: "qa", name: "ひでお", chips: 2000 }, 2000);
+qaPlayer.bets.player = 10;
+let qaPlayerWins = 0;
+for (let round = 0; round < 1000; round += 1) {
+  const outcome = resolveBaccaratQaRound(qaTable);
+  if (outcome.winner === "player") qaPlayerWins += 1;
+}
+assert.equal(qaPlayerWins, 999, "isolated QA table must produce exactly 999 dominant-target wins per 1000 resolved bets");
+qaPlayer.bets.player = 0;
+qaPlayer.bets.bankerPair = 10;
+qaTable.qaResolvedRounds = 0;
+assert.equal(resolveBaccaratQaRound(qaTable).bankerPair, true, "QA table supports pair-target verification");
+
+console.log("baccarat systems passed: 8-deck shoe, third-card rules, payouts, authoritative bets, reveal timing, shared settlement, and isolated 99.9% QA sequencing");

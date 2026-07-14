@@ -10,6 +10,7 @@ import { calculateFpsDonReward } from "./economy-systems.mjs";
 import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from "./match-systems.mjs";
 import {
   addBaccaratPlayer,
+  baccaratQaTableCode,
   baccaratSnapshotFor,
   baccaratVersion,
   clearBaccaratBets,
@@ -867,6 +868,9 @@ const guestWallets = new Map();
 const profileStorePath = resolve(process.env.DONPACHI_PROFILE_STORE || join(__dirname, "data", "profiles.json"));
 const profileStore = await loadProfileStore();
 const baccaratTable = createBaccaratTable(Date.now(), secureBaccaratRandomInt);
+const baccaratQaTable = createBaccaratTable(Date.now(), secureBaccaratRandomInt);
+baccaratQaTable.code = baccaratQaTableCode;
+baccaratQaTable.qaMode = true;
 let vite;
 
 if (!isProd) {
@@ -1825,10 +1829,10 @@ function broadcastPoker(room) {
   }
 }
 
-function broadcastBaccarat(now = Date.now()) {
-  for (const player of baccaratTable.players.values()) {
+function broadcastBaccarat(table = baccaratTable, now = Date.now()) {
+  for (const player of table.players.values()) {
     if (!player.connected || !player.ws || player.ws.readyState !== 1) continue;
-    send(player.ws, baccaratSnapshotFor(baccaratTable, player.id, now));
+    send(player.ws, baccaratSnapshotFor(table, player.id, now));
   }
 }
 
@@ -2636,6 +2640,7 @@ wss.on("connection", (ws) => {
   let currentRoom;
   let currentPlayer;
   let currentBaccaratPlayer;
+  let currentBaccaratTable;
 
   ws.on("error", () => {
     if (ws.readyState === ws.OPEN) ws.close(1009, "invalid websocket message");
@@ -2662,23 +2667,30 @@ wss.on("connection", (ws) => {
 
     if (message.type === "baccarat_join") {
       const requestedLoginId = normalizeLoginId(message.loginId);
+      const qaRequested = Boolean(message.qaMode);
       const profileRecord = requestedLoginId ? getProfileRecord(requestedLoginId) : null;
       if (requestedLoginId && !profileRecord) {
         send(ws, { type: "baccarat_error", message: "ログインIDを確認してから共通Donを同期してください。" });
         return;
       }
-      if (profileRecord) {
+      if (profileRecord && !qaRequested) {
         mergeProfile(profileRecord.profile, { progress: message.progress });
         saveProfileSoon();
       }
       const profile = profileRecord?.profile || null;
+      const qaAuthorized = requestedLoginId === "HIDEO0000" && sanitizePlayerName(profile?.name) === "ひでお";
+      if (qaRequested && !qaAuthorized) {
+        send(ws, { type: "baccarat_error", message: "検証卓は指定された検証アカウント専用です。" });
+        return;
+      }
+      const table = qaRequested ? baccaratQaTable : baccaratTable;
       const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken);
       const balance = walletDon(profileRecord, guestToken);
       if (balance === null) {
         send(ws, { type: "baccarat_error", message: "ロビーで共通Donを同期してからバカラに入室してください。" });
         return;
       }
-      const existing = [...baccaratTable.players.values()].find((player) => (
+      const existing = [...table.players.values()].find((player) => (
         profileRecord?.key ? player.profileKey === profileRecord.key : player.guestToken === guestToken
       ));
       if (existing?.connected) {
@@ -2686,14 +2698,14 @@ wss.on("connection", (ws) => {
         return;
       }
       const player = existing
-        ? reconnectBaccaratPlayer(baccaratTable, existing, { ws, name: sanitizePlayerName(profile?.name || message.name) }, Date.now())
-        : addBaccaratPlayer(baccaratTable, {
+        ? reconnectBaccaratPlayer(table, existing, { ws, name: sanitizePlayerName(profile?.name || message.name) }, Date.now())
+        : addBaccaratPlayer(table, {
           id: crypto.randomUUID(),
           ws,
           profileKey: profileRecord?.key || "",
           guestToken,
           name: sanitizePlayerName(profile?.name || message.name),
-          chips: balance
+          chips: qaRequested ? initialSharedDon : balance
         });
       if (!player) {
         send(ws, { type: "baccarat_error", message: "バカラ卓への接続に失敗しました。" });
@@ -2701,34 +2713,36 @@ wss.on("connection", (ws) => {
       }
       player.guestToken = guestToken;
       currentBaccaratPlayer = player;
+      currentBaccaratTable = table;
       send(ws, {
         type: "baccarat_welcome",
         id: player.id,
-        table: globalBaccaratTableCode,
+        table: table.code,
         version: baccaratVersion,
         walletDon: player.chips,
-        walletScope: profileRecord ? "account" : "guest",
+        walletScope: qaRequested ? "qa" : profileRecord ? "account" : "guest",
+        qaMode: qaRequested,
         guestToken,
         profile: profile ? publicProfile(profile) : null
       });
-      broadcastBaccarat();
+      broadcastBaccarat(table);
       return;
     }
 
     if (message.type === "baccarat_action") {
-      if (!currentBaccaratPlayer || !baccaratTable.players.has(currentBaccaratPlayer.id)) return;
+      if (!currentBaccaratPlayer || !currentBaccaratTable?.players.has(currentBaccaratPlayer.id)) return;
       const action = String(message.action || "");
       const now = Date.now();
       let result;
-      if (action === "bet") result = placeBaccaratBet(baccaratTable, currentBaccaratPlayer, String(message.target || ""), Number(message.amount), now);
-      else if (action === "undo") result = undoBaccaratBet(baccaratTable, currentBaccaratPlayer, now);
-      else if (action === "clear") result = clearBaccaratBets(baccaratTable, currentBaccaratPlayer, now);
-      else if (action === "repeat") result = repeatBaccaratBets(baccaratTable, currentBaccaratPlayer, now);
-      else if (action === "confirm") result = lockBaccaratBets(baccaratTable, currentBaccaratPlayer, now);
+      if (action === "bet") result = placeBaccaratBet(currentBaccaratTable, currentBaccaratPlayer, String(message.target || ""), Number(message.amount), now);
+      else if (action === "undo") result = undoBaccaratBet(currentBaccaratTable, currentBaccaratPlayer, now);
+      else if (action === "clear") result = clearBaccaratBets(currentBaccaratTable, currentBaccaratPlayer, now);
+      else if (action === "repeat") result = repeatBaccaratBets(currentBaccaratTable, currentBaccaratPlayer, now);
+      else if (action === "confirm") result = lockBaccaratBets(currentBaccaratTable, currentBaccaratPlayer, now);
       else result = { ok: false, message: "操作が正しくありません。" };
       currentBaccaratPlayer.lastSeen = now;
       if (!result.ok) send(ws, { type: "baccarat_error", message: result.message });
-      broadcastBaccarat();
+      broadcastBaccarat(currentBaccaratTable);
       return;
     }
 
@@ -3294,12 +3308,13 @@ wss.on("connection", (ws) => {
 
   ws.on("close", (code, reason) => {
     if (currentBaccaratPlayer) {
-      const removed = removeBaccaratPlayer(baccaratTable, currentBaccaratPlayer, Date.now());
-      if (removed.removed) {
+      const table = currentBaccaratTable || baccaratTable;
+      const removed = removeBaccaratPlayer(table, currentBaccaratPlayer, Date.now());
+      if (removed.removed && !table.qaMode) {
         persistPlayerWallet(currentBaccaratPlayer);
         if (currentBaccaratPlayer.profileKey) saveProfileSoon();
       }
-      broadcastBaccarat();
+      broadcastBaccarat(table);
     }
     if (!currentRoom || !currentPlayer || !currentRoom.players.has(currentPlayer.id)) return;
     if (currentPlayer.vehicleId) releasePlayerVehicle(currentRoom, currentPlayer, false);
@@ -3414,25 +3429,27 @@ setInterval(() => {
 
 setInterval(() => {
   const now = Date.now();
-  const update = updateBaccaratTable(baccaratTable, now, secureBaccaratRandomInt);
-  if (update.transition === "settled") {
-    let profileChanged = false;
-    for (const settlement of update.settledPlayers) {
-      const player = settlement.player;
-      persistPlayerWallet(player);
-      const profile = player.profileKey ? profileStore.profiles[player.profileKey] : null;
-      if (profile && settlement.net > 0) {
-        const progress = sanitizeProgress(profile.progress);
-        progress.baccaratWins += 1;
-        progress.lastReward = `バカラ +${settlement.net}Don`;
-        profile.progress = sanitizeProgress(progress);
-        profile.updatedAt = now;
-        profileChanged = true;
+  for (const table of [baccaratTable, baccaratQaTable]) {
+    const update = updateBaccaratTable(table, now, secureBaccaratRandomInt);
+    if (update.transition === "settled" && !table.qaMode) {
+      let profileChanged = false;
+      for (const settlement of update.settledPlayers) {
+        const player = settlement.player;
+        persistPlayerWallet(player);
+        const profile = player.profileKey ? profileStore.profiles[player.profileKey] : null;
+        if (profile && settlement.net > 0) {
+          const progress = sanitizeProgress(profile.progress);
+          progress.baccaratWins += 1;
+          progress.lastReward = `バカラ +${settlement.net}Don`;
+          profile.progress = sanitizeProgress(progress);
+          profile.updatedAt = now;
+          profileChanged = true;
+        }
       }
+      if (profileChanged) saveProfileSoon();
     }
-    if (profileChanged) saveProfileSoon();
+    broadcastBaccarat(table, now);
   }
-  broadcastBaccarat(now);
 }, 220);
 
 function clamp(value, min, max) {
