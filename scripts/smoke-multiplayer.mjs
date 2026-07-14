@@ -52,7 +52,7 @@ async function stopManagedServer() {
 function openClient(name, room = "", options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(endpoint);
-    const state = { name, id: "", room: "", resumeToken: "", resumed: false, snapshots: [], respawns: [], hits: [], teamPings: [], movementCorrections: [], errors: [] };
+    const state = { name, id: "", room: "", resumeToken: "", resumed: false, snapshots: [], respawns: [], hits: [], shots: [], teamPings: [], movementCorrections: [], errors: [] };
     const timeout = setTimeout(() => reject(new Error(`timeout joining ${name}`)), 5000);
 
     ws.on("open", () => ws.send(JSON.stringify({ type: "join", name, room, ...options })));
@@ -69,6 +69,7 @@ function openClient(name, room = "", options = {}) {
       if (message.type === "snapshot") state.snapshots.push(message);
       if (message.type === "respawn") state.respawns.push(message);
       if (message.type === "hit") state.hits.push(message);
+      if (message.type === "shot") state.shots.push(message);
       if (message.type === "team_ping") state.teamPings.push(message.ping);
       if (message.type === "movement_correction") state.movementCorrections.push(message);
       if (message.type === "error") state.errors.push(message.message);
@@ -314,6 +315,35 @@ await waitFor(() => {
   return vehicle && Math.hypot(vehicle.x - vehicleBefore.x, vehicle.z - vehicleBefore.z) > 0.65;
 }, "roadster movement is server synchronized");
 
+const vehicleBeforeRightTurn = latestSnapshot(beta).vehicles.find((vehicle) => vehicle.id === "roadster-west");
+for (let i = 0; i < 8; i += 1) {
+  send(beta.ws, { type: "vehicle_input", throttle: 1, steer: 1, braking: false });
+  await delay(95);
+}
+await waitFor(() => {
+  const vehicle = latestSnapshot(beta)?.vehicles?.find((item) => item.id === "roadster-west");
+  if (!vehicle) return false;
+  const yawDelta = Math.atan2(Math.sin(vehicle.yaw - vehicleBeforeRightTurn.yaw), Math.cos(vehicle.yaw - vehicleBeforeRightTurn.yaw));
+  return yawDelta < -0.08;
+}, "right input turns roadster right");
+
+const shotsBeforeVehicleFire = beta.state.shots.length;
+const vehicleHealthBeforeDriverFire = latestSnapshot(beta).vehicles.find((vehicle) => vehicle.id === "roadster-west").health;
+const betaInVehicle = latestPlayer(beta, beta.state.id);
+send(beta.ws, {
+  type: "shoot",
+  origin: { x: betaInVehicle.x, y: betaInVehicle.y, z: betaInVehicle.z },
+  direction: { x: 0, y: 0, z: -1 },
+  weapon: "rifle"
+});
+await waitFor(
+  () => beta.state.shots.slice(shotsBeforeVehicleFire).some((shot) => shot.shooter === beta.state.id),
+  "driver can fire from roadster"
+);
+await delay(180);
+const vehicleHealthAfterDriverFire = latestSnapshot(beta).vehicles.find((vehicle) => vehicle.id === "roadster-west").health;
+if (vehicleHealthAfterDriverFire !== vehicleHealthBeforeDriverFire) throw new Error("driver shot damaged its own roadster");
+
 send(beta.ws, { type: "vehicle_exit" });
 await waitFor(() => !latestPlayer(beta, beta.state.id)?.vehicleId, "target exits roadster");
 
@@ -412,7 +442,7 @@ if (appliedPlayerDamage !== 200) throw new Error(`reported applied damage must e
 for (const client of [alpha, beta, gamma]) send(client.ws, { type: "leave" });
 await delay(80);
 for (const client of [alpha, beta, gamma]) client.ws.close(1000, "leave");
-console.log(`smoke passed: room ${alpha.state.room}, occupied spawn reuse prevented, movement warp corrected, yaw normalized, team edits protected, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/damaged`);
+console.log(`smoke passed: room ${alpha.state.room}, occupied spawn reuse prevented, movement warp corrected, yaw normalized, team edits protected, reconnect resumed, lag-compensated headshot resolved, applied damage capped at 200, team ping isolated, safe zone synced, roadster driven/right-steered/fired/damaged`);
 } finally {
   await stopManagedServer();
 }

@@ -1111,7 +1111,9 @@ function createVehicles(now = Date.now()) {
     speed: 0,
     driverId: "",
     throttle: 0,
+    targetThrottle: 0,
     steer: 0,
+    targetSteer: 0,
     braking: false,
     health: vehicleMaxHealth,
     maxHealth: vehicleMaxHealth,
@@ -2455,7 +2457,9 @@ function releasePlayerVehicle(room, player, placeBeside = true) {
   if (vehicle?.driverId === player.id) {
     vehicle.driverId = "";
     vehicle.throttle = 0;
+    vehicle.targetThrottle = 0;
     vehicle.steer = 0;
+    vehicle.targetSteer = 0;
     vehicle.braking = true;
   }
   player.vehicleId = "";
@@ -2480,7 +2484,9 @@ function tryEnterVehicle(room, player, vehicleId) {
   ) return;
   vehicle.driverId = player.id;
   vehicle.throttle = 0;
+  vehicle.targetThrottle = 0;
   vehicle.steer = 0;
+  vehicle.targetSteer = 0;
   vehicle.braking = true;
   vehicle.lastInputAt = Date.now();
   player.vehicleId = vehicle.id;
@@ -2502,7 +2508,9 @@ function updateVehicles(room, now) {
     if ((vehicle.disabledUntil || 0) > now || vehicle.health <= 0) {
       vehicle.speed = 0;
       vehicle.throttle = 0;
+      vehicle.targetThrottle = 0;
       vehicle.steer = 0;
+      vehicle.targetSteer = 0;
       vehicle.braking = true;
       vehicle.repairing = false;
       if ((vehicle.disabledUntil || 0) > now) continue;
@@ -2523,15 +2531,23 @@ function updateVehicles(room, now) {
       if (driver) releasePlayerVehicle(room, driver, false);
       vehicle.driverId = "";
       vehicle.throttle = 0;
+      vehicle.targetThrottle = 0;
       vehicle.steer = 0;
+      vehicle.targetSteer = 0;
     }
 
     if (vehicle.driverId && now - vehicle.lastInputAt > 650) {
-      vehicle.throttle = 0;
-      vehicle.steer = 0;
+      vehicle.targetThrottle = 0;
+      vehicle.targetSteer = 0;
       vehicle.braking = true;
     }
 
+    const requestedThrottle = clamp(Number(vehicle.targetThrottle) || 0, -1, 1);
+    const requestedSteer = clamp(Number(vehicle.targetSteer) || 0, -1, 1);
+    const throttleResponse = vehicle.braking ? 9.5 : 5.8;
+    const steerResponse = Math.abs(requestedSteer) > 0.02 ? 7.8 : 10.5;
+    vehicle.throttle += clamp(requestedThrottle - vehicle.throttle, -throttleResponse * delta, throttleResponse * delta);
+    vehicle.steer += clamp(requestedSteer - vehicle.steer, -steerResponse * delta, steerResponse * delta);
     const throttle = clamp(vehicle.throttle, -1, 1);
     const targetSpeed = throttle >= 0 ? throttle * 11.8 : throttle * 5.4;
     const acceleration = throttle === 0 ? 4.2 : 7.2;
@@ -2552,7 +2568,7 @@ function updateVehicles(room, now) {
     const speedRatio = clamp(Math.abs(vehicle.speed) / 8, 0, 1);
     if (speedRatio > 0.025) {
       const reverseDirection = vehicle.speed < 0 ? -1 : 1;
-      vehicle.yaw += clamp(vehicle.steer, -1, 1) * reverseDirection * delta * (0.56 + speedRatio * 0.82);
+      vehicle.yaw -= clamp(vehicle.steer, -1, 1) * reverseDirection * delta * (0.56 + speedRatio * 0.82);
     }
 
     const moveX = -Math.sin(vehicle.yaw) * vehicle.speed * delta;
@@ -2567,7 +2583,7 @@ function updateVehicles(room, now) {
       const canMoveZ = !vehicleCollides(room, vehicle, vehicle.x, nextZ);
       if (canMoveX) vehicle.x = nextX;
       if (canMoveZ) vehicle.z = nextZ;
-      if (!canMoveX && !canMoveZ) vehicle.speed *= -0.12;
+      if (!canMoveX && !canMoveZ) vehicle.speed = 0;
       else vehicle.speed *= 0.72;
     }
 
@@ -3010,8 +3026,8 @@ wss.on("connection", (ws) => {
     if (message.type === "vehicle_input") {
       const vehicle = currentRoom.vehicles?.get?.(currentPlayer.vehicleId || "");
       if (!vehicle || vehicle.driverId !== currentPlayer.id || vehicle.health <= 0 || (vehicle.disabledUntil || 0) > Date.now()) return;
-      vehicle.throttle = clamp(Number(message.throttle) || 0, -1, 1);
-      vehicle.steer = clamp(Number(message.steer) || 0, -1, 1);
+      vehicle.targetThrottle = clamp(Number(message.throttle) || 0, -1, 1);
+      vehicle.targetSteer = clamp(Number(message.steer) || 0, -1, 1);
       vehicle.braking = Boolean(message.braking);
       vehicle.lastInputAt = Date.now();
       currentPlayer.lastSeen = vehicle.lastInputAt;
@@ -3230,7 +3246,7 @@ wss.on("connection", (ws) => {
     }
 
     if (message.type === "shoot") {
-      if (!currentRoom.matchStarted || currentRoom.winner || currentPlayer.eliminated || currentPlayer.health <= 0 || currentPlayer.vehicleId) return;
+      if (!currentRoom.matchStarted || currentRoom.winner || currentPlayer.eliminated || currentPlayer.health <= 0) return;
       const weapon = normalizeWeapon(message.weapon);
       const now = Date.now();
       if (!consumeShotBudget(currentPlayer, weapon, now)) return;
@@ -3538,9 +3554,10 @@ function progressFocusTask(room, player, kind, amount = 1) {
   send(player.ws, { type: "sound", sound: "reload" });
 }
 
-function nearestVehicleHit(room, origin, direction, range) {
+function nearestVehicleHit(room, origin, direction, range, excludedVehicleId = "") {
   let best = null;
   for (const vehicle of room.vehicles?.values?.() || []) {
+    if (vehicle.id === excludedVehicleId) continue;
     const center = { x: vehicle.x, y: 0.86, z: vehicle.z };
     const targetDistance = projectionToRay(center, origin, direction);
     if (targetDistance < 0 || targetDistance > range || lineBlocked(origin, direction, targetDistance, room)) continue;
@@ -3578,7 +3595,9 @@ function applyVehicleDamage(room, shooter, vehicle, damage, weapon) {
   vehicle.driverId = "";
   vehicle.speed = 0;
   vehicle.throttle = 0;
+  vehicle.targetThrottle = 0;
   vehicle.steer = 0;
+  vehicle.targetSteer = 0;
   vehicle.braking = true;
   vehicle.disabledUntil = destroyedAt + vehicleDisabledMs;
   addFeed(room, `${shooter.name} がロードスターを停止`, shooter.color);
@@ -3613,7 +3632,7 @@ function applyShot(room, shooter, origin, direction, weapon = "rifle", viewedAt 
     }
   }
 
-  const vehicleHit = nearestVehicleHit(room, origin, direction, range);
+  const vehicleHit = nearestVehicleHit(room, origin, direction, range, shooter.vehicleId || "");
   const coreHit = room.mode === "castle" ? nearestCastleCoreHit(room, shooter, origin, direction, range) : null;
   const nearestActorDistance = Math.min(bestTargetDistance, coreHit?.targetDistance ?? Infinity);
   if (vehicleHit && vehicleHit.targetDistance <= nearestActorDistance + 0.22) {

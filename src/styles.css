@@ -1249,10 +1249,6 @@ body.scoped .center-reticle::after {
   background: rgba(255, 204, 61, 0.94);
 }
 
-body.driving .fire-button,
-body.driving .mobile-weapon,
-body.driving .mobile-reload,
-body.driving .mobile-scope,
 body.driving .mobile-skill {
   display: none !important;
 }

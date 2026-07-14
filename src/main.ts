@@ -6039,7 +6039,7 @@ function currentAimSpread(gun = currentGun()) {
 function shoot() {
   if (fpsConnectionRecovering || matchPhase !== "active") return;
   const me = players.get(self.id);
-  if (activeVehicleId || me?.eliminated || (me && me.health <= 0)) return;
+  if (me?.eliminated || (me && me.health <= 0)) return;
   const now = performance.now();
   const gun = currentGun();
   if (reloadTimer > 0 || now - self.lastShot < gun.fireDelay) return;
@@ -6116,19 +6116,18 @@ function updateWeaponMotion(delta: number) {
     lastReticleGap = reticleGap;
     document.documentElement.style.setProperty("--reticle-gap", `${reticleGap.toFixed(1)}px`);
   }
-  weaponView.visible = !activeVehicleId;
-  if (activeVehicleId) {
-    if (muzzleFlashMesh) muzzleFlashMesh.visible = false;
-    if (muzzleFlashLight) muzzleFlashLight.intensity = 0;
-    return;
-  }
+  weaponView.visible = true;
   weaponSwayClock += delta * (keys.size > 0 ? 8 : 3.2);
   weaponKick = Math.max(0, weaponKick - delta * 5.8);
-  const walkSway = keys.size > 0 ? 1 : 0.32;
+  const driving = Boolean(activeVehicleId);
+  const walkSway = driving ? 0.46 : keys.size > 0 ? 1 : 0.32;
+  const baseX = driving ? 0.4 : 0.34;
+  const baseY = driving ? -0.34 : -0.31;
+  const baseZ = driving ? -0.31 : -0.26;
   weaponView.position.set(
-    0.34 + Math.sin(weaponSwayClock) * 0.011 * walkSway,
-    -0.31 + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.009 * walkSway - weaponKick * 0.032,
-    -0.26 + weaponKick * 0.14
+    baseX + Math.sin(weaponSwayClock) * 0.011 * walkSway,
+    baseY + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.009 * walkSway - weaponKick * 0.032,
+    baseZ + weaponKick * 0.14
   );
   weaponView.rotation.set(
     -weaponKick * 0.22 + Math.sin(weaponSwayClock * 0.8) * 0.006 * walkSway,
@@ -6443,7 +6442,7 @@ function syncState(now: number) {
       type: "vehicle_input",
       throttle,
       steer,
-      braking: mobileBraking || keys.has("Space") || keys.has("ShiftLeft")
+      braking: mobileBraking || keys.has("Space")
     });
     lastVehicleInputSent = now;
   }
@@ -6946,7 +6945,6 @@ function updateVehicleInteraction(now = performance.now()) {
   const elevatorAction = Boolean(!activeVehicleId && nearestElevatorId);
   const available = Boolean(activeVehicleId || nearestVehicleId || nearestDoorId || nearestElevatorId);
   document.body.classList.toggle("driving", Boolean(activeVehicleId));
-  if (activeVehicleId) mobileFiring = false;
   mobileInteract.classList.toggle("available", available);
   mobileInteract.classList.toggle("door-action", doorAction);
   mobileInteract.classList.toggle("elevator-action", elevatorAction);
