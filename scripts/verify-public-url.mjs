@@ -29,6 +29,7 @@ if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status}
 const pageHtml = await pageResponse.text();
 if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
 if (!pageHtml.includes("ECONOMY 1.1 共通Donウォレット")) throw new Error("public page is missing the ECONOMY 1.1 update marker");
+if (!pageHtml.includes("SOUND 1.0 バカラ・ジャズラウンジ")) throw new Error("public page is missing the SOUND 1.0 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 

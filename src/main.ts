@@ -732,6 +732,38 @@ lobbyBgm.loop = true;
 lobbyBgm.preload = "auto";
 lobbyBgm.volume = 0.38;
 lobbyBgm.setAttribute("playsinline", "true");
+const baccaratJazzBpm = 76;
+const baccaratJazzStepSeconds = 60 / baccaratJazzBpm / 2;
+const baccaratJazzChords = [
+  { bass: 38, notes: [53, 57, 60, 64] },
+  { bass: 43, notes: [53, 57, 59, 64] },
+  { bass: 36, notes: [55, 59, 62, 64] },
+  { bass: 45, notes: [55, 58, 61, 64] },
+  { bass: 41, notes: [52, 55, 57, 59] },
+  { bass: 46, notes: [53, 57, 60, 67] },
+  { bass: 40, notes: [50, 55, 58, 62] },
+  { bass: 45, notes: [55, 58, 61, 64] }
+] as const;
+const baccaratJazzMelody = [
+  69, null, null, 72, null, 76, null, null,
+  67, null, 69, null, 71, null, null, 74,
+  76, null, null, 74, null, 71, null, null,
+  69, null, 73, null, 76, null, null, 79,
+  72, null, null, 69, null, 67, null, null,
+  70, null, 72, null, 74, null, null, 77,
+  74, null, null, 70, null, 67, null, null,
+  69, null, 73, null, 76, null, 74, null
+] as const;
+let baccaratMusicMaster: GainNode | null = null;
+let baccaratMusicActive = false;
+let baccaratMusicTimer = 0;
+let baccaratMusicNextStep = 0;
+let baccaratMusicStep = 0;
+let baccaratBrushNoiseBuffer: AudioBuffer | null = null;
+let baccaratAudioRound = -1;
+let baccaratAudioPhase: BaccaratPhase | null = null;
+let baccaratAudioRevealCount = 0;
+let baccaratAudioResultRound = -1;
 syncAudioDataset();
 const self = {
   id: "",
@@ -3610,6 +3642,7 @@ baccaratBettingGrid.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-baccarat-target]");
   const target = button?.dataset.baccaratTarget as BaccaratTarget | undefined;
   if (!target || !baccaratTargets.includes(target)) return;
+  playBaccaratBetSound();
   sendBaccaratAction("bet", { target, amount: selectedBaccaratChip });
 });
 for (const button of baccaratChipRail.querySelectorAll<HTMLButtonElement>("[data-baccarat-chip]")) {
@@ -3617,12 +3650,25 @@ for (const button of baccaratChipRail.querySelectorAll<HTMLButtonElement>("[data
     selectedBaccaratChip = Math.max(10, Math.floor(Number(button.dataset.baccaratChip) || 100));
     baccaratSelectedChipEl.textContent = `${selectedBaccaratChip.toLocaleString()} Don`;
     for (const item of baccaratChipRail.querySelectorAll<HTMLButtonElement>("[data-baccarat-chip]")) item.classList.toggle("active", item === button);
+    playBaccaratChipSound(selectedBaccaratChip);
   });
 }
-baccaratUndoButton.addEventListener("click", () => sendBaccaratAction("undo"));
-baccaratClearButton.addEventListener("click", () => sendBaccaratAction("clear"));
-baccaratRepeatButton.addEventListener("click", () => sendBaccaratAction("repeat"));
-baccaratConfirmButton.addEventListener("click", () => sendBaccaratAction("confirm"));
+baccaratUndoButton.addEventListener("click", () => {
+  playBaccaratUndoSound();
+  sendBaccaratAction("undo");
+});
+baccaratClearButton.addEventListener("click", () => {
+  playBaccaratUndoSound(true);
+  sendBaccaratAction("clear");
+});
+baccaratRepeatButton.addEventListener("click", () => {
+  playBaccaratBetSound();
+  sendBaccaratAction("repeat");
+});
+baccaratConfirmButton.addEventListener("click", () => {
+  playBaccaratConfirmSound();
+  sendBaccaratAction("confirm");
+});
 copyBaccaratInviteButton.addEventListener("click", copyInvite);
 leaveBaccaratButton.addEventListener("click", leaveBaccaratRoom);
 baccaratHistoryToggle.addEventListener("click", () => document.body.classList.toggle("baccarat-history-open"));
@@ -4562,6 +4608,10 @@ function leaveBaccaratRoom() {
   baccaratJoined = false;
   baccaratSelfId = "";
   latestBaccaratSnapshot = null;
+  baccaratAudioRound = -1;
+  baccaratAudioPhase = null;
+  baccaratAudioRevealCount = 0;
+  baccaratAudioResultRound = -1;
   setFpsActive(false);
   baccaratPanel.classList.remove("open");
   document.body.classList.remove("baccarat-open", "baccarat-history-open", "baccarat-players-open");
@@ -4647,7 +4697,12 @@ function handleMessage(event: MessageEvent<string>) {
     document.body.classList.add("baccarat-open");
     baccaratConnectionEl.textContent = "オンライン";
     baccaratConnectionEl.classList.remove("reconnecting");
+    baccaratAudioRound = -1;
+    baccaratAudioPhase = null;
+    baccaratAudioRevealCount = 0;
+    baccaratAudioResultRound = -1;
     updateLobbyBgm();
+    if (firstEntry) playBaccaratEntrySound();
     history.replaceState(null, "", `?play=baccarat&room=${globalBaccaratTableCode}&join=1`);
     if (message.profile) applyLoginProfile(message.profile as LoginProfile);
     if (firstEntry) touchProgressSession("baccarat");
@@ -4662,6 +4717,7 @@ function handleMessage(event: MessageEvent<string>) {
       renderProgressCard();
     }
     renderBaccarat(latestBaccaratSnapshot);
+    syncBaccaratSnapshotAudio(latestBaccaratSnapshot);
     awardBaccaratProgress(latestBaccaratSnapshot);
     return;
   }
@@ -5026,12 +5082,19 @@ function setSoundEnabled(enabled: boolean) {
   muteButton.classList.toggle("active", !enabled);
   if (enabled && navigator.userActivation?.isActive) void unlockAudio();
   else if (enabled) updateLobbyBgm();
-  else lobbyBgm.pause();
+  else {
+    lobbyBgm.pause();
+    stopBaccaratJazz();
+  }
   syncAudioDataset();
 }
 
 function isLobbyBgmAllowed() {
   return soundEnabled && !document.hidden && !self.joined && !joinPanel.classList.contains("hidden");
+}
+
+function isBaccaratBgmAllowed() {
+  return soundEnabled && !document.hidden && baccaratJoined && baccaratPanel.classList.contains("open");
 }
 
 function getAudioContext() {
@@ -5079,6 +5142,7 @@ function unlockAudio(force = false) {
   ]).then(() => {
     audioUnlocked = context?.state === "running";
     if (force && context?.state === "running") playUnlockChirp(context);
+    if (audioUnlocked) updateBaccaratJazz();
     syncAudioDataset();
   }).finally(() => {
     audioUnlocking = null;
@@ -5093,6 +5157,7 @@ function syncAudioDataset() {
   document.documentElement.dataset.audioContext = contextState;
   document.documentElement.dataset.audioUnlocked = audioUnlocked ? "true" : "false";
   document.documentElement.dataset.lobbyAudio = lobbyBgm.paused ? "paused" : "playing";
+  document.documentElement.dataset.baccaratAudio = baccaratMusicActive ? "playing" : "paused";
   document.body.classList.toggle("audio-needs-unlock", needsUnlock);
 }
 
@@ -5111,13 +5176,172 @@ function playUnlockChirp(context: AudioContext) {
   oscillator.stop(now + 0.15);
 }
 
+function midiToFrequency(note: number) {
+  return 440 * 2 ** ((note - 69) / 12);
+}
+
+function ensureBaccaratMusicMaster(context: AudioContext) {
+  if (baccaratMusicMaster) return baccaratMusicMaster;
+  const master = context.createGain();
+  const warmth = context.createBiquadFilter();
+  warmth.type = "lowpass";
+  warmth.frequency.value = 5400;
+  warmth.Q.value = 0.35;
+  master.gain.value = 0.0001;
+  master.connect(warmth).connect(context.destination);
+  baccaratMusicMaster = master;
+  return master;
+}
+
+function ensureBaccaratNoiseBuffer(context: AudioContext) {
+  if (baccaratBrushNoiseBuffer) return baccaratBrushNoiseBuffer;
+  const buffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.22), context.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let index = 0; index < data.length; index += 1) {
+    const fade = 1 - index / data.length;
+    data[index] = (Math.random() * 2 - 1) * fade;
+  }
+  baccaratBrushNoiseBuffer = buffer;
+  return buffer;
+}
+
+function scheduleBaccaratMusicTone(
+  context: AudioContext,
+  note: number,
+  when: number,
+  duration: number,
+  volume: number,
+  type: OscillatorType = "triangle"
+) {
+  const destination = baccaratMusicMaster;
+  if (!destination) return;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(midiToFrequency(note), when);
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.linearRampToValueAtTime(volume, when + 0.018);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+  oscillator.connect(gain).connect(destination);
+  oscillator.start(when);
+  oscillator.stop(when + duration + 0.02);
+}
+
+function scheduleBaccaratBrush(context: AudioContext, when: number, accent: boolean) {
+  const destination = baccaratMusicMaster;
+  if (!destination) return;
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const gain = context.createGain();
+  source.buffer = ensureBaccaratNoiseBuffer(context);
+  source.playbackRate.value = accent ? 0.82 : 1.08;
+  filter.type = "highpass";
+  filter.frequency.value = accent ? 3100 : 4600;
+  gain.gain.setValueAtTime(accent ? 0.017 : 0.009, when);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + (accent ? 0.13 : 0.07));
+  source.connect(filter).connect(gain).connect(destination);
+  source.start(when);
+  source.stop(when + 0.15);
+}
+
+function scheduleBaccaratKick(context: AudioContext, when: number) {
+  const destination = baccaratMusicMaster;
+  if (!destination) return;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(76, when);
+  oscillator.frequency.exponentialRampToValueAtTime(45, when + 0.12);
+  gain.gain.setValueAtTime(0.022, when);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.14);
+  oscillator.connect(gain).connect(destination);
+  oscillator.start(when);
+  oscillator.stop(when + 0.15);
+}
+
+function scheduleBaccaratJazzStep(context: AudioContext, step: number, when: number) {
+  const bar = Math.floor(step / 8) % baccaratJazzChords.length;
+  const beatStep = step % 8;
+  const chord = baccaratJazzChords[bar];
+
+  scheduleBaccaratBrush(context, when, beatStep % 2 === 1);
+  if (beatStep === 0 || beatStep === 4) scheduleBaccaratKick(context, when);
+
+  if (beatStep % 2 === 0) {
+    const bassNote = beatStep === 6 ? chord.bass + 7 : chord.bass;
+    scheduleBaccaratMusicTone(context, bassNote, when, 0.34, 0.027, "sine");
+  }
+
+  if (beatStep === 0) {
+    chord.notes.forEach((note, index) => scheduleBaccaratMusicTone(context, note, when + index * 0.012, 0.72, 0.011, "triangle"));
+  } else if (beatStep === 5) {
+    chord.notes.slice(1).forEach((note, index) => scheduleBaccaratMusicTone(context, note, when + index * 0.01, 0.28, 0.007, "sine"));
+  }
+
+  const melodyNote = baccaratJazzMelody[step % baccaratJazzMelody.length];
+  if (melodyNote !== null) scheduleBaccaratMusicTone(context, melodyNote, when + 0.035, 0.32, 0.012, "sine");
+}
+
+function runBaccaratJazzScheduler() {
+  if (!baccaratMusicActive || !audioContext || audioContext.state !== "running") return;
+  const context = audioContext;
+  if (baccaratMusicNextStep < context.currentTime - 0.25) baccaratMusicNextStep = context.currentTime + 0.06;
+  let scheduled = 0;
+  while (baccaratMusicNextStep < context.currentTime + 0.36 && scheduled < 8) {
+    scheduleBaccaratJazzStep(context, baccaratMusicStep, baccaratMusicNextStep);
+    baccaratMusicStep = (baccaratMusicStep + 1) % baccaratJazzMelody.length;
+    baccaratMusicNextStep += baccaratJazzStepSeconds;
+    scheduled += 1;
+  }
+  baccaratMusicTimer = window.setTimeout(runBaccaratJazzScheduler, 120);
+}
+
+function startBaccaratJazz(context: AudioContext) {
+  const master = ensureBaccaratMusicMaster(context);
+  if (baccaratMusicActive) return;
+  baccaratMusicActive = true;
+  baccaratMusicStep = 0;
+  baccaratMusicNextStep = context.currentTime + 0.07;
+  master.gain.cancelScheduledValues(context.currentTime);
+  master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), context.currentTime);
+  master.gain.linearRampToValueAtTime(0.68, context.currentTime + 0.7);
+  runBaccaratJazzScheduler();
+  syncAudioDataset();
+}
+
+function stopBaccaratJazz() {
+  if (baccaratMusicTimer) window.clearTimeout(baccaratMusicTimer);
+  baccaratMusicTimer = 0;
+  baccaratMusicActive = false;
+  if (audioContext && baccaratMusicMaster) {
+    const now = audioContext.currentTime;
+    baccaratMusicMaster.gain.cancelScheduledValues(now);
+    baccaratMusicMaster.gain.setValueAtTime(Math.max(0.0001, baccaratMusicMaster.gain.value), now);
+    baccaratMusicMaster.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+  }
+  syncAudioDataset();
+}
+
+function updateBaccaratJazz() {
+  if (!isBaccaratBgmAllowed()) {
+    stopBaccaratJazz();
+    return;
+  }
+  const context = getAudioContext();
+  if (!context || context.state !== "running") {
+    void unlockAudio();
+    return;
+  }
+  startBaccaratJazz(context);
+}
+
 function updateLobbyBgm() {
   if (!isLobbyBgmAllowed()) {
     lobbyBgm.pause();
-    return;
+  } else if (lobbyBgm.paused) {
+    void unlockAudio();
   }
-  if (!lobbyBgm.paused) return;
-  void unlockAudio();
+  updateBaccaratJazz();
 }
 
 function setFpsActive(active: boolean) {
@@ -5139,14 +5363,150 @@ function setFpsActive(active: boolean) {
       unlocked: boolean;
       lobbyPaused: boolean;
       lobbyReadyState: number;
+      baccaratMusicActive: boolean;
     };
   }).__toyboxAudioState = () => ({
   soundEnabled,
   contextState: audioContext?.state || "none",
   unlocked: audioUnlocked,
   lobbyPaused: lobbyBgm.paused,
-  lobbyReadyState: lobbyBgm.readyState
+  lobbyReadyState: lobbyBgm.readyState,
+  baccaratMusicActive
 });
+
+function baccaratSfxContext() {
+  if (!baccaratJoined) return null;
+  const context = getAudioContext();
+  if (!context) return null;
+  void unlockAudio();
+  return context;
+}
+
+function scheduleBaccaratSfxTone(
+  context: AudioContext,
+  frequency: number,
+  when: number,
+  duration: number,
+  volume: number,
+  type: OscillatorType = "sine"
+) {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, when);
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.linearRampToValueAtTime(volume, when + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start(when);
+  oscillator.stop(when + duration + 0.02);
+}
+
+function playBaccaratEntrySound() {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const now = context.currentTime;
+  [440, 659.25, 880].forEach((frequency, index) => {
+    scheduleBaccaratSfxTone(context, frequency, now + index * 0.085, 0.28, 0.024 - index * 0.003, "sine");
+  });
+}
+
+function playBaccaratChipSound(chip: number) {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const pitch = 590 + Math.log2(Math.max(10, chip) / 10 + 1) * 54;
+  const now = context.currentTime;
+  scheduleBaccaratSfxTone(context, pitch, now, 0.055, 0.026, "sine");
+  scheduleBaccaratSfxTone(context, pitch * 1.52, now + 0.018, 0.075, 0.015, "triangle");
+}
+
+function playBaccaratBetSound() {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const now = context.currentTime;
+  scheduleBaccaratSfxTone(context, 360, now, 0.065, 0.026, "triangle");
+  scheduleBaccaratSfxTone(context, 530, now + 0.045, 0.09, 0.021, "sine");
+}
+
+function playBaccaratUndoSound(clear = false) {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const now = context.currentTime;
+  scheduleBaccaratSfxTone(context, clear ? 430 : 510, now, 0.07, 0.021, "triangle");
+  scheduleBaccaratSfxTone(context, clear ? 245 : 340, now + 0.045, 0.11, 0.017, "sine");
+}
+
+function playBaccaratConfirmSound() {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const now = context.currentTime;
+  [523.25, 659.25, 783.99].forEach((frequency, index) => {
+    scheduleBaccaratSfxTone(context, frequency, now + index * 0.055, 0.16, 0.022, "sine");
+  });
+}
+
+function playBaccaratCardSound(delayMs = 0) {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const when = context.currentTime + delayMs / 1000;
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const gain = context.createGain();
+  source.buffer = ensureBaccaratNoiseBuffer(context);
+  source.playbackRate.value = 0.86;
+  filter.type = "bandpass";
+  filter.frequency.value = 1850;
+  filter.Q.value = 0.55;
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.linearRampToValueAtTime(0.026, when + 0.018);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.15);
+  source.connect(filter).connect(gain).connect(context.destination);
+  source.start(when);
+  source.stop(when + 0.18);
+  scheduleBaccaratSfxTone(context, 420, when + 0.11, 0.055, 0.016, "triangle");
+}
+
+function playBaccaratRoundStartSound() {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const now = context.currentTime;
+  scheduleBaccaratSfxTone(context, 523.25, now, 0.2, 0.019, "sine");
+  scheduleBaccaratSfxTone(context, 698.46, now + 0.09, 0.24, 0.017, "sine");
+}
+
+function playBaccaratResultSound(net: number) {
+  const context = baccaratSfxContext();
+  if (!context) return;
+  const now = context.currentTime;
+  const notes = net > 0
+    ? [523.25, 659.25, 783.99, 987.77]
+    : net < 0
+      ? [392, 329.63, 261.63]
+      : [587.33, 739.99, 880];
+  notes.forEach((frequency, index) => {
+    scheduleBaccaratSfxTone(context, frequency, now + index * 0.085, net < 0 ? 0.2 : 0.3, net < 0 ? 0.019 : 0.024, net < 0 ? "triangle" : "sine");
+  });
+}
+
+function syncBaccaratSnapshotAudio(snapshot: BaccaratSnapshot) {
+  const firstSnapshot = baccaratAudioPhase === null;
+  const roundChanged = snapshot.round !== baccaratAudioRound;
+  if (firstSnapshot && snapshot.phase === "result") baccaratAudioResultRound = snapshot.round;
+  if (!firstSnapshot) {
+    if (roundChanged && snapshot.phase === "betting") playBaccaratRoundStartSound();
+    if (snapshot.phase === "dealing") {
+      const revealed = Math.max(0, snapshot.revealCount - (roundChanged ? 0 : baccaratAudioRevealCount));
+      for (let index = 0; index < Math.min(revealed, 6); index += 1) playBaccaratCardSound(index * 90);
+    }
+    if (snapshot.phase === "result" && snapshot.outcome && baccaratAudioResultRound !== snapshot.round) {
+      baccaratAudioResultRound = snapshot.round;
+      playBaccaratResultSound(snapshot.viewer?.lastNet || 0);
+    }
+  }
+  baccaratAudioRound = snapshot.round;
+  baccaratAudioPhase = snapshot.phase;
+  baccaratAudioRevealCount = snapshot.revealCount;
+}
 
 function playTone(frequency: number, duration = 0.07, volume = 0.04) {
   const context = getAudioContext();
