@@ -5521,6 +5521,10 @@ body.celebrating::after {
 .baccarat-chip-rail button:nth-child(3) { background: #a53f3a; }
 .baccarat-chip-rail button:nth-child(4) { background: #8d5f9f; }
 .baccarat-chip-rail button:nth-child(5) { background: #25272b; }
+.baccarat-chip-rail button:nth-child(6) { background: #ad741d; }
+.baccarat-chip-rail button:nth-child(7) { background: #176d78; }
+.baccarat-chip-rail button:nth-child(8) { background: #713f7d; }
+.baccarat-chip-rail button:nth-child(9) { background: #8f252d; }
 .baccarat-chip-rail button.active { outline: 3px solid #f0ce73; outline-offset: 2px; transform: translateY(-3px); }
 
 .baccarat-actions { justify-content: flex-end; }
@@ -5784,15 +5788,18 @@ body.celebrating::after {
     grid-template-columns: 1fr;
     align-content: center;
     gap: 8px;
-    min-height: 126px;
+    min-height: 184px;
     padding: 8px 7px max(8px, env(safe-area-inset-bottom));
     overflow: visible;
   }
 
   .baccarat-chip-rail {
     min-width: 0;
+    max-width: 290px;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 5px;
+    margin-inline: auto;
   }
 
   .baccarat-chip-rail button {

@@ -84,6 +84,11 @@ assert.equal(repeatBaccaratBets(table, player, 1400).amount, 120);
 assert.equal(lockBaccaratBets(table, player, 1500).ok, true);
 assert.equal(placeBaccaratBet(table, player, "banker", 10, 1600).ok, false);
 
+const highStakeTable = createBaccaratTable(1700, () => 0);
+const highStakePlayer = addBaccaratPlayer(highStakeTable, { id: "high-stake", name: "HighStake", chips: 200_000 }, 1700);
+assert.equal(placeBaccaratBet(highStakeTable, highStakePlayer, "player", 100_000, 1750).ok, true, "100,000 Don chip must match the per-round limit");
+assert.equal(placeBaccaratBet(highStakeTable, highStakePlayer, "banker", 10, 1760).ok, false, "bets above the 100,000 Don round limit must remain blocked");
+
 const dealing = updateBaccaratTable(table, table.phaseEndsAt, () => 0);
 assert.equal(dealing.transition, "dealing");
 assert.equal(table.phase, "dealing");
