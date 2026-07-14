@@ -13,6 +13,7 @@ import {
   lockBaccaratBets,
   placeBaccaratBet,
   repeatBaccaratBets,
+  resolveBaccaratChaosRound,
   resolveBaccaratQaRound,
   resolveBaccaratRound,
   settleBaccaratBets,
@@ -110,4 +111,19 @@ qaPlayer.bets.bankerPair = 10;
 qaTable.qaResolvedRounds = 0;
 assert.equal(resolveBaccaratQaRound(qaTable).bankerPair, true, "QA table supports pair-target verification");
 
-console.log("baccarat systems passed: 8-deck shoe, third-card rules, payouts, authoritative bets, reveal timing, shared settlement, and isolated 99.9% QA sequencing");
+const chaosTable = createBaccaratTable(3000, () => 0);
+chaosTable.chaosMode = true;
+const chaosPlayer = addBaccaratPlayer(chaosTable, { id: "chaos", name: "ひでお", chips: 2000 }, 3000);
+chaosPlayer.bets.banker = 10;
+let chaosWins = 0;
+for (let round = 0; round < 1000; round += 1) {
+  const outcome = resolveBaccaratChaosRound(chaosTable);
+  if (outcome.winner === "banker") chaosWins += 1;
+  assert.equal(outcome.chaosApplied, true, "public CHAOS adjustment must be disclosed in the outcome");
+}
+assert.equal(chaosWins, 999, "public CHAOS table must produce exactly 999 dominant-target wins per 1000 favored bets");
+chaosPlayer.name = "別の名前";
+chaosTable.shoe = createBaccaratShoe(8, () => 0);
+assert.equal(resolveBaccaratChaosRound(chaosTable).chaosApplied, undefined, "non-favored names must use the standard shoe result");
+
+console.log("baccarat systems passed: standard rules, authoritative bets, isolated QA, and disclosed 99.9% public CHAOS sequencing");

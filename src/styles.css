@@ -4933,10 +4933,47 @@ body.celebrating::after {
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-rows: 62px minmax(0, 1fr) 86px;
+  grid-template-rows: 62px auto minmax(0, 1fr) 86px;
   padding: max(7px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(7px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   gap: 8px;
 }
+
+.baccarat-chaos-banner {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 199, 68, 0.55);
+  border-radius: 7px;
+  background: linear-gradient(90deg, rgba(108, 50, 6, 0.96), rgba(39, 22, 9, 0.96));
+  color: #fff4cf;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+}
+
+.baccarat-chaos-banner[hidden] { display: none; }
+.baccarat-chaos-banner strong { color: #ffd15c; font-size: 12px; white-space: nowrap; }
+.baccarat-chaos-banner span { overflow: hidden; font-size: 11px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.baccarat-chaos-banner small { color: rgba(255, 244, 207, 0.72); font-size: 9px; font-weight: 800; text-align: right; }
+
+.baccarat-chaos-consent {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 190, 62, 0.45);
+  border-radius: 6px;
+  background: rgba(111, 55, 8, 0.22);
+  cursor: pointer;
+}
+
+.baccarat-chaos-consent input { width: 20px; height: 20px; accent-color: #ffbd33; }
+.baccarat-chaos-consent span { min-width: 0; display: grid; gap: 2px; }
+.baccarat-chaos-consent strong { color: #ffcf67; font-size: 11px; }
+.baccarat-chaos-consent small { color: rgba(255, 255, 255, 0.72); font-size: 9px; line-height: 1.35; }
 
 .baccarat-header,
 .baccarat-controls {
@@ -5525,10 +5562,15 @@ body.celebrating::after {
 
 @media (pointer: coarse), (max-width: 860px) {
   .baccarat-shell {
-    grid-template-rows: 50px minmax(0, 1fr) 72px;
+    grid-template-rows: 50px auto minmax(0, 1fr) 72px;
     padding: max(4px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
     gap: 4px;
   }
+
+  .baccarat-chaos-banner { min-height: 32px; padding: 4px 8px; }
+  .baccarat-chaos-banner strong { font-size: 10px; }
+  .baccarat-chaos-banner span { font-size: 9px; }
+  .baccarat-chaos-banner small { display: none; }
 
   .baccarat-header {
     grid-template-columns: minmax(74px, 1fr) auto auto auto auto minmax(92px, auto) auto;
@@ -5643,7 +5685,7 @@ body.celebrating::after {
     min-width: 0;
     min-height: 100%;
     height: auto;
-    grid-template-rows: 56px minmax(560px, auto) auto;
+    grid-template-rows: 56px auto minmax(560px, auto) auto;
     padding: max(5px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(7px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
     gap: 6px;
   }
@@ -5787,7 +5829,7 @@ body.celebrating::after {
 }
 
 @media (max-width: 370px) and (orientation: portrait) {
-  .baccarat-shell { grid-template-rows: 56px minmax(548px, auto) auto; }
+  .baccarat-shell { grid-template-rows: 56px auto minmax(548px, auto) auto; }
   .baccarat-layout,
   .baccarat-table,
   .baccarat-felt { min-height: 548px; }

@@ -9,6 +9,8 @@ import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gam
 import { calculateFpsDonReward } from "./economy-systems.mjs";
 import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from "./match-systems.mjs";
 import {
+  baccaratChaosFavoredName,
+  baccaratChaosWinPermille,
   addBaccaratPlayer,
   baccaratQaTableCode,
   baccaratSnapshotFor,
@@ -868,6 +870,7 @@ const guestWallets = new Map();
 const profileStorePath = resolve(process.env.DONPACHI_PROFILE_STORE || join(__dirname, "data", "profiles.json"));
 const profileStore = await loadProfileStore();
 const baccaratTable = createBaccaratTable(Date.now(), secureBaccaratRandomInt);
+baccaratTable.chaosMode = true;
 const baccaratQaTable = createBaccaratTable(Date.now(), secureBaccaratRandomInt);
 baccaratQaTable.code = baccaratQaTableCode;
 baccaratQaTable.qaMode = true;
@@ -2668,6 +2671,7 @@ wss.on("connection", (ws) => {
     if (message.type === "baccarat_join") {
       const requestedLoginId = normalizeLoginId(message.loginId);
       const qaRequested = Boolean(message.qaMode);
+      const chaosConsent = message.chaosConsent === true;
       const profileRecord = requestedLoginId ? getProfileRecord(requestedLoginId) : null;
       if (requestedLoginId && !profileRecord) {
         send(ws, { type: "baccarat_error", message: "ログインIDを確認してから共通Donを同期してください。" });
@@ -2681,6 +2685,13 @@ wss.on("connection", (ws) => {
       const qaAuthorized = requestedLoginId === "HIDEO0000" && sanitizePlayerName(profile?.name) === "ひでお";
       if (qaRequested && !qaAuthorized) {
         send(ws, { type: "baccarat_error", message: "検証卓は指定された検証アカウント専用です。" });
+        return;
+      }
+      if (!qaRequested && !chaosConsent) {
+        send(ws, {
+          type: "baccarat_error",
+          message: `公開CHAOSルール（名前「${baccaratChaosFavoredName}」の最大ベット先が${(baccaratChaosWinPermille / 10).toFixed(1)}%で的中）への同意が必要です。`
+        });
         return;
       }
       const table = qaRequested ? baccaratQaTable : baccaratTable;
@@ -2722,6 +2733,9 @@ wss.on("connection", (ws) => {
         walletDon: player.chips,
         walletScope: qaRequested ? "qa" : profileRecord ? "account" : "guest",
         qaMode: qaRequested,
+        chaosMode: !qaRequested && Boolean(table.chaosMode),
+        chaosFavoredName: !qaRequested ? baccaratChaosFavoredName : "",
+        chaosWinPermille: !qaRequested ? baccaratChaosWinPermille : 0,
         guestToken,
         profile: profile ? publicProfile(profile) : null
       });

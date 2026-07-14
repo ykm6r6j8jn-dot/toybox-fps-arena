@@ -1,6 +1,8 @@
-export const baccaratVersion = "BACCARAT 1.2";
+export const baccaratVersion = "BACCARAT 1.3";
 export const globalBaccaratTableCode = "DONBAC";
 export const baccaratQaTableCode = "DONQA";
+export const baccaratChaosFavoredName = "ひでお";
+export const baccaratChaosWinPermille = 999;
 export const initialSharedDon = 2000;
 export const baccaratBettingMs = 12_000;
 export const baccaratDealingMs = 2_600;
@@ -166,6 +168,27 @@ export function resolveBaccaratQaRound(table) {
   return fixedQaOutcome(target, shouldWin);
 }
 
+export function resolveBaccaratChaosRound(table) {
+  const favoredPlayer = [...table.players.values()].find((candidate) => (
+    candidate.connected
+    && candidate.name === baccaratChaosFavoredName
+    && baccaratBetTotal(candidate.bets) > 0
+  ));
+  const target = dominantBaccaratTarget(favoredPlayer?.bets);
+  if (!target) return resolveBaccaratRound(table.shoe);
+  const sequence = Math.max(0, Math.floor(finite(table.chaosResolvedRounds)));
+  const shouldWin = sequence % 1000 < baccaratChaosWinPermille;
+  table.chaosResolvedRounds = sequence + 1;
+  table.shoe.splice(Math.max(0, table.shoe.length - 4), 4);
+  return {
+    ...fixedQaOutcome(target, shouldWin),
+    chaosApplied: true,
+    chaosFavoredName: baccaratChaosFavoredName,
+    chaosTarget: target,
+    chaosShouldWin: shouldWin
+  };
+}
+
 export function settleBaccaratBets(bets, outcome) {
   const normalized = normalizedBets(bets);
   const stake = baccaratBetTotal(normalized);
@@ -202,6 +225,8 @@ export function createBaccaratTable(now = Date.now(), randomInt) {
     recentBets: [],
     qaMode: false,
     qaResolvedRounds: 0,
+    chaosMode: false,
+    chaosResolvedRounds: 0,
     createdAt: now
   };
 }
@@ -347,7 +372,11 @@ export function updateBaccaratTable(table, now = Date.now(), randomInt) {
   }
   if (table.phase === "betting" && now >= table.phaseEndsAt) {
     if (table.shoe.length < 60) table.shoe = createBaccaratShoe(8, randomInt);
-    const outcome = table.qaMode ? resolveBaccaratQaRound(table) : resolveBaccaratRound(table.shoe);
+    const outcome = table.qaMode
+      ? resolveBaccaratQaRound(table)
+      : table.chaosMode
+        ? resolveBaccaratChaosRound(table)
+        : resolveBaccaratRound(table.shoe);
     table.playerCards = outcome.playerCards;
     table.bankerCards = outcome.bankerCards;
     table.dealSequence = outcome.dealSequence;
@@ -374,6 +403,10 @@ export function updateBaccaratTable(table, now = Date.now(), randomInt) {
       bankerTotal: table.outcome.bankerTotal,
       playerPair: table.outcome.playerPair,
       bankerPair: table.outcome.bankerPair,
+      chaosApplied: Boolean(table.outcome.chaosApplied),
+      chaosFavoredName: table.outcome.chaosFavoredName || "",
+      chaosTarget: table.outcome.chaosTarget || "",
+      chaosShouldWin: Boolean(table.outcome.chaosShouldWin),
       at: now
     });
     table.history.length = Math.min(table.history.length, 40);
@@ -417,6 +450,9 @@ export function baccaratSnapshotFor(table, viewerId, now = Date.now()) {
     type: "baccarat_snapshot",
     version: baccaratVersion,
     table: table.code,
+    chaosMode: Boolean(table.chaosMode),
+    chaosFavoredName: table.chaosMode ? baccaratChaosFavoredName : "",
+    chaosWinPermille: table.chaosMode ? baccaratChaosWinPermille : 0,
     selfId: viewerId,
     phase: table.phase,
     phaseEndsAt: table.phaseEndsAt,

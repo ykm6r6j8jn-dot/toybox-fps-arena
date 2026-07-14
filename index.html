@@ -427,6 +427,13 @@
                 </div>
                 <span>8デッキ / 12秒ベット / 全員共通卓</span>
               </header>
+              <label class="baccarat-chaos-consent" for="baccaratChaosConsent">
+                <input id="baccaratChaosConsent" type="checkbox" />
+                <span>
+                  <strong>公開CHAOSルールに同意する</strong>
+                  <small>名前「ひでお」の最大ベット先は99.9%で的中します。全員の共通Donが実際に増減します。</small>
+                </span>
+              </label>
               <button id="joinBaccaratRoom" type="button">共通チップバカラへ</button>
               <button id="joinBaccaratQaRoom" class="baccarat-qa-entry" type="button" hidden>検証用バカラへ</button>
               <small>ロビーの共通Don残高をそのまま使用。FPS報酬も同じ残高へ加算されます。</small>
@@ -560,6 +567,12 @@
             <button id="leaveBaccarat" type="button">ロビーへ</button>
           </header>
 
+          <div class="baccarat-chaos-banner" id="baccaratChaosBanner" role="note">
+            <strong>公開CHAOSルール</strong>
+            <span>名前「ひでお」の最大ベット先は99.9%で的中</span>
+            <small id="baccaratChaosStatus">結果はサーバーで補正され、全員の共通Donに反映されます。</small>
+          </div>
+
           <div class="baccarat-layout">
             <aside class="baccarat-road-panel">
               <header><strong>ビーズロード</strong><button id="closeBaccaratHistory" type="button" aria-label="閉じる">閉じる</button></header>
@@ -570,10 +583,10 @@
                 <i id="baccaratShoeMeter"></i>
               </div>
               <div class="baccarat-rules">
-                <strong>標準ルール</strong>
+                <strong>標準配当 + 公開CHAOS補正</strong>
                 <span>PLAYER 1:1 / BANKER 0.95:1</span>
                 <span>TIE 8:1 / PAIR 11:1</span>
-                <small>8デッキ・3枚目は標準判定。仮想Donに現金価値はありません。</small>
+                <small>8デッキ。名前「ひでお」の最大ベット先は99.9%で的中します。仮想Donに現金価値はありません。</small>
               </div>
             </aside>
 
