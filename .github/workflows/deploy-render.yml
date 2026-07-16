@@ -1,0 +1,64 @@
+name: Deploy Render latest
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check server syntax
+        run: node --check server.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Control physics test
+        run: npm run test:controls
+
+      - name: Start local production server
+        run: |
+          PORT=5188 npm start > /tmp/donpachi-server.log 2>&1 &
+          echo $! > /tmp/donpachi-server.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5188/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/donpachi-server.log
+          exit 1
+
+      - name: Smoke multiplayer
+        run: npm run test:smoke
+
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set; Render hook deploy skipped."
+            exit 0
+          fi
+          curl --fail --show-error --silent "$RENDER_DEPLOY_HOOK_URL"
+
+      - name: Stop local server
+        if: always()
+        run: |
+          if [ -f /tmp/donpachi-server.pid ]; then
+            kill "$(cat /tmp/donpachi-server.pid)" || true
+          fi
