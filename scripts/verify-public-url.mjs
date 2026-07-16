@@ -27,6 +27,7 @@ if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.
 const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
+if (!pageHtml.includes("QUALITY 6.0 ワールド品質・安定性更新")) throw new Error("public page is missing the QUALITY 6.0 update marker");
 if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
 if (!pageHtml.includes("ECONOMY 1.1 共通Donウォレット")) throw new Error("public page is missing the ECONOMY 1.1 update marker");
 if (!pageHtml.includes("SOUND 1.0 バカラ・ジャズラウンジ")) throw new Error("public page is missing the SOUND 1.0 update marker");
@@ -196,4 +197,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MATCH 5.0 and BACCARAT 1.2 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.2 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
