@@ -20,6 +20,7 @@
     "test:systems": "node scripts/gameplay-systems-test.mjs",
     "test:economy": "node scripts/economy-systems-test.mjs",
     "test:network": "node scripts/network-systems-test.mjs",
+    "test:render": "node scripts/render-systems-test.mjs",
     "test:combat": "node scripts/combat-systems-test.mjs",
     "test:movement": "node scripts/movement-systems-test.mjs",
     "test:world": "node scripts/world-systems-test.mjs",

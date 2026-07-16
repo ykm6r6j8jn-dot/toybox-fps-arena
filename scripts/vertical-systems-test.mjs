@@ -12,6 +12,7 @@ import {
   spiralRoutePoint,
   stepElevatorState,
   stepFloorProgress,
+  stepVerticalHeight,
   towerAtPosition,
   toyboxElevatorDefinitions,
   toyboxTowerDefinitions
@@ -40,6 +41,8 @@ assert.ok(Math.hypot(routeStart.x - aurora.spiral.x, routeStart.z - aurora.spira
 assert.ok(Math.hypot(routeEnd.x - aurora.spiral.x, routeEnd.z - aurora.spiral.z) > 2.3);
 near(stepFloorProgress(0, 2, 0.1), 0.034);
 near(stepFloorProgress(1.99, 2, 0.1), 2);
+near(stepVerticalHeight(1.6, 7.26, 0.1), 1.94);
+near(stepVerticalHeight(7.2, 7.26, 0.1), 7.26);
 
 const elevator = toyboxElevatorDefinitions[0];
 const state = createElevatorState(elevator, 1000);

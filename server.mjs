@@ -48,6 +48,7 @@ import {
   spiralRoutePoint,
   stepElevatorState,
   stepFloorProgress,
+  stepVerticalHeight,
   towerAtPosition,
   toyboxElevatorDefinitions,
   toyboxTowerDefinitions
@@ -107,7 +108,7 @@ const ashinagaRange = 14;
 const ashinagaDamage = 86;
 const barrierDurationMs = 7000;
 const barrierRespawnMs = 15000;
-const spawnProtectionMs = 2200;
+const spawnProtectionMs = 5000;
 const vehicleMaxHealth = 600;
 const vehicleDisabledMs = 9000;
 const vehicleRepairPerSecond = 72;
@@ -2354,6 +2355,7 @@ function clearCpuVerticalState(bot) {
   bot.verticalTargetFloor = 0;
   bot.verticalStage = "";
   bot.lastVerticalMoveAt = 0;
+  bot.lastVerticalAlignAt = 0;
   bot.verticalEntryCommitted = false;
 }
 
@@ -2400,7 +2402,7 @@ function updateCpuVerticalRoute(room, bot, target, now) {
       return false;
     }
     const inside = towerAtPosition(bot, 0.05)?.id === activeTower.id;
-    if (!inside) {
+    if (!inside || bot.verticalEntryCommitted) {
       bot.verticalStage = "entry";
       const entryDirection = Math.sign(activeTower.entryOutside.z - activeTower.entryInside.z) || 1;
       const entryLane = ((Math.abs(bot.botIndex || 0) % 3) - 1) * 1.34;
@@ -2415,15 +2417,25 @@ function updateCpuVerticalRoute(room, bot, target, now) {
       };
       if (Math.hypot(bot.x - outsideWaypoint.x, bot.z - outsideWaypoint.z) <= 0.92) bot.verticalEntryCommitted = true;
       const waypoint = bot.verticalEntryCommitted ? insideWaypoint : outsideWaypoint;
-      moveCpuToVerticalWaypoint(bot, waypoint, now, room, bot.verticalEntryCommitted ? 1.15 : 1.05);
+      const reached = moveCpuToVerticalWaypoint(bot, waypoint, now, room, bot.verticalEntryCommitted ? 0.72 : 1.05);
       bot.y = 1.6;
+      if (!bot.verticalEntryCommitted || !inside || !reached) return true;
+      bot.verticalEntryCommitted = false;
+      bot.verticalStage = "landing";
       return true;
     }
   }
 
   if (Math.abs(progress - desiredProgress) <= 0.012) {
     bot.verticalProgress = desiredProgress;
-    bot.y = floorEyeY(activeTower, desiredProgress);
+    const floorY = floorEyeY(activeTower, desiredProgress);
+    const elapsed = Math.min(0.18, Math.max(0.055, (now - (bot.lastVerticalAlignAt || now - 110)) / 1000));
+    bot.lastVerticalAlignAt = now;
+    bot.y = stepVerticalHeight(bot.y, floorY, elapsed);
+    if (Math.abs(bot.y - floorY) > 0.04) {
+      bot.verticalStage = "settling";
+      return true;
+    }
     bot.verticalStage = desiredProgress > 0 ? "floor" : "";
     if (desiredProgress === 0 && (!desiredTower || changingTower)) clearCpuVerticalState(bot);
     return false;
@@ -2432,11 +2444,15 @@ function updateCpuVerticalRoute(room, bot, target, now) {
   const lane = cpuVerticalLane(bot);
   const currentLanding = spiralRoutePoint(activeTower, progress, lane);
   const landingDistance = Math.hypot(bot.x - currentLanding.x, bot.z - currentLanding.z);
-  if (landingDistance > 1.08 || Math.abs(bot.y - currentLanding.y) > 0.7) {
+  if (landingDistance > 0.28 || Math.abs(bot.y - currentLanding.y) > 0.08) {
     bot.verticalStage = "landing";
-    moveCpuToVerticalWaypoint(bot, currentLanding, now, room, 0.92);
+    moveCpuToVerticalWaypoint(bot, currentLanding, now, room, 0.24);
+    const elapsed = Math.min(0.18, Math.max(0.055, (now - (bot.lastVerticalAlignAt || now - 110)) / 1000));
+    bot.lastVerticalAlignAt = now;
+    bot.y = stepVerticalHeight(bot.y, currentLanding.y, elapsed);
     return true;
   }
+  bot.lastVerticalAlignAt = 0;
 
   const elapsed = Math.min(0.18, Math.max(0.055, (now - (bot.lastVerticalMoveAt || now - 110)) / 1000));
   bot.lastVerticalMoveAt = now;
@@ -2815,7 +2831,7 @@ wss.on("connection", (ws) => {
         resumedPlayer.explicitLeave = false;
         resumedPlayer.lastSeen = now;
         resumedPlayer.lastStateAt = now;
-        resumedPlayer.spawnProtectedUntil = Math.max(resumedPlayer.spawnProtectedUntil || 0, now + 1600);
+        resumedPlayer.spawnProtectedUntil = now + 1600;
         resumedPlayer.nextZoneDamageAt = Math.max(resumedPlayer.nextZoneDamageAt || 0, now + 1600);
         if (profileRecord?.key) resumedPlayer.profileKey = profileRecord.key;
         resumedPlayer.isHost = isPrivilegedLoginId(requestedLoginId);
@@ -3289,6 +3305,7 @@ wss.on("connection", (ws) => {
       const weapon = normalizeWeapon(message.weapon);
       const now = Date.now();
       if (!consumeShotBudget(currentPlayer, weapon, now)) return;
+      if ((currentPlayer.spawnProtectedUntil || 0) > now) currentPlayer.spawnProtectedUntil = 0;
       const reportedOrigin = vectorFrom(message.origin);
       const originDistance = Math.hypot(
         reportedOrigin.x - currentPlayer.x,
@@ -3903,6 +3920,7 @@ function nearestEnemy(room, shooter, maxDistance = Infinity, requireLineOfSight 
   let bestDistance = Infinity;
   for (const target of room.players.values()) {
     if (target.id === shooter.id || target.disconnectedAt || target.creative || target.eliminated || target.health <= 0 || target.color === shooter.color) continue;
+    if ((target.spawnProtectedUntil || 0) > Date.now()) continue;
     const distance = Math.hypot(target.x - shooter.x, target.y - shooter.y, target.z - shooter.z);
     if (distance > maxDistance) continue;
     if (requireLineOfSight) {
@@ -3951,6 +3969,7 @@ function isActiveCpuTarget(bot, target) {
     !target.creative &&
     !target.eliminated &&
     target.health > 0 &&
+    (target.spawnProtectedUntil || 0) <= Date.now() &&
     target.color !== bot.color
   );
 }

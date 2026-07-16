@@ -726,21 +726,21 @@ body.audio-needs-unlock .audio-unlock-button {
 
 .damage-feed {
   right: 22px;
-  top: 112px;
+  top: 320px;
   z-index: 6;
   display: grid;
-  gap: 7px;
-  width: min(230px, calc(100vw - 24px));
+  gap: 6px;
+  width: min(216px, calc(100vw - 24px));
   pointer-events: none;
 }
 
 .damage-card {
   display: grid;
-  grid-template-columns: 58px 1fr;
+  grid-template-columns: 50px 1fr;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 8px 10px;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 9px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-left: 4px solid #93e43c;
   border-radius: 7px;
@@ -770,7 +770,7 @@ body.audio-needs-unlock .audio-unlock-button {
 
 .damage-card strong {
   color: #fff;
-  font-size: 19px;
+  font-size: 17px;
   line-height: 1;
 }
 

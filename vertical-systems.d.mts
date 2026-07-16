@@ -59,6 +59,7 @@ export function spiralRoutePoint(
   laneOffset?: number
 ): { x: number; y: number; z: number; yaw: number; progress: number };
 export function stepFloorProgress(current: number, target: number, deltaSeconds: number, levelsPerSecond?: number): number;
+export function stepVerticalHeight(current: number, target: number, deltaSeconds: number, metersPerSecond?: number): number;
 export function createElevatorState(definition: ElevatorDefinition, now?: number): ElevatorState;
 export function setElevatorTarget(state: ElevatorState, definition: ElevatorDefinition, floor: number): ElevatorState;
 export function stepElevatorState(state: ElevatorState, definition: ElevatorDefinition, now?: number): ElevatorState;

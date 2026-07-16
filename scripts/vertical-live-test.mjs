@@ -124,7 +124,7 @@ try {
   let maximumBotHeight = 1.6;
   let minimumVerticalDistance = Infinity;
   const observationStart = Date.now();
-  while (Date.now() - observationStart < 12_000 && !sawAscendingHeight) {
+  while (Date.now() - observationStart < 20_000 && !sawAscendingHeight) {
     const snapshot = latest();
     for (const bot of snapshot?.players?.filter((player) => player.isBot) || []) {
       if (bot.botTactic === "vertical") sawVerticalTactic = true;

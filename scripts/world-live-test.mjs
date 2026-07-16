@@ -130,7 +130,7 @@ try {
   if (!latestDoor(alpha, "metro-entry")?.targetOpen) throw new Error("manual interaction did not hold the door open");
 
   await waitFor(
-    () => (latestDoor(alpha, "metro-entry")?.openness || 1) < 0.04 && (latestDoor(observer, "metro-entry")?.openness || 1) < 0.04,
+    () => (latestDoor(alpha, "metro-entry")?.openness ?? 1) < 0.04 && (latestDoor(observer, "metro-entry")?.openness ?? 1) < 0.04,
     "shared door closes after hold expires",
     10_000
   );

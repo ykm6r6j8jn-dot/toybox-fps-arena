@@ -144,6 +144,14 @@ export function stepFloorProgress(current, target, deltaSeconds, levelsPerSecond
   return from + Math.sign(to - from) * maximumStep;
 }
 
+export function stepVerticalHeight(current, target, deltaSeconds, metersPerSecond = 3.4) {
+  const from = finite(current, PLAYER_EYE_HEIGHT);
+  const to = finite(target, from);
+  const maximumStep = clamp(finite(deltaSeconds), 0, 0.25) * Math.max(0.1, finite(metersPerSecond, 3.4));
+  if (Math.abs(to - from) <= maximumStep) return to;
+  return from + Math.sign(to - from) * maximumStep;
+}
+
 export function createElevatorState(definition, now = Date.now()) {
   return {
     id: definition.id,
