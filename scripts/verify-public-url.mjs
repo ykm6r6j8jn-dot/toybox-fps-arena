@@ -26,10 +26,14 @@ if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.
 if (health.progressionVersion !== "PROGRESSION 2.0" || health.maxCpuPlayers !== 13) {
   throw new Error(`public health is missing progression/cpu limits: ${JSON.stringify(health)}`);
 }
+if (health.runtime?.version !== "MEMORY GUARD 1.0" || !Number.isFinite(health.runtime?.memoryMiB?.rss)) {
+  throw new Error(`public health is missing runtime memory guards: ${JSON.stringify(health)}`);
+}
 
 const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
 const pageHtml = await pageResponse.text();
+if (!pageHtml.includes("STABILITY 1.0 メモリ安定化更新")) throw new Error("public page is missing the STABILITY 1.0 update marker");
 if (!pageHtml.includes("QUALITY 6.0 ワールド品質・安定性更新")) throw new Error("public page is missing the QUALITY 6.0 update marker");
 if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
 if (!pageHtml.includes("ECONOMY 1.1 共通Donウォレット")) throw new Error("public page is missing the ECONOMY 1.1 update marker");
@@ -202,4 +206,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, PROGRESSION 2.0, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MEMORY GUARD 1.0 at ${health.runtime.memoryMiB.rss} MiB RSS, PROGRESSION 2.0, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);

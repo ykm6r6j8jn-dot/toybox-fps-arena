@@ -22,6 +22,8 @@
     "test:progression": "node scripts/progression-systems-test.mjs",
     "test:account-live": "node scripts/account-progression-live-test.mjs",
     "test:network": "node scripts/network-systems-test.mjs",
+    "test:runtime-memory": "node scripts/runtime-memory-systems-test.mjs",
+    "test:runtime-memory-live": "node scripts/runtime-memory-live-test.mjs",
     "test:render": "node scripts/render-systems-test.mjs",
     "test:combat": "node scripts/combat-systems-test.mjs",
     "test:movement": "node scripts/movement-systems-test.mjs",

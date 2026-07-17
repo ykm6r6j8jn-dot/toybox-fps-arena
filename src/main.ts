@@ -5416,7 +5416,7 @@ function handleMessage(event: MessageEvent<string>) {
     if (lastSnapshotArrivalAt > 0) {
       const interval = arrivalAt - lastSnapshotArrivalAt;
       if (interval >= 20 && interval <= 1000) {
-        const jitterSample = Math.abs(interval - 110);
+        const jitterSample = Math.abs(interval - 150);
         snapshotJitterMs += (jitterSample - snapshotJitterMs) * 0.14;
       }
     }

@@ -15,6 +15,11 @@ import { promisify } from "node:util";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import {
+  memoryUsageMiB,
+  pruneTimedMap,
+  websocketSendDecision
+} from "./runtime-memory-systems.mjs";
 import { computeSafeZone, isOutsideSafeZone, vehicleRepairStations } from "./gameplay-systems.mjs";
 import { calculateFpsDonReward } from "./economy-systems.mjs";
 import { createMatchLifecycle, minimumHumansForMatch, stepMatchLifecycle } from "./match-systems.mjs";
@@ -100,9 +105,28 @@ const accountEncryptionKey = createHash("sha256").update(accountSecret).digest()
 const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const authRateWindowMs = 10 * 60 * 1000;
 const authRateMaxAttempts = 8;
+const authRateMaxPerAddress = 24;
 const authLockMs = 5 * 60 * 1000;
+const maxConcurrentPasswordHashes = 2;
 const scryptAsync = promisify(scryptCallback);
 const authRateLimits = new Map();
+let activePasswordHashes = 0;
+let profileSavePromise = Promise.resolve();
+let profileSaveTimer;
+
+const runtimeMetrics = {
+  startedAt: Date.now(),
+  acceptedConnections: 0,
+  rejectedHandshakes: 0,
+  realtimeMessagesSkipped: 0,
+  slowSocketsTerminated: 0,
+  heartbeatTerminations: 0,
+  messagesSent: 0,
+  fpsSnapshots: 0,
+  baccaratSnapshots: 0,
+  authBusyRejections: 0,
+  cacheEntriesPruned: 0
+};
 
 function isPrivilegedLoginId(loginId) {
   const normalized = normalizeLoginId(loginId);
@@ -121,6 +145,9 @@ const maxPlayers = 20;
 const globalFpsRoomCode = "DONPCH";
 const maxCpuPlayers = 13;
 const maxWsMessageBytes = 8192;
+const maxWsConnections = 64;
+const wsHandshakeTimeoutMs = Math.max(1_000, Number(process.env.DONPACHI_WS_HANDSHAKE_MS) || 20_000);
+const wsHeartbeatIntervalMs = Math.max(1_000, Number(process.env.DONPACHI_WS_HEARTBEAT_MS) || 30_000);
 const maxHttpJsonBytes = 12_288;
 const pokerStartingChips = 2000;
 const pokerTurnMs = 10_000;
@@ -135,6 +162,7 @@ const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
 const worldVersion = "VERTICAL 4.0";
 const matchVersion = "MATCH 5.0";
+const runtimeGuardVersion = "MEMORY GUARD 1.0";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -608,7 +636,9 @@ function getGuestWallet(token, create = false) {
   if (!guestWallets.has(normalized) && create) {
     guestWallets.set(normalized, { don: initialSharedDon, updatedAt: Date.now() });
   }
-  return guestWallets.get(normalized) || null;
+  const wallet = guestWallets.get(normalized) || null;
+  if (wallet) wallet.updatedAt = Date.now();
+  return wallet;
 }
 
 function walletDon(profileRecord, guestToken) {
@@ -796,12 +826,33 @@ function sanitizeStoredAuth(auth = {}) {
   };
 }
 
+async function derivePassword(password, salt) {
+  if (activePasswordHashes >= maxConcurrentPasswordHashes) {
+    runtimeMetrics.authBusyRejections += 1;
+    throw Object.assign(new Error("password hashing capacity reached"), {
+      status: 503,
+      publicMessage: "ログイン処理が混み合っています。数秒後に再試行してください。"
+    });
+  }
+  activePasswordHashes += 1;
+  try {
+    return Buffer.from(await scryptAsync(password, salt, 64, {
+      N: 16_384,
+      r: 8,
+      p: 1,
+      maxmem: 32 * 1024 * 1024
+    }));
+  } finally {
+    activePasswordHashes -= 1;
+  }
+}
+
 async function createPasswordAuth(password) {
   const salt = randomBytes(18).toString("base64url");
-  const derived = await scryptAsync(password, salt, 64, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  const derived = await derivePassword(password, salt);
   return {
     salt,
-    passwordHash: Buffer.from(derived).toString("base64url"),
+    passwordHash: derived.toString("base64url"),
     failedAttempts: 0,
     lockUntil: 0,
     passwordUpdatedAt: Date.now()
@@ -812,7 +863,7 @@ async function verifyPassword(password, auth) {
   const stored = sanitizeStoredAuth(auth);
   const salt = stored.salt || "donpachi-dummy-auth";
   const expected = stored.passwordHash ? Buffer.from(stored.passwordHash, "base64url") : Buffer.alloc(64);
-  const derived = Buffer.from(await scryptAsync(password, salt, 64, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }));
+  const derived = await derivePassword(password, salt);
   return Boolean(stored.passwordHash && expected.length === derived.length && timingSafeEqual(expected, derived));
 }
 
@@ -824,18 +875,28 @@ function requestAddress(req) {
 
 function authRateAllowed(req, loginId) {
   const now = Date.now();
-  if (authRateLimits.size > 5_000) {
-    for (const [storedKey, entry] of authRateLimits) {
-      if (entry.resetAt <= now) authRateLimits.delete(storedKey);
-    }
-    while (authRateLimits.size > 5_000) authRateLimits.delete(authRateLimits.keys().next().value);
+  if (authRateLimits.size > 1_000) {
+    runtimeMetrics.cacheEntriesPruned += pruneTimedMap(authRateLimits, {
+      now,
+      maxAgeMs: 0,
+      maxEntries: 1_000,
+      timestamp: (entry) => entry.resetAt
+    });
   }
-  const key = `${requestAddress(req)}:${profileHash(normalizeLoginId(loginId))}`;
-  const current = authRateLimits.get(key);
-  const next = !current || current.resetAt <= now ? { count: 0, resetAt: now + authRateWindowMs } : current;
-  next.count += 1;
-  authRateLimits.set(key, next);
-  return next.count <= authRateMaxAttempts;
+  const address = requestAddress(req);
+  const attempts = [
+    [`address:${address}`, authRateMaxPerAddress],
+    [`account:${address}:${profileHash(normalizeLoginId(loginId))}`, authRateMaxAttempts]
+  ];
+  let allowed = true;
+  for (const [key, limit] of attempts) {
+    const current = authRateLimits.get(key);
+    const next = !current || current.resetAt <= now ? { count: 0, resetAt: now + authRateWindowMs } : current;
+    next.count += 1;
+    authRateLimits.set(key, next);
+    if (next.count > limit) allowed = false;
+  }
+  return allowed;
 }
 
 function accountResponse(record, sessionToken = "") {
@@ -919,9 +980,15 @@ async function loadProfileStore() {
   }
 }
 
-async function saveProfileStore() {
-  await mkdir(resolve(profileStorePath, ".."), { recursive: true });
-  await writeFile(profileStorePath, JSON.stringify(profileStore, null, 2), "utf8");
+function saveProfileStore() {
+  const serialized = JSON.stringify(profileStore);
+  profileSavePromise = profileSavePromise
+    .catch(() => undefined)
+    .then(async () => {
+      await mkdir(resolve(profileStorePath, ".."), { recursive: true });
+      await writeFile(profileStorePath, serialized, "utf8");
+    });
+  return profileSavePromise;
 }
 
 function getProfileRecord(loginId) {
@@ -1059,7 +1126,11 @@ function consumeMatchItems(player, now = Date.now()) {
 }
 
 function saveProfileSoon() {
-  saveProfileStore().catch(() => undefined);
+  if (profileSaveTimer) return;
+  profileSaveTimer = setTimeout(() => {
+    profileSaveTimer = undefined;
+    saveProfileStore().catch(() => undefined);
+  }, 250);
 }
 
 function readJsonRequest(req, limit = maxHttpJsonBytes) {
@@ -1198,7 +1269,7 @@ async function handleProfileRequest(req, res) {
     res.end(JSON.stringify({ ok: true, ...accountResponse(record, nextSession) }));
   } catch (error) {
     res.writeHead(error?.status || 500, securityHeaders("application/json; charset=utf-8"));
-    res.end(JSON.stringify({ ok: false, message: "プロフィール処理に失敗しました。" }));
+    res.end(JSON.stringify({ ok: false, message: error?.publicMessage || "プロフィール処理に失敗しました。" }));
   }
 }
 
@@ -1299,7 +1370,72 @@ baccaratTable.chaosMode = true;
 const baccaratQaTable = createBaccaratTable(Date.now(), secureBaccaratRandomInt);
 baccaratQaTable.code = baccaratQaTableCode;
 baccaratQaTable.qaMode = true;
+let wss;
 let vite;
+
+function activeGuestWalletTokens() {
+  const active = new Set();
+  for (const room of rooms.values()) {
+    for (const player of room.players.values()) {
+      if (!player.isBot && player.guestToken) active.add(player.guestToken);
+    }
+  }
+  for (const table of [baccaratTable, baccaratQaTable]) {
+    for (const player of table.players.values()) {
+      if (player.connected && player.guestToken) active.add(player.guestToken);
+    }
+  }
+  return active;
+}
+
+function pruneRuntimeCaches(now = Date.now()) {
+  runtimeMetrics.cacheEntriesPruned += pruneTimedMap(authRateLimits, {
+    now,
+    maxAgeMs: 0,
+    maxEntries: 1_000,
+    timestamp: (entry) => entry.resetAt
+  });
+  runtimeMetrics.cacheEntriesPruned += pruneTimedMap(guestWallets, {
+    now,
+    maxAgeMs: 24 * 60 * 60 * 1000,
+    maxEntries: 2_000,
+    timestamp: (wallet) => wallet.updatedAt,
+    protectedKeys: activeGuestWalletTokens()
+  });
+}
+
+function runtimeHealth() {
+  return {
+    version: runtimeGuardVersion,
+    memoryMiB: {
+      ...memoryUsageMiB(process.memoryUsage()),
+      limit: 512
+    },
+    uptimeSeconds: Math.floor((Date.now() - runtimeMetrics.startedAt) / 1000),
+    websockets: {
+      active: wss?.clients?.size || 0,
+      accepted: runtimeMetrics.acceptedConnections,
+      rejectedHandshakes: runtimeMetrics.rejectedHandshakes,
+      realtimeSkipped: runtimeMetrics.realtimeMessagesSkipped,
+      slowTerminated: runtimeMetrics.slowSocketsTerminated,
+      heartbeatTerminated: runtimeMetrics.heartbeatTerminations,
+      sent: runtimeMetrics.messagesSent
+    },
+    snapshots: {
+      fps: runtimeMetrics.fpsSnapshots,
+      baccarat: runtimeMetrics.baccaratSnapshots
+    },
+    auth: {
+      activeHashes: activePasswordHashes,
+      busyRejections: runtimeMetrics.authBusyRejections,
+      rateEntries: authRateLimits.size
+    },
+    cache: {
+      guestWallets: guestWallets.size,
+      pruned: runtimeMetrics.cacheEntriesPruned
+    }
+  };
+}
 
 if (!isProd) {
   const { createServer: createViteServer } = await import("vite");
@@ -1347,7 +1483,8 @@ const server = createServer(async (req, res) => {
       rooms: rooms.size,
       players,
       progressionVersion,
-      maxCpuPlayers
+      maxCpuPlayers,
+      runtime: runtimeHealth()
     }));
     return;
   }
@@ -1391,7 +1528,12 @@ const server = createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ server, path: "/ws", maxPayload: maxWsMessageBytes });
+wss = new WebSocketServer({
+  server,
+  path: "/ws",
+  maxPayload: maxWsMessageBytes,
+  perMessageDeflate: false
+});
 
 function roomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -2269,10 +2411,12 @@ function broadcastPoker(room) {
 }
 
 function broadcastBaccarat(table = baccaratTable, now = Date.now()) {
+  let delivered = false;
   for (const player of table.players.values()) {
     if (!player.connected || !player.ws || player.ws.readyState !== 1) continue;
-    send(player.ws, baccaratSnapshotFor(table, player.id, now));
+    delivered = send(player.ws, baccaratSnapshotFor(table, player.id, now)) || delivered;
   }
+  if (delivered) runtimeMetrics.baccaratSnapshots += 1;
 }
 
 function spawnPoint(index = 0) {
@@ -2447,13 +2591,43 @@ function publicFocusTask(task) {
   };
 }
 
+function sendSerialized(ws, serialized, payloadType = "") {
+  const decision = websocketSendDecision({
+    readyState: ws?.readyState,
+    bufferedAmount: ws?.bufferedAmount,
+    payloadType
+  });
+  if (decision === "skip") {
+    runtimeMetrics.realtimeMessagesSkipped += 1;
+    return false;
+  }
+  if (decision === "terminate") {
+    runtimeMetrics.slowSocketsTerminated += 1;
+    ws.terminate();
+    return false;
+  }
+  if (decision !== "send") return false;
+  try {
+    ws.send(serialized);
+    runtimeMetrics.messagesSent += 1;
+    return true;
+  } catch {
+    ws.terminate();
+    return false;
+  }
+}
+
 function send(ws, payload) {
-  if (ws?.readyState === 1) ws.send(JSON.stringify(payload));
+  if (!payload || typeof payload !== "object") return false;
+  return sendSerialized(ws, JSON.stringify(payload), String(payload.type || ""));
 }
 
 function broadcast(room, payload) {
+  if (!payload || typeof payload !== "object") return;
+  const serialized = JSON.stringify(payload);
+  const payloadType = String(payload.type || "");
   for (const player of room.players.values()) {
-    if (!player.isBot) send(player.ws, payload);
+    if (!player.isBot) sendSerialized(player.ws, serialized, payloadType);
   }
 }
 
@@ -3095,10 +3269,31 @@ function updateSafeZone(room, now) {
 }
 
 wss.on("connection", (ws) => {
+  runtimeMetrics.acceptedConnections += 1;
+  if (wss.clients.size > maxWsConnections) {
+    runtimeMetrics.rejectedHandshakes += 1;
+    ws.terminate();
+    return;
+  }
   let currentRoom;
   let currentPlayer;
   let currentBaccaratPlayer;
   let currentBaccaratTable;
+  let sessionReady = false;
+  ws.isAlive = true;
+  const handshakeTimer = setTimeout(() => {
+    if (sessionReady || ws.readyState !== 1) return;
+    runtimeMetrics.rejectedHandshakes += 1;
+    ws.terminate();
+  }, wsHandshakeTimeoutMs);
+  const markSessionReady = () => {
+    sessionReady = true;
+    clearTimeout(handshakeTimer);
+  };
+
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
 
   ws.on("error", () => {
     if (ws.readyState === ws.OPEN) ws.close(1009, "invalid websocket message");
@@ -3176,6 +3371,7 @@ wss.on("connection", (ws) => {
       player.guestToken = guestToken;
       currentBaccaratPlayer = player;
       currentBaccaratTable = table;
+      markSessionReady();
       send(ws, {
         type: "baccarat_welcome",
         id: player.id,
@@ -3262,6 +3458,7 @@ wss.on("connection", (ws) => {
         resumedPlayer.guestToken = guestToken || resumedPlayer.guestToken || "";
         currentRoom = room;
         currentPlayer = resumedPlayer;
+        markSessionReady();
         recordPlayerPose(resumedPlayer, now);
         send(ws, fpsWelcomePayload(resumedPlayer, room, loginProfile, true));
         addFeed(room, `${resumedPlayer.name} が接続復旧`, resumedPlayer.color);
@@ -3351,6 +3548,7 @@ wss.on("connection", (ws) => {
       recordPlayerPose(player);
       currentRoom = room;
       currentPlayer = player;
+      markSessionReady();
       if (player.isHost) {
         applyRoomConfig(room, player, message.gameMode, message.team, message.cpuFill, message.relationMode);
         addFeed(room, `ホストが ${modeLabel(room.mode)} に変更`, player.color);
@@ -3778,6 +3976,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", (code, reason) => {
+    clearTimeout(handshakeTimer);
     if (currentBaccaratPlayer) {
       const table = currentBaccaratTable || baccaratTable;
       const removed = removeBaccaratPlayer(table, currentBaccaratPlayer, Date.now());
@@ -3809,6 +4008,32 @@ wss.on("connection", (ws) => {
   });
 });
 
+const websocketHeartbeatTimer = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      runtimeMetrics.heartbeatTerminations += 1;
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch {
+      ws.terminate();
+    }
+  }
+}, wsHeartbeatIntervalMs);
+
+const cacheMaintenanceTimer = setInterval(() => {
+  pruneRuntimeCaches();
+}, 60_000);
+
+server.on("close", () => {
+  clearInterval(websocketHeartbeatTimer);
+  clearInterval(cacheMaintenanceTimer);
+  if (profileSaveTimer) clearTimeout(profileSaveTimer);
+});
+
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
@@ -3825,7 +4050,7 @@ setInterval(() => {
       if (now - player.lastSeen <= 45_000) continue;
       if (player.vehicleId) releasePlayerVehicle(room, player, false);
       player.explicitLeave = true;
-      player.ws?.close(4000, "timeout");
+      player.ws?.terminate();
       room.players.delete(player.id);
       removedHuman = true;
     }
@@ -3865,6 +4090,7 @@ setInterval(() => {
       expiresAt: punch.expiresAt,
       type: punch.type
     }));
+    runtimeMetrics.fpsSnapshots += 1;
     broadcast(room, {
       type: "snapshot",
       aiVersion: cpuAiVersion,
@@ -3896,7 +4122,7 @@ setInterval(() => {
       safeZone
     });
   }
-}, 110);
+}, 150);
 
 setInterval(() => {
   const now = Date.now();
@@ -3930,7 +4156,7 @@ setInterval(() => {
     }
     broadcastBaccarat(table, now);
   }
-}, 220);
+}, 250);
 
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
