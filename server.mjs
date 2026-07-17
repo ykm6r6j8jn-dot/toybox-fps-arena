@@ -119,9 +119,13 @@ const runtimeMetrics = {
   acceptedConnections: 0,
   rejectedHandshakes: 0,
   realtimeMessagesSkipped: 0,
+  outboundRateLimited: 0,
+  roomBroadcastsDropped: 0,
   slowSocketsTerminated: 0,
   heartbeatTerminations: 0,
   messagesSent: 0,
+  inboundMessages: 0,
+  inboundRateTerminated: 0,
   inboundStatesProcessed: 0,
   inboundStatesSkipped: 0,
   fpsSnapshots: 0,
@@ -147,7 +151,12 @@ const maxPlayers = 20;
 const globalFpsRoomCode = "DONPCH";
 const maxCpuPlayers = 13;
 const fpsTickMs = 180;
+const cpuTickMs = 360;
 const maxWsMessageBytes = 8192;
+const websocketRateWindowMs = 1000;
+const maxInboundMessagesPerWindow = 120;
+const maxOutboundMessagesPerWindow = 96;
+const maxRoomRealtimeBroadcastsPerWindow = 64;
 const maxWsConnections = 64;
 const wsHandshakeTimeoutMs = Math.max(1_000, Number(process.env.DONPACHI_WS_HANDSHAKE_MS) || 20_000);
 const wsHeartbeatIntervalMs = Math.max(1_000, Number(process.env.DONPACHI_WS_HEARTBEAT_MS) || 30_000);
@@ -165,7 +174,7 @@ const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
 const worldVersion = "VERTICAL 4.0";
 const matchVersion = "MATCH 5.0";
-const runtimeGuardVersion = "PERF GUARD 2.0";
+const runtimeGuardVersion = "PERF GUARD 2.1";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -1461,16 +1470,21 @@ function runtimeHealth() {
       accepted: runtimeMetrics.acceptedConnections,
       rejectedHandshakes: runtimeMetrics.rejectedHandshakes,
       realtimeSkipped: runtimeMetrics.realtimeMessagesSkipped,
+      outboundRateLimited: runtimeMetrics.outboundRateLimited,
+      roomBroadcastsDropped: runtimeMetrics.roomBroadcastsDropped,
       slowTerminated: runtimeMetrics.slowSocketsTerminated,
       heartbeatTerminated: runtimeMetrics.heartbeatTerminations,
       sent: runtimeMetrics.messagesSent,
+      inbound: runtimeMetrics.inboundMessages,
+      inboundRateTerminated: runtimeMetrics.inboundRateTerminated,
       inboundStatesProcessed: runtimeMetrics.inboundStatesProcessed,
       inboundStatesSkipped: runtimeMetrics.inboundStatesSkipped
     },
     snapshots: {
       fps: runtimeMetrics.fpsSnapshots,
       baccarat: runtimeMetrics.baccaratSnapshots,
-      intervalMs: fpsTickMs
+      intervalMs: fpsTickMs,
+      cpuIntervalMs: cpuTickMs
     },
     auth: {
       activeHashes: activePasswordHashes,
@@ -2638,6 +2652,63 @@ function publicFocusTask(task) {
   };
 }
 
+const criticalOutboundPayloadTypes = new Set([
+  "welcome",
+  "error",
+  "respawn",
+  "room_config",
+  "celebration",
+  "account_sync",
+  "fps_don_reward",
+  "baccarat_welcome",
+  "baccarat_error"
+]);
+const rateLimitedRoomPayloadTypes = new Set([
+  "shot",
+  "hit",
+  "impact",
+  "feed",
+  "ashinaga",
+  "vehicle_damage",
+  "vehicle_destroyed",
+  "team_ping"
+]);
+
+function outboundRateAllowed(ws, payloadType, now = Date.now()) {
+  let state = ws.donpachiOutboundRate;
+  if (!state || now - state.startedAt >= websocketRateWindowMs) {
+    state = { startedAt: now, sent: 0 };
+    ws.donpachiOutboundRate = state;
+  }
+  const limit = criticalOutboundPayloadTypes.has(payloadType)
+    ? maxOutboundMessagesPerWindow + 24
+    : maxOutboundMessagesPerWindow;
+  if (state.sent >= limit) {
+    runtimeMetrics.outboundRateLimited += 1;
+    if (payloadType === "snapshot" || payloadType === "baccarat_snapshot") {
+      runtimeMetrics.realtimeMessagesSkipped += 1;
+    }
+    return false;
+  }
+  state.sent += 1;
+  return true;
+}
+
+function roomBroadcastAllowed(room, payloadType, now = Date.now()) {
+  if (!rateLimitedRoomPayloadTypes.has(payloadType)) return true;
+  let state = room.outboundBroadcastRate;
+  if (!state || now - state.startedAt >= websocketRateWindowMs) {
+    state = { startedAt: now, sent: 0 };
+    room.outboundBroadcastRate = state;
+  }
+  if (state.sent >= maxRoomRealtimeBroadcastsPerWindow) {
+    runtimeMetrics.roomBroadcastsDropped += 1;
+    return false;
+  }
+  state.sent += 1;
+  return true;
+}
+
 function sendSerialized(ws, serialized, payloadType = "") {
   const decision = websocketSendDecision({
     readyState: ws?.readyState,
@@ -2654,6 +2725,7 @@ function sendSerialized(ws, serialized, payloadType = "") {
     return false;
   }
   if (decision !== "send") return false;
+  if (!outboundRateAllowed(ws, payloadType)) return false;
   try {
     ws.send(serialized);
     runtimeMetrics.messagesSent += 1;
@@ -2671,8 +2743,9 @@ function send(ws, payload) {
 
 function broadcast(room, payload) {
   if (!payload || typeof payload !== "object") return;
-  const serialized = JSON.stringify(payload);
   const payloadType = String(payload.type || "");
+  if (!roomBroadcastAllowed(room, payloadType)) return;
+  const serialized = JSON.stringify(payload);
   for (const player of room.players.values()) {
     if (!player.isBot) sendSerialized(player.ws, serialized, payloadType);
   }
@@ -3327,6 +3400,8 @@ wss.on("connection", (ws) => {
   let currentBaccaratPlayer;
   let currentBaccaratTable;
   let sessionReady = false;
+  let inboundRateStartedAt = Date.now();
+  let inboundRateCount = 0;
   ws.isAlive = true;
   const handshakeTimer = setTimeout(() => {
     if (sessionReady || ws.readyState !== 1) return;
@@ -3347,6 +3422,18 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("message", (raw) => {
+    const receivedAt = Date.now();
+    runtimeMetrics.inboundMessages += 1;
+    if (receivedAt - inboundRateStartedAt >= websocketRateWindowMs) {
+      inboundRateStartedAt = receivedAt;
+      inboundRateCount = 0;
+    }
+    inboundRateCount += 1;
+    if (inboundRateCount > maxInboundMessagesPerWindow) {
+      runtimeMetrics.inboundRateTerminated += 1;
+      ws.close(1008, "message rate exceeded");
+      return;
+    }
     const rawSize = typeof raw === "string" ? Buffer.byteLength(raw) : raw?.byteLength || raw?.length || 0;
     if (rawSize > maxWsMessageBytes) {
       ws.close(1009, "message too large");
@@ -4136,7 +4223,11 @@ setInterval(() => {
     updateElevators(room, now);
     updateVehicles(room, now);
     const safeZone = updateSafeZone(room, now);
-    if (room.matchPhase === "active" && !room.winner) updateCpuPlayers(room, now);
+    if (room.matchPhase === "active" && !room.winner) {
+      const cpuUpdateParity = Math.abs(Number(room.cpuUpdateParity) || 0) % 2;
+      updateCpuPlayers(room, now, cpuUpdateParity);
+      room.cpuUpdateParity = cpuUpdateParity === 0 ? 1 : 0;
+    } else room.cpuUpdateParity = 0;
     updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
     for (const player of room.players.values()) {
@@ -5436,7 +5527,7 @@ function tryCpuPlayerShot(room, bot, awareness, now) {
   return true;
 }
 
-function updateCpuPlayers(room, now) {
+function updateCpuPlayers(room, now, updateParity = -1) {
   const samples = room.movementStats.samples || 0;
   const movingRatio = samples ? room.movementStats.moving / samples : 0;
   const airborneRatio = samples ? room.movementStats.airborne / samples : 0;
@@ -5445,6 +5536,7 @@ function updateCpuPlayers(room, now) {
   ));
   for (const bot of room.players.values()) {
     if (!bot.isBot) continue;
+    if (updateParity >= 0 && Math.abs(Number(bot.botIndex) || 0) % 2 !== updateParity) continue;
     if (bot.eliminated || bot.health <= 0) {
       bot.lastSeen = now;
       continue;

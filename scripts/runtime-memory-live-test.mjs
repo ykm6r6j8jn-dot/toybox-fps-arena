@@ -72,8 +72,36 @@ function openSlowClient(index) {
   });
 }
 
+function openFloodClient() {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(endpoint);
+    clients.push(ws);
+    const timeout = setTimeout(() => reject(new Error("message flood client was not rate limited")), 5_000);
+    ws.on("open", () => ws.send(JSON.stringify({
+      type: "join",
+      name: "FloodProbe",
+      gameMode: "practice",
+      cpuFill: false,
+      relationMode: "versus"
+    })));
+    ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type !== "welcome") return;
+      for (let index = 0; index < 140; index += 1) {
+        ws.send(JSON.stringify({ type: "ping", at: Date.now() + index }));
+      }
+    });
+    ws.on("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    ws.on("error", () => undefined);
+  });
+}
+
 try {
   await waitForServer();
+  await openFloodClient();
   const orphan = new WebSocket(endpoint);
   clients.push(orphan);
   await Promise.all(Array.from({ length: 7 }, (_, index) => openSlowClient(index)));
@@ -83,6 +111,8 @@ try {
   assert.equal(response.ok, true);
   const health = await response.json();
   assert.equal(health.runtime.websockets.active, 0, "stalled and unjoined sockets must be removed");
+  assert.ok(health.runtime.websockets.inboundRateTerminated >= 1, "message floods must be rate limited");
+  assert.ok(health.runtime.websockets.outboundRateLimited >= 1, "outbound replies must respect the socket rate budget");
   assert.ok(health.runtime.websockets.heartbeatTerminated >= 7, "stalled clients must fail heartbeat checks");
   assert.ok(health.runtime.websockets.rejectedHandshakes >= 1, "unjoined sockets must fail the handshake deadline");
   assert.ok(health.runtime.memoryMiB.rss < 220, `RSS must stay below the free-tier budget: ${health.runtime.memoryMiB.rss} MiB`);
