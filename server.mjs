@@ -153,7 +153,9 @@ const maxPlayers = 20;
 const globalFpsRoomCode = "DONPCH";
 const maxCpuPlayers = 13;
 const fpsTickMs = 180;
-const cpuTickMs = 360;
+const cpuAwarenessTickMs = 360;
+const bountyActiveMs = 24_000;
+const bountyCooldownMs = 12_000;
 const maxWsMessageBytes = 8192;
 const websocketRateWindowMs = 1000;
 const maxInboundMessagesPerWindow = 240;
@@ -173,10 +175,10 @@ const pokerJankenChoices = new Set(["rock", "scissors", "paper"]);
 const matchTeamSize = maxPlayers / 2;
 const maxHealth = 200;
 const arenaHalfSize = 96;
-const cpuAiVersion = "TACTICS 2.0";
+const cpuAiVersion = "TACTICS 2.1";
 const worldVersion = "VERTICAL 4.0";
 const matchVersion = "MATCH 5.0";
-const runtimeGuardVersion = "PERF GUARD 2.3";
+const runtimeGuardVersion = "PERF GUARD 2.4";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -1488,7 +1490,8 @@ function runtimeHealth() {
       fps: runtimeMetrics.fpsSnapshots,
       baccarat: runtimeMetrics.baccaratSnapshots,
       intervalMs: fpsTickMs,
-      cpuIntervalMs: cpuTickMs
+      cpuMovementIntervalMs: fpsTickMs,
+      cpuAwarenessIntervalMs: cpuAwarenessTickMs
     },
     auth: {
       activeHashes: activePasswordHashes,
@@ -1752,6 +1755,17 @@ function createPowerups(now = Date.now()) {
   }));
 }
 
+function createBountyState(now = Date.now()) {
+  return {
+    targetId: "",
+    targetName: "",
+    startedAt: 0,
+    expiresAt: 0,
+    nextAt: now + 8_000,
+    previousTargetId: ""
+  };
+}
+
 function createVehicles(now = Date.now()) {
   return new Map(vehicleSpawns.map((spawn) => [spawn.id, {
     ...spawn,
@@ -1828,7 +1842,8 @@ function getRoom(code, mode = "oneLife", arena = "toybox", partySize = 1, matchm
     castleCores: createCastleCores(),
     barrier: { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 },
     healthPickup: { ...randomPickupSpawn(arenaId), available: false, respawnAt: gameMode === "oneLife" ? nextHealthPickupAt() : 0 },
-    powerups: createPowerups()
+    powerups: createPowerups(),
+    bounty: createBountyState()
   };
   room.doors = createDoors(room.createdAt);
   room.elevators = createElevators(room.createdAt);
@@ -4242,10 +4257,9 @@ setInterval(() => {
     updateVehicles(room, now);
     const safeZone = updateSafeZone(room, now);
     if (room.matchPhase === "active" && !room.winner) {
-      const cpuUpdateParity = Math.abs(Number(room.cpuUpdateParity) || 0) % 2;
-      updateCpuPlayers(room, now, cpuUpdateParity);
-      room.cpuUpdateParity = cpuUpdateParity === 0 ? 1 : 0;
-    } else room.cpuUpdateParity = 0;
+      updateBounty(room, now);
+      updateCpuPlayers(room, now);
+    }
     updateFocusTasks(room, now);
     resolveCastleRoundByTimer(room, now);
     for (const player of room.players.values()) {
@@ -4293,7 +4307,8 @@ setInterval(() => {
       barrier: room.barrier,
       healthPickup: room.healthPickup,
       powerups: room.powerups,
-      safeZone
+      safeZone,
+      bounty: publicBounty(room, now)
     });
   }
 }, fpsTickMs);
@@ -4641,6 +4656,7 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
     awardCombatGrowth(room, shooter);
     target.deaths += 1;
     addFeed(room, headshot ? `${shooter.name} が ${target.name} をヘッドショット` : `${shooter.name} が ${target.name} をヒット`, shooter.color);
+    claimBounty(room, shooter, target);
     if (!target.isBot) {
       send(target.ws, {
         type: "death_info",
@@ -4787,6 +4803,7 @@ function createCpuTacticalState(index = 0, now = Date.now()) {
     targetVisible: false,
     lastTargetVisibleAt: 0,
     nextDecisionAt: now + 220 + (index % 4) * 90,
+    nextVisibilityCheckAt: now + (index % 2) * fpsTickMs,
     outnumbered: false,
     coverPoint: null,
     nextCoverSearchAt: 0,
@@ -4825,6 +4842,7 @@ function cpuHasLineOfSight(room, bot, target) {
 function updateCpuAwareness(room, bot, targets, now) {
   bot.botRole ||= cpuRoleForIndex(bot.botIndex);
   let currentTarget = room.players.get(bot.targetId);
+  let decisionVisibility = null;
   if (!isActiveCpuTarget(bot, currentTarget)) currentTarget = null;
   if (now >= (bot.nextDecisionAt || 0) || !currentTarget) {
     const ownCore = room.castleCores?.[bot.color];
@@ -4837,7 +4855,10 @@ function updateCpuAwareness(room, bot, targets, now) {
           distance,
           healthRatio: clamp(target.health / maxHealth, 0, 1),
           sticky: target.id === bot.targetId,
-          objectiveThreat: Boolean(ownCore?.health > 0 && Math.hypot(target.x - ownCore.x, target.z - ownCore.z) < 24)
+          objectiveThreat: Boolean(
+            target.id === room.bounty?.targetId ||
+            (ownCore?.health > 0 && Math.hypot(target.x - ownCore.x, target.z - ownCore.z) < 24)
+          )
         };
       })
       .sort((left, right) => (
@@ -4852,6 +4873,7 @@ function updateCpuAwareness(room, bot, targets, now) {
       if (score < selectedScore) {
         selected = candidate.target;
         selectedScore = score;
+        decisionVisibility = visible;
       }
     }
     if (selected?.id !== bot.targetId) {
@@ -4859,6 +4881,7 @@ function updateCpuAwareness(room, bot, targets, now) {
       bot.targetSeenAt = 0;
       bot.targetVisible = false;
       bot.lastTargetVisibleAt = 0;
+      bot.nextVisibilityCheckAt = 0;
       bot.coverPoint = null;
     }
     currentTarget = selected;
@@ -4879,7 +4902,12 @@ function updateCpuAwareness(room, bot, targets, now) {
     bot.targetVisible = false;
     return { target: null, visible: false, remembered: false, distance: Infinity };
   }
-  const visible = cpuHasLineOfSight(room, bot, currentTarget);
+  const distance = Math.hypot(currentTarget.x - bot.x, currentTarget.y - bot.y, currentTarget.z - bot.z);
+  let visible = Boolean(bot.targetVisible);
+  if (decisionVisibility !== null || now >= (bot.nextVisibilityCheckAt || 0)) {
+    visible = decisionVisibility ?? cpuHasLineOfSight(room, bot, currentTarget);
+    bot.nextVisibilityCheckAt = now + cpuAwarenessTickMs;
+  }
   if (visible) {
     if (!bot.targetVisible || !bot.targetSeenAt) bot.targetSeenAt = now;
     bot.lastTargetVisibleAt = now;
@@ -4890,7 +4918,7 @@ function updateCpuAwareness(room, bot, targets, now) {
     target: currentTarget,
     visible,
     remembered,
-    distance: Math.hypot(currentTarget.x - bot.x, currentTarget.y - bot.y, currentTarget.z - bot.z)
+    distance
   };
 }
 
@@ -5293,6 +5321,7 @@ function resetRoomScores(room, now = Date.now(), consumeItems = false) {
   room.barrier = { ...barrierSpawn, available: true, pickedBy: "", respawnAt: 0 };
   room.healthPickup = { ...randomPickupSpawn(room.arena), available: false, respawnAt: room.mode === "oneLife" ? nextHealthPickupAt() : 0 };
   room.powerups = createPowerups(now);
+  room.bounty = createBountyState(now);
   room.safeZone = computeSafeZone({
     roundStartedAt: room.roundStartedAt,
     now,
@@ -5413,6 +5442,99 @@ function updatePowerups(room, now) {
     powerup.respawnAt = 0;
     powerup.kind = powerupKinds[(powerupKinds.indexOf(powerup.kind) + 1 + Math.floor(Math.random() * powerupKinds.length)) % powerupKinds.length];
   }
+}
+
+function activeBountyTarget(room) {
+  const target = room.players.get(room.bounty?.targetId || "");
+  if (!target || target.disconnectedAt || target.eliminated || target.health <= 0) return null;
+  return target;
+}
+
+function clearBounty(room, now = Date.now()) {
+  room.bounty ||= createBountyState(now);
+  room.bounty.previousTargetId = room.bounty.targetId || room.bounty.previousTargetId || "";
+  room.bounty.targetId = "";
+  room.bounty.targetName = "";
+  room.bounty.startedAt = 0;
+  room.bounty.expiresAt = 0;
+  room.bounty.nextAt = now + bountyCooldownMs;
+}
+
+function publicBounty(room, now = Date.now()) {
+  const target = room.matchPhase === "active" && !room.winner ? activeBountyTarget(room) : null;
+  if (!target || now >= (room.bounty?.expiresAt || 0)) {
+    return { targetId: "", targetName: "", expiresAt: 0 };
+  }
+  return {
+    targetId: target.id,
+    targetName: target.name,
+    expiresAt: room.bounty.expiresAt
+  };
+}
+
+function updateBounty(room, now) {
+  room.bounty ||= createBountyState(now);
+  if (room.matchPhase !== "active" || room.winner) return;
+
+  const current = activeBountyTarget(room);
+  if (current && now < room.bounty.expiresAt) return;
+  if (room.bounty.targetId) {
+    if (current && now >= room.bounty.expiresAt) addFeed(room, `${current.name} が賞金首を生き延びた`, current.color);
+    clearBounty(room, now);
+  }
+  if (now < room.bounty.nextAt) return;
+
+  const candidates = [...room.players.values()].filter((player) => (
+    !player.disconnectedAt && !player.eliminated && player.health > 0 && !player.creative
+  ));
+  if (new Set(candidates.map((player) => player.color)).size < 2) {
+    room.bounty.nextAt = now + 3_000;
+    return;
+  }
+  const freshCandidates = candidates.filter((player) => player.id !== room.bounty.previousTargetId);
+  const pool = freshCandidates.length ? freshCandidates : candidates;
+  const ranked = pool
+    .map((player) => ({
+      player,
+      heat: (player.kills || 0) * 120 + (player.score || 0) * 70 + (player.damageDealt || 0) * 0.12 + Math.random() * 90
+    }))
+    .sort((left, right) => right.heat - left.heat)
+    .slice(0, Math.min(3, pool.length));
+  const selected = ranked[Math.floor(Math.random() * ranked.length)]?.player;
+  if (!selected) {
+    room.bounty.nextAt = now + 3_000;
+    return;
+  }
+  Object.assign(room.bounty, {
+    targetId: selected.id,
+    targetName: selected.name,
+    startedAt: now,
+    expiresAt: now + bountyActiveMs,
+    nextAt: 0
+  });
+  addFeed(room, `賞金首 ${selected.name} / 24秒`, selected.color);
+  broadcast(room, { type: "bounty_started", targetId: selected.id, targetName: selected.name, expiresAt: room.bounty.expiresAt });
+}
+
+function claimBounty(room, shooter, target, now = Date.now()) {
+  if (room.bounty?.targetId !== target.id || now >= (room.bounty.expiresAt || 0) || shooter.color === target.color) return false;
+  clearBounty(room, now);
+  shooter.health = Math.min(maxHealth, shooter.health + 35);
+  shooter.healPacks = Math.min(12, (shooter.healPacks || 0) + 1);
+  shooter.donPunchCharge = Math.min(8, (shooter.donPunchCharge || 0) + 2);
+  shooter.equipmentTier = Math.min(8, (shooter.equipmentTier || 0) + 1);
+  shooter.speedBoostUntil = Math.max(shooter.speedBoostUntil || 0, now + 5_000);
+  addFeed(room, `${shooter.name} が賞金首を撃破 +回復 +GEAR`, shooter.color);
+  if (!shooter.isBot) {
+    send(shooter.ws, {
+      type: "bounty_reward",
+      health: shooter.health,
+      healPacks: shooter.healPacks,
+      donPunchCharge: shooter.donPunchCharge,
+      equipmentTier: shooter.equipmentTier
+    });
+  }
+  return true;
 }
 
 function spawnDonpachi(room, shooter, target) {
@@ -5545,7 +5667,7 @@ function tryCpuPlayerShot(room, bot, awareness, now) {
   return true;
 }
 
-function updateCpuPlayers(room, now, updateParity = -1) {
+function updateCpuPlayers(room, now) {
   const samples = room.movementStats.samples || 0;
   const movingRatio = samples ? room.movementStats.moving / samples : 0;
   const airborneRatio = samples ? room.movementStats.airborne / samples : 0;
@@ -5554,7 +5676,6 @@ function updateCpuPlayers(room, now, updateParity = -1) {
   ));
   for (const bot of room.players.values()) {
     if (!bot.isBot) continue;
-    if (updateParity >= 0 && Math.abs(Number(bot.botIndex) || 0) % 2 !== updateParity) continue;
     if (bot.eliminated || bot.health <= 0) {
       bot.lastSeen = now;
       continue;

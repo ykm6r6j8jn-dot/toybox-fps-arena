@@ -122,6 +122,12 @@ type FocusTask = {
   reward?: string;
 };
 
+type BountySnapshot = {
+  targetId: string;
+  targetName: string;
+  expiresAt: number;
+};
+
 type FeedItem = {
   id: string;
   text: string;
@@ -548,6 +554,9 @@ const focusTaskLabel = $("#focusTaskLabel");
 const focusTaskText = $("#focusTaskText");
 const focusTaskMeta = $("#focusTaskMeta");
 const focusTaskBar = $("#focusTaskBar") as HTMLElement;
+const bountyCard = $("#bountyCard");
+const bountyTarget = $("#bountyTarget");
+const bountyTimer = $("#bountyTimer");
 const zoneStatus = $("#zoneStatus");
 const zonePhase = $("#zonePhase");
 const zoneTimer = $("#zoneTimer");
@@ -1061,6 +1070,8 @@ type DamageNoticeGroup = {
 };
 const damageNoticeGroups = new Map<string, DamageNoticeGroup>();
 let safeZoneSnapshot: SafeZoneSnapshot = { enabled: false, phase: -1, stage: "inactive", x: 0, z: 0, radius: 92, nextRadius: 92, damage: 0, endsAt: 0 };
+let bountySnapshot: BountySnapshot = { targetId: "", targetName: "", expiresAt: 0 };
+let lastBountyTargetId = "";
 let safeZoneVisual: { group: THREE.Group; ring: THREE.Mesh; wall: THREE.Mesh } | null = null;
 let serverClockOffsetMs = 0;
 let serverClockReady = false;
@@ -3809,7 +3820,21 @@ function createPlayerMesh(player: PlayerState) {
   );
   shield.position.y = 0.98;
   shield.visible = false;
-  group.add(body, head, marker, weapon, shield, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove);
+  const bountyMarker = new THREE.Group();
+  const bountyRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.28, 0.04, 6, 18),
+    new THREE.MeshBasicMaterial({ color: 0xffdc4d, transparent: true, opacity: 0.92, depthWrite: false })
+  );
+  bountyRing.rotation.x = Math.PI / 2;
+  const bountyDiamond = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.14, 0),
+    new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.96, depthWrite: false })
+  );
+  bountyDiamond.position.y = 0.34;
+  bountyMarker.position.y = 2.92;
+  bountyMarker.visible = false;
+  bountyMarker.add(bountyRing, bountyDiamond);
+  group.add(body, head, marker, weapon, shield, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove, bountyMarker);
   group.userData.motionRig = { body, leftArm, rightArm, leftLeg, rightLeg };
   const detailMeshes: THREE.Object3D[] = [weapon, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove];
   if (skinId === "bee") {
@@ -3828,6 +3853,7 @@ function createPlayerMesh(player: PlayerState) {
   group.userData.headMesh = head;
   group.userData.markerMesh = marker;
   group.userData.shieldMesh = shield;
+  group.userData.bountyMarker = bountyMarker;
   group.userData.lodLevel = -1;
   if (dynamicShadowsEnabled) {
     group.traverse((child) => {
@@ -5576,6 +5602,7 @@ function handleMessage(event: MessageEvent<string>) {
     updateBarrierPowerup(message.barrier as BarrierSnapshot | undefined);
     updateHealthPickup(message.healthPickup as HealthPickupSnapshot | undefined);
     updatePowerups((message.powerups || []) as PowerupSnapshot[]);
+    syncBountySnapshot(message.bounty as BountySnapshot | undefined);
     updateSpectatorState();
     updateHud(message.feed || []);
     updateChat(message.chat || []);
@@ -5620,6 +5647,20 @@ function handleMessage(event: MessageEvent<string>) {
     const text = String(message.text || "フォーカス達成");
     showToast(text);
     addFlowReward(18, text);
+  }
+  if (message.type === "bounty_started") {
+    syncBountySnapshot({
+      targetId: String(message.targetId || ""),
+      targetName: String(message.targetName || "賞金首"),
+      expiresAt: Number(message.expiresAt) || 0
+    });
+  }
+  if (message.type === "bounty_reward") {
+    showToast("賞金首撃破 / HP+35・回復+1・GEAR+1");
+    addFlowReward(48, "BOUNTY CLEAR");
+    playHealSound();
+    window.setTimeout(playBarrierSound, 90);
+    pulseHaptic(40);
   }
   if (message.type === "powerup") applyPowerupPickup(message.kind as PowerupKind);
   if (message.type === "team_ping") addTeamPing(message.ping as TeamPingSnapshot | undefined);
@@ -7007,6 +7048,8 @@ function returnToLobbyAfterRound() {
   teamPingMeshes.clear();
   joinPanel.classList.remove("hidden");
   clearBulletDecals();
+  syncBountySnapshot();
+  updateBountyHud();
   endCelebration();
   if (document.pointerLockElement) void document.exitPointerLock?.();
   stopFpsReconnect(true);
@@ -7268,7 +7311,7 @@ function animateRemotePlayer(mesh: THREE.Group, track: MotionSample[], delta: nu
 }
 
 function updateRemotePlayers(delta: number) {
-  const renderAt = Date.now() + serverClockOffsetMs - networkInterpolationDelayMs;
+  const serverNow = Date.now() + serverClockOffsetMs;
   renderedPlayerMotion.clear();
   for (const [id, mesh] of playerMeshes) {
     const player = players.get(id);
@@ -7281,6 +7324,8 @@ function updateRemotePlayers(delta: number) {
 
   for (const player of players.values()) {
     if (player.id === self.id || player.connected === false) continue;
+    const interpolationDelay = player.isBot ? Math.max(210, networkInterpolationDelayMs) : networkInterpolationDelayMs;
+    const renderAt = serverNow - interpolationDelay;
     const sampled = sampleMotion(playerMotionTracks.get(player.id) || [], renderAt, {
       maxExtrapolationMs: 105,
       maxSpeed: 19,
@@ -7304,6 +7349,14 @@ function updateRemotePlayers(delta: number) {
     if (lodLevel === 0) animateRemotePlayer(mesh, playerMotionTracks.get(player.id) || [], delta);
     const shield = mesh.userData.shieldMesh as THREE.Mesh | undefined;
     if (shield) shield.visible = Math.max(player.shieldUntil || 0, player.spawnProtectedUntil || 0) > Date.now();
+    const bountyMarker = mesh.userData.bountyMarker as THREE.Group | undefined;
+    if (bountyMarker) {
+      bountyMarker.visible = bountySnapshot.targetId === player.id && bountySnapshot.expiresAt > serverNow && distance < 130;
+      if (bountyMarker.visible) {
+        bountyMarker.rotation.y += delta * 2.6;
+        bountyMarker.position.y = 2.92 + Math.sin(performance.now() * 0.006 + player.x) * 0.08;
+      }
+    }
   }
 }
 
@@ -7767,6 +7820,38 @@ function updateVehicleHud() {
   vehicleStatus.classList.toggle("danger", ratio < 0.34);
   if (vehicle.repairing && !wasVehicleRepairing) pulseHaptic(20);
   wasVehicleRepairing = Boolean(vehicle.repairing);
+}
+
+function syncBountySnapshot(snapshot?: BountySnapshot) {
+  const serverNow = Date.now() + serverClockOffsetMs;
+  const targetId = String(snapshot?.targetId || "");
+  const expiresAt = Number(snapshot?.expiresAt) || 0;
+  if (!targetId || expiresAt <= serverNow) {
+    bountySnapshot = { targetId: "", targetName: "", expiresAt: 0 };
+    lastBountyTargetId = "";
+    return;
+  }
+  bountySnapshot = {
+    targetId,
+    targetName: String(snapshot?.targetName || "賞金首"),
+    expiresAt
+  };
+  if (targetId === lastBountyTargetId) return;
+  lastBountyTargetId = targetId;
+  showToast(targetId === self.id ? "あなたが賞金首です / 24秒生き延びろ" : `賞金首 ${bountySnapshot.targetName}`);
+  if (targetId === self.id) pulseHaptic(38);
+}
+
+function updateBountyHud() {
+  const serverNow = Date.now() + serverClockOffsetMs;
+  const active = matchPhase === "active" && Boolean(bountySnapshot.targetId) && bountySnapshot.expiresAt > serverNow;
+  const selfTargeted = active && bountySnapshot.targetId === self.id;
+  bountyCard.classList.toggle("show", active);
+  bountyCard.classList.toggle("self", selfTargeted);
+  document.body.classList.toggle("bounty-active", active);
+  if (!active) return;
+  bountyTarget.textContent = selfTargeted ? "YOU / 生存せよ" : bountySnapshot.targetName;
+  bountyTimer.textContent = `${Math.max(0, Math.ceil((bountySnapshot.expiresAt - serverNow) / 1000))}s`;
 }
 
 function updateSafeZoneHud() {
@@ -8380,6 +8465,7 @@ function updateHud(feed: FeedItem[]) {
     lastSelfHealth = me.health;
   }
   updateFocusTaskHud(me?.focusTask);
+  updateBountyHud();
   updateSafeZoneHud();
   updateVehicleHud();
   healthEl.textContent = String(Math.round(me?.health ?? self.health));

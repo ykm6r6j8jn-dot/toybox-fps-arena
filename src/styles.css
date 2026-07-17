@@ -696,6 +696,7 @@ body.keyboard-open .chat-panel:not(:focus-within) {
 .damage-feed,
 .flow-card,
 .focus-task-card,
+.bounty-card,
 .status-strip,
 .lobby-strip,
 .scoreboard,
@@ -768,6 +769,7 @@ body.baccarat-open .feed,
 body.baccarat-open .damage-feed,
 body.baccarat-open .flow-card,
 body.baccarat-open .focus-task-card,
+body.baccarat-open .bounty-card,
 body.baccarat-open .status-strip,
 body.baccarat-open .lobby-strip,
 body.baccarat-open .chat-panel,
@@ -1458,6 +1460,60 @@ body.audio-needs-unlock .audio-unlock-button {
 
 .focus-task-card i {
   background: linear-gradient(90deg, #44d7ff, #fff36b);
+}
+
+.bounty-card {
+  position: absolute;
+  top: 204px;
+  left: 50%;
+  z-index: 6;
+  width: 212px;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 218, 75, 0.62);
+  border-radius: 7px;
+  background: rgba(28, 31, 28, 0.82);
+  color: #fff;
+  box-shadow: 0 9px 24px rgba(8, 15, 22, 0.25);
+  opacity: 0;
+  transform: translate(-50%, -5px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+
+.bounty-card.show {
+  opacity: 0.96;
+  transform: translate(-50%, 0);
+}
+
+.bounty-card.self {
+  border-color: rgba(255, 92, 82, 0.9);
+  background: rgba(86, 24, 26, 0.88);
+}
+
+.bounty-card span,
+.bounty-card small {
+  color: #ffe36a;
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.bounty-card strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bounty-card small {
+  min-width: 26px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .flow-card.hot {
@@ -4255,6 +4311,11 @@ body.celebrating::after {
     font-size: 10px;
   }
 
+  .bounty-card {
+    top: 312px;
+    width: 170px;
+  }
+
   .feed {
     display: none;
   }
@@ -4822,6 +4883,7 @@ body.celebrating::after {
   body:not(.game-active) .damage-feedback,
   body:not(.game-active) .flow-card,
   body:not(.game-active) .focus-task-card,
+  body:not(.game-active) .bounty-card,
   body:not(.game-active) .killcam-card,
   body:not(.game-active) .spectator-card,
   body:not(.game-active) .zone-status,
@@ -5324,6 +5386,19 @@ body.celebrating::after {
     color: #fff;
   }
 
+  body.game-active .bounty-card {
+    top: max(62px, calc(env(safe-area-inset-top) + 60px));
+    width: 144px;
+    min-height: 34px;
+    gap: 5px;
+    padding: 4px 7px;
+    background: rgba(28, 31, 28, 0.74);
+  }
+
+  body.game-active .bounty-card strong {
+    font-size: 11px;
+  }
+
   body.game-active .minimap {
     top: max(56px, calc(env(safe-area-inset-top) + 54px));
     left: max(8px, env(safe-area-inset-left));
@@ -5345,6 +5420,10 @@ body.celebrating::after {
     gap: 4px;
     pointer-events: none;
     transform: translateX(-50%);
+  }
+
+  body.game-active.bounty-active .damage-feed {
+    top: max(102px, calc(env(safe-area-inset-top) + 100px));
   }
 
   body.game-active .damage-card {
@@ -5497,6 +5576,7 @@ body:not(.game-active) .damage-feed,
 body:not(.game-active) .feed,
 body:not(.game-active) .flow-card,
 body:not(.game-active) .focus-task-card,
+body:not(.game-active) .bounty-card,
 body:not(.game-active) .killcam-card,
 body:not(.game-active) .spectator-card,
 body:not(.game-active) .zone-status,
@@ -6889,6 +6969,7 @@ body.game-active:not(.match-active) .donpunch-button,
 body.game-active:not(.match-active) .damage-feed,
 body.game-active:not(.match-active) .flow-card,
 body.game-active:not(.match-active) .focus-task-card,
+body.game-active:not(.match-active) .bounty-card,
 body.game-active:not(.match-active) .zone-status,
 body.game-active:not(.match-active) .vehicle-status,
 body.game-active:not(.match-active) .interaction-hint {

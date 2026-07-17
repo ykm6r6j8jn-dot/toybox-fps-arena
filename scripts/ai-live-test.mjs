@@ -80,9 +80,9 @@ try {
   await waitFor(() => snapshots.at(-1)?.matchPhase === "active", "AI room enters active combat", 7000);
   snapshots.length = 0;
   shots.length = 0;
-  await delay(8000);
-  const tacticalSnapshots = snapshots.filter((snapshot) => snapshot.aiVersion === "TACTICS 2.0");
-  assert.ok(tacticalSnapshots.length >= 20, "server must continuously publish tactical snapshots");
+  await delay(10_000);
+  const tacticalSnapshots = snapshots.filter((snapshot) => snapshot.aiVersion === "TACTICS 2.1");
+  assert.ok(tacticalSnapshots.length >= 30, "server must continuously publish tactical snapshots");
   const latest = tacticalSnapshots.at(-1);
   const bots = latest.players.filter((player) => player.isBot);
   assert.equal(bots.length, 13);
@@ -91,6 +91,8 @@ try {
   assert.ok(tacticalSnapshots.some((snapshot) => snapshot.players.some((player) => player.isBot && player.botTactic !== "patrol")), "at least one CP must enter a combat tactic");
 
   const tracks = new Map();
+  let movedBotFrames = 0;
+  let comparedBotFrames = 0;
   let minimumHumanDistance = Infinity;
   let minimumHumanDistanceAt = null;
   for (const snapshot of tacticalSnapshots) {
@@ -106,14 +108,19 @@ try {
       const previous = tracks.get(bot.id);
       if (previous) {
         const elapsed = Math.max(0.001, (snapshot.now - previous.now) / 1000);
-        const speed = Math.hypot(bot.x - previous.x, bot.z - previous.z) / elapsed;
+        const moved = Math.hypot(bot.x - previous.x, bot.z - previous.z);
+        const speed = moved / elapsed;
         assert.ok(speed <= 11.5, `CP ${bot.id} exceeded tactical movement budget: ${speed.toFixed(2)}m/s`);
+        comparedBotFrames += 1;
+        if (moved > 0.03) movedBotFrames += 1;
       }
       tracks.set(bot.id, { x: bot.x, z: bot.z, now: snapshot.now });
     }
   }
   assert.ok([...tracks.values()].length === 13);
+  assert.ok(movedBotFrames / Math.max(1, comparedBotFrames) >= 0.58, `CP movement cadence was still visibly stepped: ${(movedBotFrames / Math.max(1, comparedBotFrames)).toFixed(2)}`);
   assert.ok(minimumHumanDistance >= 2, `CP crossed the first-person safety radius: ${minimumHumanDistance.toFixed(2)}m ${JSON.stringify(minimumHumanDistanceAt)}`);
+  assert.ok(tacticalSnapshots.some((snapshot) => snapshot.bounty?.targetId && snapshot.bounty?.expiresAt > snapshot.now), "a lightweight bounty event must start during active combat");
   assert.ok(tacticalSnapshots.some((snapshot, index) => {
     if (index < 1) return false;
     const previous = tacticalSnapshots[index - 1];
@@ -136,7 +143,7 @@ try {
   ws.send(JSON.stringify({ type: "leave" }));
   await delay(80);
   ws.close(1000, "done");
-  console.log(`AI live passed: room ${welcome.room}, 13 CPs, 4 roles, tactical movement, ${shots.length} visible shots, min player gap ${minimumHumanDistance.toFixed(2)}m, max health latency ${Math.max(...healthLatencies).toFixed(1)}ms`);
+  console.log(`AI live passed: room ${welcome.room}, 13 CPs, 4 roles, ${(movedBotFrames / Math.max(1, comparedBotFrames) * 100).toFixed(0)}% moving frames, bounty active, ${shots.length} visible shots, min player gap ${minimumHumanDistance.toFixed(2)}m, max health latency ${Math.max(...healthLatencies).toFixed(1)}ms`);
 } catch (error) {
   throw new Error(`${error.message}\n${serverOutput}`);
 } finally {

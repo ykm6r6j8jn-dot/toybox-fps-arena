@@ -116,7 +116,7 @@ const probe = await openClient(probeName, "DONPCH", {
 await waitFor(
   () => probe.state.snapshots.some((snapshot) =>
     snapshot.players?.some((player) => player.id === probe.state.id) &&
-    snapshot.aiVersion === "TACTICS 2.0" &&
+    snapshot.aiVersion === "TACTICS 2.1" &&
     snapshot.worldVersion === "VERTICAL 4.0" &&
     snapshot.matchVersion === "MATCH 5.0" &&
     ["waiting", "countdown", "active", "result"].includes(snapshot.matchPhase) &&
@@ -138,7 +138,7 @@ await waitFor(
     typeof snapshot.safeZone?.enabled === "boolean" &&
     snapshot.players.every((player) => !("qaVerticalStage" in player))
   ),
-  "public snapshot includes MATCH 5.0 lifecycle, VERTICAL 4.0 elevators, doors, TACTICS 2.0, player, vehicle durability, and safe-zone state"
+  "public snapshot includes MATCH 5.0 lifecycle, VERTICAL 4.0 elevators, doors, TACTICS 2.1, player, vehicle durability, and safe-zone state"
 );
 
 const snapshot = probe.state.snapshots.at(-1);
