@@ -126,6 +126,7 @@ const runtimeMetrics = {
   messagesSent: 0,
   inboundMessages: 0,
   inboundRateTerminated: 0,
+  customizeMessagesSkipped: 0,
   inboundTypes: Object.create(null),
   inboundStatesProcessed: 0,
   inboundStatesSkipped: 0,
@@ -175,7 +176,7 @@ const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
 const worldVersion = "VERTICAL 4.0";
 const matchVersion = "MATCH 5.0";
-const runtimeGuardVersion = "PERF GUARD 2.2";
+const runtimeGuardVersion = "PERF GUARD 2.3";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -1478,6 +1479,7 @@ function runtimeHealth() {
       sent: runtimeMetrics.messagesSent,
       inbound: runtimeMetrics.inboundMessages,
       inboundRateTerminated: runtimeMetrics.inboundRateTerminated,
+      customizeSkipped: runtimeMetrics.customizeMessagesSkipped,
       inboundTypes: runtimeMetrics.inboundTypes,
       inboundStatesProcessed: runtimeMetrics.inboundStatesProcessed,
       inboundStatesSkipped: runtimeMetrics.inboundStatesSkipped
@@ -3442,6 +3444,13 @@ wss.on("connection", (ws) => {
       ? String(message.type)
       : "other";
     runtimeMetrics.inboundTypes[inboundType] = (runtimeMetrics.inboundTypes[inboundType] || 0) + 1;
+    if (inboundType === "customize") {
+      if (receivedAt - (ws.donpachiLastCustomizeAt || 0) < 350) {
+        runtimeMetrics.customizeMessagesSkipped += 1;
+        return;
+      }
+      ws.donpachiLastCustomizeAt = receivedAt;
+    }
     if (receivedAt - inboundRateStartedAt >= websocketRateWindowMs) {
       inboundRateStartedAt = receivedAt;
       inboundRateCount = 0;

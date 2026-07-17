@@ -1254,13 +1254,16 @@ function setSkin(skin: SkinId | string, force = false) {
     setLobbyTab("shop");
     return;
   }
+  const changed = currentSkin !== nextSkin;
   currentSkin = nextSkin;
   localStorage.setItem("toybox-skin", currentSkin);
   for (const button of skinSelect.querySelectorAll<HTMLButtonElement>("[data-skin]")) {
     button.classList.toggle("active", button.dataset.skin === currentSkin);
   }
-  send({ type: "customize", cosmeticColor: customColor, skin: currentSkin });
-  scheduleProfileSync();
+  if (changed && !applyingProfile) {
+    send({ type: "customize", cosmeticColor: customColor, skin: currentSkin });
+    scheduleProfileSync();
+  }
 }
 
 function isHostPlayer() {
@@ -5741,14 +5744,17 @@ async function refreshOnlinePlayers() {
 }
 
 function setCustomColor(color: string) {
+  const changed = customColor !== color;
   customColor = color;
   localStorage.setItem("toybox-color", color);
   document.documentElement.style.setProperty("--self-color", color);
   for (const button of colorSwatches.querySelectorAll<HTMLButtonElement>("button")) {
     button.classList.toggle("active", button.dataset.color === color);
   }
-  send({ type: "customize", cosmeticColor: color, skin: currentSkin });
-  scheduleProfileSync();
+  if (changed && !applyingProfile) {
+    send({ type: "customize", cosmeticColor: color, skin: currentSkin });
+    scheduleProfileSync();
+  }
 }
 
 function setSoundEnabled(enabled: boolean) {

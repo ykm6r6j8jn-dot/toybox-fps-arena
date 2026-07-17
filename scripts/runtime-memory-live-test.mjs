@@ -99,9 +99,39 @@ function openFloodClient() {
   });
 }
 
+function openCustomizeFloodClient() {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(endpoint);
+    clients.push(ws);
+    const timeout = setTimeout(() => reject(new Error("customize flood client did not stay responsive")), 5_000);
+    ws.on("open", () => ws.send(JSON.stringify({
+      type: "join",
+      name: "CustomizeProbe",
+      gameMode: "practice",
+      cpuFill: false,
+      relationMode: "versus"
+    })));
+    ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === "welcome") {
+        for (let index = 0; index < 280; index += 1) {
+          ws.send(JSON.stringify({ type: "customize", cosmeticColor: "#1598f0", skin: "rounded" }));
+        }
+        setTimeout(() => ws.send(JSON.stringify({ type: "ping", at: 42 })), 450);
+      } else if (message.type === "pong" && message.at === 42) {
+        clearTimeout(timeout);
+        ws.close(1000, "probe complete");
+        resolve();
+      }
+    });
+    ws.on("error", () => undefined);
+  });
+}
+
 try {
   await waitForServer();
   await openFloodClient();
+  await openCustomizeFloodClient();
   const orphan = new WebSocket(endpoint);
   clients.push(orphan);
   await Promise.all(Array.from({ length: 7 }, (_, index) => openSlowClient(index)));
@@ -113,6 +143,7 @@ try {
   assert.equal(health.runtime.websockets.active, 0, "stalled and unjoined sockets must be removed");
   assert.ok(health.runtime.websockets.inboundRateTerminated >= 1, "message floods must be rate limited");
   assert.ok(health.runtime.websockets.outboundRateLimited >= 1, "outbound replies must respect the socket rate budget");
+  assert.ok(health.runtime.websockets.customizeSkipped >= 250, "customize feedback loops must be suppressed");
   assert.ok(health.runtime.websockets.heartbeatTerminated >= 7, "stalled clients must fail heartbeat checks");
   assert.ok(health.runtime.websockets.rejectedHandshakes >= 1, "unjoined sockets must fail the handshake deadline");
   assert.ok(health.runtime.memoryMiB.rss < 220, `RSS must stay below the free-tier budget: ${health.runtime.memoryMiB.rss} MiB`);
