@@ -126,6 +126,7 @@ const runtimeMetrics = {
   messagesSent: 0,
   inboundMessages: 0,
   inboundRateTerminated: 0,
+  inboundTypes: Object.create(null),
   inboundStatesProcessed: 0,
   inboundStatesSkipped: 0,
   fpsSnapshots: 0,
@@ -154,7 +155,7 @@ const fpsTickMs = 180;
 const cpuTickMs = 360;
 const maxWsMessageBytes = 8192;
 const websocketRateWindowMs = 1000;
-const maxInboundMessagesPerWindow = 120;
+const maxInboundMessagesPerWindow = 240;
 const maxOutboundMessagesPerWindow = 96;
 const maxRoomRealtimeBroadcastsPerWindow = 64;
 const maxWsConnections = 64;
@@ -174,7 +175,7 @@ const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
 const worldVersion = "VERTICAL 4.0";
 const matchVersion = "MATCH 5.0";
-const runtimeGuardVersion = "PERF GUARD 2.1";
+const runtimeGuardVersion = "PERF GUARD 2.2";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -1477,6 +1478,7 @@ function runtimeHealth() {
       sent: runtimeMetrics.messagesSent,
       inbound: runtimeMetrics.inboundMessages,
       inboundRateTerminated: runtimeMetrics.inboundRateTerminated,
+      inboundTypes: runtimeMetrics.inboundTypes,
       inboundStatesProcessed: runtimeMetrics.inboundStatesProcessed,
       inboundStatesSkipped: runtimeMetrics.inboundStatesSkipped
     },
@@ -3424,16 +3426,6 @@ wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
     const receivedAt = Date.now();
     runtimeMetrics.inboundMessages += 1;
-    if (receivedAt - inboundRateStartedAt >= websocketRateWindowMs) {
-      inboundRateStartedAt = receivedAt;
-      inboundRateCount = 0;
-    }
-    inboundRateCount += 1;
-    if (inboundRateCount > maxInboundMessagesPerWindow) {
-      runtimeMetrics.inboundRateTerminated += 1;
-      ws.close(1008, "message rate exceeded");
-      return;
-    }
     const rawSize = typeof raw === "string" ? Buffer.byteLength(raw) : raw?.byteLength || raw?.length || 0;
     if (rawSize > maxWsMessageBytes) {
       ws.close(1009, "message too large");
@@ -3446,6 +3438,23 @@ wss.on("connection", (ws) => {
       return;
     }
     if (!message || typeof message !== "object") return;
+    const inboundType = /^[a-z][a-z0-9_]{0,31}$/.test(String(message.type || ""))
+      ? String(message.type)
+      : "other";
+    runtimeMetrics.inboundTypes[inboundType] = (runtimeMetrics.inboundTypes[inboundType] || 0) + 1;
+    if (receivedAt - inboundRateStartedAt >= websocketRateWindowMs) {
+      inboundRateStartedAt = receivedAt;
+      inboundRateCount = 0;
+    }
+    inboundRateCount += 1;
+    if (inboundRateCount > maxInboundMessagesPerWindow) {
+      if (!ws.donpachiInboundRateClosed) {
+        ws.donpachiInboundRateClosed = true;
+        runtimeMetrics.inboundRateTerminated += 1;
+        ws.close(1008, "message rate exceeded");
+      }
+      return;
+    }
 
     if (String(message.type || "").startsWith("poker_")) {
       send(ws, { type: "baccarat_error", message: "ポーカーは廃止され、共通チップバカラへ移行しました。" });

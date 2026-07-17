@@ -87,7 +87,7 @@ function openFloodClient() {
     ws.on("message", (raw) => {
       const message = JSON.parse(String(raw));
       if (message.type !== "welcome") return;
-      for (let index = 0; index < 140; index += 1) {
+      for (let index = 0; index < 280; index += 1) {
         ws.send(JSON.stringify({ type: "ping", at: Date.now() + index }));
       }
     });
