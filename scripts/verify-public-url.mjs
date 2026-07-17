@@ -26,7 +26,13 @@ if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.
 if (health.progressionVersion !== "PROGRESSION 2.0" || health.maxCpuPlayers !== 13) {
   throw new Error(`public health is missing progression/cpu limits: ${JSON.stringify(health)}`);
 }
-if (health.runtime?.version !== "MEMORY GUARD 1.0" || !Number.isFinite(health.runtime?.memoryMiB?.rss)) {
+if (
+  health.runtime?.version !== "PERF GUARD 2.4" ||
+  health.runtime?.snapshots?.intervalMs !== 180 ||
+  health.runtime?.snapshots?.cpuMovementIntervalMs !== 180 ||
+  health.runtime?.snapshots?.cpuAwarenessIntervalMs !== 360 ||
+  !Number.isFinite(health.runtime?.memoryMiB?.rss)
+) {
   throw new Error(`public health is missing runtime memory guards: ${JSON.stringify(health)}`);
 }
 
@@ -206,4 +212,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, MEMORY GUARD 1.0 at ${health.runtime.memoryMiB.rss} MiB RSS, PROGRESSION 2.0, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, PERF GUARD 2.4 at ${health.runtime.memoryMiB.rss} MiB RSS, CP movement 180ms / awareness 360ms, PROGRESSION 2.0, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
