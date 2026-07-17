@@ -122,6 +122,8 @@ const runtimeMetrics = {
   slowSocketsTerminated: 0,
   heartbeatTerminations: 0,
   messagesSent: 0,
+  inboundStatesProcessed: 0,
+  inboundStatesSkipped: 0,
   fpsSnapshots: 0,
   baccaratSnapshots: 0,
   authBusyRejections: 0,
@@ -144,6 +146,7 @@ const exposeQaState = process.env.DONPACHI_QA_STATE === "1";
 const maxPlayers = 20;
 const globalFpsRoomCode = "DONPCH";
 const maxCpuPlayers = 13;
+const fpsTickMs = 180;
 const maxWsMessageBytes = 8192;
 const maxWsConnections = 64;
 const wsHandshakeTimeoutMs = Math.max(1_000, Number(process.env.DONPACHI_WS_HANDSHAKE_MS) || 20_000);
@@ -162,7 +165,7 @@ const arenaHalfSize = 96;
 const cpuAiVersion = "TACTICS 2.0";
 const worldVersion = "VERTICAL 4.0";
 const matchVersion = "MATCH 5.0";
-const runtimeGuardVersion = "MEMORY GUARD 1.0";
+const runtimeGuardVersion = "PERF GUARD 2.0";
 const donpachiSpeed = 14.8;
 const donpachiLifeMs = 5000;
 const donpachiDamage = 120;
@@ -269,6 +272,10 @@ const maxEquipmentTier = 5;
 const allowedWeapons = new Set(weaponDamage.keys());
 const solidObstacles = [];
 const okakoSolidObstacles = [];
+const staticObstacleGridCellSize = 16;
+const staticObstacleGridPadding = 1.2;
+const staticObstacleGrids = new Map();
+const emptyStaticObstacleCell = Object.freeze([]);
 const emptyDoorObstacles = Object.freeze([]);
 const emptyElevatorObstacles = Object.freeze([]);
 const doorDefinitionsById = new Map(toyboxDoorDefinitions.map((definition) => [definition.id, definition]));
@@ -302,6 +309,34 @@ function arenaForContext(context = "toybox") {
   return typeof context === "string" ? context : context?.arena || "toybox";
 }
 
+function staticObstacleGridKey(x, z) {
+  return `${Math.floor(x / staticObstacleGridCellSize)}:${Math.floor(z / staticObstacleGridCellSize)}`;
+}
+
+function rebuildStaticObstacleGrid(arena) {
+  const grid = new Map();
+  for (const box of obstaclesForArena(arena)) {
+    const minCellX = Math.floor((box.minX - staticObstacleGridPadding) / staticObstacleGridCellSize);
+    const maxCellX = Math.floor((box.maxX + staticObstacleGridPadding) / staticObstacleGridCellSize);
+    const minCellZ = Math.floor((box.minZ - staticObstacleGridPadding) / staticObstacleGridCellSize);
+    const maxCellZ = Math.floor((box.maxZ + staticObstacleGridPadding) / staticObstacleGridCellSize);
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const key = `${cellX}:${cellZ}`;
+        const cell = grid.get(key);
+        if (cell) cell.push(box);
+        else grid.set(key, [box]);
+      }
+    }
+  }
+  staticObstacleGrids.set(arena, grid);
+}
+
+function staticObstaclesNear(context, x, z) {
+  const arena = arenaForContext(context);
+  return staticObstacleGrids.get(arena)?.get(staticObstacleGridKey(x, z)) || emptyStaticObstacleCell;
+}
+
 function doorObstaclesForContext(context) {
   return typeof context === "object" && context?.arena === "toybox" && Array.isArray(context.doorObstacles)
     ? context.doorObstacles
@@ -331,6 +366,7 @@ function rebuildDoorObstacles(room) {
 function updateDoors(room, now = Date.now()) {
   if (room.arena !== "toybox" || !room.doors) return;
   const entities = [];
+  let obstacleChanged = false;
   for (const player of room.players.values()) {
     if (player.disconnectedAt || player.eliminated || player.health <= 0 || player.vehicleId) continue;
     entities.push(player);
@@ -349,10 +385,12 @@ function updateDoors(room, now = Date.now()) {
     }
     const sensed = sensedByEntity || (state.holdOpenUntil || 0) > now;
     state.targetOpen = sensed;
+    const previousOpenness = state.openness;
     state.openness = stepDoorOpenness(state.openness, state.targetOpen, elapsed, definition);
+    if (Math.abs(state.openness - previousOpenness) > 0.0005) obstacleChanged = true;
     state.updatedAt = now;
   }
-  rebuildDoorObstacles(room);
+  if (obstacleChanged) rebuildDoorObstacles(room);
 }
 
 function publicDoor(state) {
@@ -370,11 +408,15 @@ function createElevators(now = Date.now()) {
 
 function updateElevators(room, now = Date.now()) {
   if (room.arena !== "toybox" || !room.elevators) return;
+  let obstacleChanged = false;
   for (const definition of toyboxElevatorDefinitions) {
     const state = room.elevators.get(definition.id);
-    if (state) stepElevatorState(state, definition, now);
+    if (!state) continue;
+    const previousY = state.platformY;
+    stepElevatorState(state, definition, now);
+    if (Math.abs(state.platformY - previousY) > 0.0005) obstacleChanged = true;
   }
-  rebuildElevatorObstacles(room);
+  if (obstacleChanged) rebuildElevatorObstacles(room);
 }
 
 function rebuildElevatorObstacles(room) {
@@ -553,6 +595,8 @@ function initSolidObstacles() {
   for (const [position, scale] of okakoBoxes) addSolidObstacle(position, scale, "okakoj");
 }
 initSolidObstacles();
+rebuildStaticObstacleGrid("toybox");
+rebuildStaticObstacleGrid("okakoj");
 const cpuCoverPointsByArena = new Map([
   ["toybox", buildCpuCoverPoints("toybox")],
   ["okakoj", buildCpuCoverPoints("okakoj")]
@@ -1419,11 +1463,14 @@ function runtimeHealth() {
       realtimeSkipped: runtimeMetrics.realtimeMessagesSkipped,
       slowTerminated: runtimeMetrics.slowSocketsTerminated,
       heartbeatTerminated: runtimeMetrics.heartbeatTerminations,
-      sent: runtimeMetrics.messagesSent
+      sent: runtimeMetrics.messagesSent,
+      inboundStatesProcessed: runtimeMetrics.inboundStatesProcessed,
+      inboundStatesSkipped: runtimeMetrics.inboundStatesSkipped
     },
     snapshots: {
       fps: runtimeMetrics.fpsSnapshots,
-      baccarat: runtimeMetrics.baccaratSnapshots
+      baccarat: runtimeMetrics.baccaratSnapshots,
+      intervalMs: fpsTickMs
     },
     auth: {
       activeHashes: activePasswordHashes,
@@ -2732,10 +2779,21 @@ function lineBlocked(origin, direction, targetDistance, context = "toybox") {
   return false;
 }
 
-function cpuCollides(x, z, radius = 0.55, context = "toybox", y = 1.6) {
+function bodyCollides(x, z, radius, context, y) {
   const minY = y - 1.38;
   const maxY = y + 0.22;
-  for (const boxes of [obstaclesForArena(arenaForContext(context)), doorObstaclesForContext(context), elevatorObstaclesForContext(context)]) {
+  for (const box of staticObstaclesNear(context, x, z)) {
+    if (
+      box.movement !== false &&
+      x + radius > box.minX &&
+      x - radius < box.maxX &&
+      z + radius > box.minZ &&
+      z - radius < box.maxZ &&
+      maxY > box.minY &&
+      minY < box.maxY
+    ) return true;
+  }
+  for (const boxes of [doorObstaclesForContext(context), elevatorObstaclesForContext(context)]) {
     for (const box of boxes) {
       if (
         box.movement !== false &&
@@ -2751,23 +2809,12 @@ function cpuCollides(x, z, radius = 0.55, context = "toybox", y = 1.6) {
   return false;
 }
 
+function cpuCollides(x, z, radius = 0.55, context = "toybox", y = 1.6) {
+  return bodyCollides(x, z, radius, context, y);
+}
+
 function playerCollides(x, y, z, context = "toybox", radius = 0.24) {
-  const minY = y - 1.38;
-  const maxY = y + 0.22;
-  for (const boxes of [obstaclesForArena(arenaForContext(context)), doorObstaclesForContext(context), elevatorObstaclesForContext(context)]) {
-    for (const box of boxes) {
-      if (
-        box.movement !== false &&
-        x + radius > box.minX &&
-        x - radius < box.maxX &&
-        z + radius > box.minZ &&
-        z - radius < box.maxZ &&
-        maxY > box.minY &&
-        minY < box.maxY
-      ) return true;
-    }
-  }
-  return false;
+  return bodyCollides(x, z, radius, context, y);
 }
 
 function findNearestCpuSafeSpot(x, z, radius = 0.68, context = "toybox", y = 1.6) {
@@ -3571,18 +3618,30 @@ wss.on("connection", (ws) => {
     if (message.type === "state") {
       if (currentPlayer.eliminated) return;
       const now = Date.now();
+      currentPlayer.lastSeen = now;
+      if (now - (currentPlayer.lastInboundStateAt || 0) < 70) {
+        runtimeMetrics.inboundStatesSkipped += 1;
+        return;
+      }
+      currentPlayer.lastInboundStateAt = now;
+      const stateValues = [message.x, message.y, message.z, message.yaw, message.pitch].map(Number);
+      if (!stateValues.every(Number.isFinite)) {
+        runtimeMetrics.inboundStatesSkipped += 1;
+        return;
+      }
+      runtimeMetrics.inboundStatesProcessed += 1;
       const previousX = currentPlayer.x;
       const previousY = currentPlayer.y;
       const previousZ = currentPlayer.z;
-      currentPlayer.yaw = wrapAngle(Number(message.yaw));
-      currentPlayer.pitch = clamp(Number(message.pitch), -1.35, 1.35);
-      currentPlayer.lastSeen = now;
+      const previousYaw = currentPlayer.yaw;
+      currentPlayer.yaw = wrapAngle(stateValues[3]);
+      currentPlayer.pitch = clamp(stateValues[4], -1.35, 1.35);
       if (currentPlayer.vehicleId) return;
 
       const requested = {
-        x: clamp(Number(message.x), -arenaHalfSize + 1, arenaHalfSize - 1),
-        y: clamp(Number(message.y), 1.4, 80),
-        z: clamp(Number(message.z), -arenaHalfSize + 1, arenaHalfSize - 1)
+        x: clamp(stateValues[0], -arenaHalfSize + 1, arenaHalfSize - 1),
+        y: clamp(stateValues[1], 1.4, 80),
+        z: clamp(stateValues[2], -arenaHalfSize + 1, arenaHalfSize - 1)
       };
       const stateElapsed = Math.min(0.45, Math.max(0.04, (now - (currentPlayer.lastStateAt || now - 80)) / 1000));
       currentPlayer.lastStateAt = now;
@@ -3616,10 +3675,10 @@ wss.on("connection", (ws) => {
       );
       if (
         !currentPlayer.creative &&
-        (constrained.correctedHorizontal || constrained.correctedVertical || correctionDistance > 0.08) &&
+        (constrained.correctedHorizontal || constrained.correctedVertical || correctionDistance > 0.16) &&
         now >= (currentPlayer.nextMovementCorrectionAt || 0)
       ) {
-        currentPlayer.nextMovementCorrectionAt = now + 120;
+        currentPlayer.nextMovementCorrectionAt = now + 180;
         send(currentPlayer.ws, {
           type: "movement_correction",
           position: { x: currentPlayer.x, y: currentPlayer.y, z: currentPlayer.z },
@@ -3639,10 +3698,16 @@ wss.on("connection", (ws) => {
         currentRoom.movementStats.moving = Math.ceil(currentRoom.movementStats.moving * 0.5);
         currentRoom.movementStats.airborne = Math.ceil(currentRoom.movementStats.airborne * 0.5);
       }
-      recordPlayerPose(currentPlayer, now);
-      tryPickupBarrier(currentRoom, currentPlayer);
-      tryPickupHealth(currentRoom, currentPlayer);
-      tryPickupPowerups(currentRoom, currentPlayer);
+      const verticalMove = Math.abs(currentPlayer.y - previousY);
+      if (horizontalMove > 0.01 || verticalMove > 0.01 || Math.abs(wrapAngle(currentPlayer.yaw - previousYaw)) > 0.004) {
+        recordPlayerPose(currentPlayer, now);
+      }
+      if (horizontalMove > 0.02 || verticalMove > 0.02 || now >= (currentPlayer.nextPickupScanAt || 0)) {
+        currentPlayer.nextPickupScanAt = now + 500;
+        tryPickupBarrier(currentRoom, currentPlayer);
+        tryPickupHealth(currentRoom, currentPlayer);
+        tryPickupPowerups(currentRoom, currentPlayer);
+      }
       return;
     }
 
@@ -4122,7 +4187,7 @@ setInterval(() => {
       safeZone
     });
   }
-}, 150);
+}, fpsTickMs);
 
 setInterval(() => {
   const now = Date.now();

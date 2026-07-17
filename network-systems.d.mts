@@ -12,6 +12,18 @@ export type SampledMotion = MotionSample & {
 };
 
 export function shortestAngleDelta(from: number, to: number): number;
+export function shouldSendMotionState(
+  previous: Pick<MotionSample, "x" | "y" | "z" | "yaw"> & { pitch?: number } | null,
+  next: Pick<MotionSample, "x" | "y" | "z" | "yaw"> & { pitch?: number },
+  options?: {
+    now?: number;
+    lastSentAt?: number;
+    minimumIntervalMs?: number;
+    forceIntervalMs?: number;
+    positionEpsilon?: number;
+    angleEpsilon?: number;
+  }
+): boolean;
 export function appendMotionSample(
   samples: MotionSample[],
   sample: MotionSample,

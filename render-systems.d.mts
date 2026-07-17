@@ -11,6 +11,10 @@ export type AdaptiveQualitySample = {
   minimum: number;
   maximum: number;
   cooldownMs?: number;
+  pressureFrameMs?: number;
+  recoveryFrameMs?: number;
+  decreaseStep?: number;
+  increaseStep?: number;
 };
 
 export function nextAdaptivePixelRatio(

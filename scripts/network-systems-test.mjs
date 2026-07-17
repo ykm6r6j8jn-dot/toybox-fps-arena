@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendMotionSample, rewindPose, sampleMotion, shortestAngleDelta } from "../network-systems.mjs";
+import { appendMotionSample, rewindPose, sampleMotion, shortestAngleDelta, shouldSendMotionState } from "../network-systems.mjs";
 
 const samples = [];
 assert.deepEqual(
@@ -38,5 +38,12 @@ assert.ok(Math.abs(clampedPast.x + 2) < 0.001, "rewind must clamp old client tim
 const clampedFuture = rewindPose(rewindHistory, 1500, 1200, 220);
 assert.equal(clampedFuture.x, 20, "rewind must never extrapolate into the future");
 assert.ok(Math.abs(shortestAngleDelta(3.1, -3.1)) < 0.1);
+
+const sentPose = { x: 4, y: 1.6, z: -2, yaw: 3.14, pitch: 0.1 };
+assert.equal(shouldSendMotionState(sentPose, sentPose, { now: 80, lastSentAt: 0 }), false, "motion packets must respect the minimum interval");
+assert.equal(shouldSendMotionState(sentPose, sentPose, { now: 500, lastSentAt: 100 }), false, "stationary players should not continuously resend poses");
+assert.equal(shouldSendMotionState(sentPose, { ...sentPose, x: 4.08 }, { now: 500, lastSentAt: 100 }), true, "meaningful movement should be synchronized");
+assert.equal(shouldSendMotionState(sentPose, { ...sentPose, yaw: -3.13 }, { now: 500, lastSentAt: 100 }), true, "wrapped aim changes should be synchronized");
+assert.equal(shouldSendMotionState(sentPose, sentPose, { now: 1200, lastSentAt: 100 }), true, "stationary poses should still send a low-rate keepalive");
 
 console.log("network systems passed: interpolation, capped extrapolation, teleport reset, and rewind clamp");

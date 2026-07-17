@@ -29,7 +29,7 @@ import Users from "lucide/dist/esm/icons/users.js";
 import Volume2 from "lucide/dist/esm/icons/volume-2.js";
 import X from "lucide/dist/esm/icons/x.js";
 import Zap from "lucide/dist/esm/icons/zap.js";
-import { appendMotionSample, sampleMotion } from "../network-systems.mjs";
+import { appendMotionSample, sampleMotion, shouldSendMotionState } from "../network-systems.mjs";
 import type { MotionSample, SampledMotion } from "../network-systems.mjs";
 import { computeAimSpread, damageDirectionAngle, recoverShotBloom } from "../combat-systems.mjs";
 import type { HitZone } from "../combat-systems.mjs";
@@ -906,6 +906,7 @@ let fpsReconnectAttempt = 0;
 let fpsReconnectTimer = 0;
 let pingTimer = 0;
 let lastStateSent = 0;
+let lastSentMotionState: { x: number; y: number; z: number; yaw: number; pitch: number } | null = null;
 let reloadTimer = 0;
 let reloadWeaponIndex = -1;
 let roundSeconds = 525;
@@ -960,6 +961,10 @@ const palette = {
 };
 
 const colliders: THREE.Box3[] = [];
+const colliderGridCellSize = 16;
+const colliderGridPadding = playerRadius + 0.08;
+const colliderGrid = new Map<string, THREE.Box3[]>();
+const emptyColliderCell: THREE.Box3[] = [];
 type StairZone = {
   origin: THREE.Vector3;
   yaw: number;
@@ -1004,6 +1009,9 @@ const movementStepScratch = new THREE.Vector3();
 const movementForwardScratch = new THREE.Vector3();
 const movementRightScratch = new THREE.Vector3();
 const movementWishScratch = new THREE.Vector3();
+const movementCollisionScratchX = new THREE.Vector3();
+const movementCollisionScratchZ = new THREE.Vector3();
+const playerCollisionBoxScratch = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3());
 const lookDirectionScratch = new THREE.Vector3();
 const lookEulerScratch = new THREE.Euler(0, 0, 0, "YXZ");
 const mobileAimDirectionScratch = new THREE.Vector3();
@@ -1058,7 +1066,8 @@ let serverClockOffsetMs = 0;
 let serverClockReady = false;
 let lastSnapshotArrivalAt = 0;
 let snapshotJitterMs = 0;
-let networkInterpolationDelayMs = 132;
+let networkInterpolationDelayMs = 170;
+const expectedSnapshotIntervalMs = 180;
 let lastSafeZonePhase = -1;
 let wasOutsideSafeZone = false;
 let wasVehicleRepairing = false;
@@ -1109,6 +1118,8 @@ let mobileBraking = false;
 let mobileFirePointer: number | null = null;
 let mobileFireLastX = 0;
 let mobileFireLastY = 0;
+let lastMobileAimScanAt = 0;
+let cachedMobileAimTargetId = "";
 let mobileAimSensitivityValue = Number(localStorage.getItem("toybox-mobile-sensitivity") || "1");
 let mobileFireSizeValue = Number(localStorage.getItem("toybox-mobile-fire-size") || "88");
 let mobileJumpOffsetValue = Number(localStorage.getItem("toybox-mobile-jump-offset") || "128");
@@ -1128,6 +1139,7 @@ let nearestVehicleId = "";
 let nearestDoorId = "";
 let nearestElevatorId = "";
 let lastVehicleInputSent = 0;
+let lastVehicleControlState: { throttle: number; steer: number; braking: boolean } | null = null;
 let lastInteractionCheckAt = 0;
 
 function viewportSize() {
@@ -1168,7 +1180,7 @@ function isCoarsePointer() {
 }
 
 const maxPixelRatio = () => Math.min(window.devicePixelRatio, viewportSize().width < 860 ? 1.26 : 1.72);
-const minPixelRatio = () => Math.min(maxPixelRatio(), viewportSize().width < 860 ? 1.0 : 1.15);
+const minPixelRatio = () => Math.min(maxPixelRatio(), viewportSize().width < 860 ? 0.86 : 1.0);
 let activePixelRatio = maxPixelRatio();
 let frameAverageMs = 16.7;
 let measuredFps: number | null = null;
@@ -1179,6 +1191,7 @@ let lastPixelRatioChangeAt = 0;
 let qualityPressureSamples = 0;
 let qualityRecoverySamples = 0;
 let lastClockText = "";
+let lastPerformanceDiagnosticAt = 0;
 
 renderer.setPixelRatio(activePixelRatio);
 
@@ -1778,6 +1791,7 @@ function clearArenaObjects() {
     });
   }
   colliders.length = 0;
+  colliderGrid.clear();
   minimapBoxes.length = 0;
   stairZones.length = 0;
   spiralStairZones.length = 0;
@@ -2039,6 +2053,32 @@ function addBox(
     });
   }
   return box;
+}
+
+function colliderGridKey(x: number, z: number) {
+  return `${Math.floor(x / colliderGridCellSize)}:${Math.floor(z / colliderGridCellSize)}`;
+}
+
+function rebuildColliderGrid() {
+  colliderGrid.clear();
+  for (const box of colliders) {
+    const minCellX = Math.floor((box.min.x - colliderGridPadding) / colliderGridCellSize);
+    const maxCellX = Math.floor((box.max.x + colliderGridPadding) / colliderGridCellSize);
+    const minCellZ = Math.floor((box.min.z - colliderGridPadding) / colliderGridCellSize);
+    const maxCellZ = Math.floor((box.max.z + colliderGridPadding) / colliderGridCellSize);
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const key = `${cellX}:${cellZ}`;
+        const cell = colliderGrid.get(key);
+        if (cell) cell.push(box);
+        else colliderGrid.set(key, [box]);
+      }
+    }
+  }
+}
+
+function collidersNearPosition(x: number, z: number) {
+  return colliderGrid.get(colliderGridKey(x, z)) || emptyColliderCell;
 }
 
 function finalizeStaticArenaBatches() {
@@ -3385,6 +3425,7 @@ function addToyboxArena() {
   addSign("BROADCAST", [0, 7.0, 45.75], 0, "#2fc4bf");
   addSign("ROOF ROUTE", [15, 4.8, -17.72], Math.PI, "#93e43c");
   addSign("CENTER", [0, 2.35, -57.45], Math.PI, "#111827");
+  rebuildColliderGrid();
   finalizeStaticArenaBatches();
 }
 
@@ -3767,6 +3808,7 @@ function createPlayerMesh(player: PlayerState) {
   shield.visible = false;
   group.add(body, head, marker, weapon, shield, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove);
   group.userData.motionRig = { body, leftArm, rightArm, leftLeg, rightLeg };
+  const detailMeshes: THREE.Object3D[] = [weapon, helmet, visor, vest, belt, leftArm, rightArm, leftLeg, rightLeg, leftGlove, rightGlove];
   if (skinId === "bee") {
     const stripeMaterial = makeMaterial(0x111820, 0.7);
     const stripeA = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.45), stripeMaterial);
@@ -3774,7 +3816,16 @@ function createPlayerMesh(player: PlayerState) {
     stripeA.position.y = 0.99;
     stripeB.position.y = 0.78;
     group.add(stripeA, stripeB);
+    detailMeshes.push(stripeA, stripeB);
   }
+  const appearanceColor = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red);
+  const appearanceMarker = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757);
+  group.userData.appearanceKey = `${appearanceColor}:${appearanceMarker}`;
+  group.userData.detailMeshes = detailMeshes;
+  group.userData.headMesh = head;
+  group.userData.markerMesh = marker;
+  group.userData.shieldMesh = shield;
+  group.userData.lodLevel = -1;
   if (dynamicShadowsEnabled) {
     group.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
@@ -3892,9 +3943,35 @@ function applyPlayerMeshColor(mesh: THREE.Group, player: PlayerState) {
   updatePlayerNameTag(mesh, player);
   const color = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? palette.blue : palette.red);
   const markerColor = colorToNumber(player.cosmeticColor) ?? (player.color === "blue" ? 0x23b7ff : 0xff5757);
+  const appearanceKey = `${color}:${markerColor}`;
+  if (mesh.userData.appearanceKey === appearanceKey) return;
   ((mesh.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(color);
   ((mesh.children[2] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(markerColor);
   ((mesh.children[7] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(color);
+  mesh.userData.appearanceKey = appearanceKey;
+}
+
+function updateRemotePlayerLod(mesh: THREE.Group, distance: number) {
+  const underPressure = activePixelRatio < maxPixelRatio() - 0.08 || frameAverageMs > 20.5;
+  const detailDistance = isCoarsePointer()
+    ? underPressure ? 24 : 34
+    : underPressure ? 38 : 52;
+  const silhouetteDistance = isCoarsePointer() ? 82 : 120;
+  const nameDistance = isCoarsePointer()
+    ? underPressure ? 42 : 54
+    : underPressure ? 62 : 78;
+  const nextLod = distance > silhouetteDistance ? 2 : distance > detailDistance ? 1 : 0;
+  if (mesh.userData.lodLevel !== nextLod) {
+    for (const detail of (mesh.userData.detailMeshes as THREE.Object3D[] | undefined) || []) {
+      detail.visible = nextLod === 0;
+    }
+    const head = mesh.userData.headMesh as THREE.Object3D | undefined;
+    if (head) head.visible = nextLod < 2;
+    mesh.userData.lodLevel = nextLod;
+  }
+  const nameTag = mesh.userData.nameTagSprite as THREE.Sprite | undefined;
+  if (nameTag) nameTag.visible = distance <= nameDistance;
+  return nextLod;
 }
 
 function colorToNumber(color?: string) {
@@ -5317,7 +5394,7 @@ function handleMessage(event: MessageEvent<string>) {
       serverClockReady = false;
       lastSnapshotArrivalAt = 0;
       snapshotJitterMs = 0;
-      networkInterpolationDelayMs = 132;
+      networkInterpolationDelayMs = 170;
       shotBloom = 0;
       resetWeaponAmmo();
     }
@@ -5339,6 +5416,7 @@ function handleMessage(event: MessageEvent<string>) {
     coyoteGroundedUntil = 0;
     localGrounded = true;
     lastSafePosition.copy(self.position);
+    resetOutboundMotionState();
     self.yaw = wrapAngle(typeof message.spawn.yaw === "number" ? message.spawn.yaw : Math.atan2(message.spawn.x, message.spawn.z));
     self.pitch = 0;
     if (!resumed) {
@@ -5416,7 +5494,7 @@ function handleMessage(event: MessageEvent<string>) {
     if (lastSnapshotArrivalAt > 0) {
       const interval = arrivalAt - lastSnapshotArrivalAt;
       if (interval >= 20 && interval <= 1000) {
-        const jitterSample = Math.abs(interval - 150);
+        const jitterSample = Math.abs(interval - expectedSnapshotIntervalMs);
         snapshotJitterMs += (jitterSample - snapshotJitterMs) * 0.14;
       }
     }
@@ -5432,7 +5510,7 @@ function handleMessage(event: MessageEvent<string>) {
         serverClockOffsetMs += THREE.MathUtils.clamp(offsetSample - serverClockOffsetMs, -30, 30) * 0.08;
       }
     }
-    networkInterpolationDelayMs = THREE.MathUtils.clamp(122 + snapshotJitterMs * 1.8 + self.latency * 0.18, 122, 220);
+    networkInterpolationDelayMs = THREE.MathUtils.clamp(160 + snapshotJitterMs * 1.55 + self.latency * 0.16, 155, 260);
     if (typeof message.targetScore === "number") targetScore = message.targetScore || 0;
     if (message.partySize) setPartySize(Number(message.partySize));
     if (typeof message.cpuFill === "boolean") setCpuFill(message.cpuFill);
@@ -6506,7 +6584,7 @@ function groundHeightAt(x: number, z: number, currentY = 1.6, ascending = false)
     if (x < surface.minX || x > surface.maxX || z < surface.minZ || z > surface.maxZ) continue;
     if (surface.y <= currentY + surfaceReach) ground = Math.max(ground, surface.y);
   }
-  for (const box of colliders) {
+  for (const box of collidersNearPosition(x, z)) {
     if (x < box.min.x - playerRadius || x > box.max.x + playerRadius) continue;
     if (z < box.min.z - playerRadius || z > box.max.z + playerRadius) continue;
     const surfaceY = box.max.y + 1.6;
@@ -6586,14 +6664,14 @@ function moveWithSlide(wish: THREE.Vector3) {
 
   let movedX = false;
   let movedZ = false;
-  const nextX = self.position.clone();
+  const nextX = movementCollisionScratchX.copy(self.position);
   nextX.x = THREE.MathUtils.clamp(nextX.x + wish.x, -arenaHalfSize + 0.7, arenaHalfSize - 0.7);
   if (!collides(nextX)) {
     self.position.x = nextX.x;
     movedX = true;
   }
 
-  const nextZ = self.position.clone();
+  const nextZ = movementCollisionScratchZ.copy(self.position);
   nextZ.z = THREE.MathUtils.clamp(nextZ.z + wish.z, -arenaHalfSize + 0.7, arenaHalfSize - 0.7);
   if (!collides(nextZ)) {
     self.position.z = nextZ.z;
@@ -6613,11 +6691,12 @@ function isOverTrampoline(x: number, z: number) {
 function collides(position: THREE.Vector3) {
   const minY = position.y - 1.38;
   const maxY = position.y + 0.22;
-  const playerBox = new THREE.Box3(
-    new THREE.Vector3(position.x - playerRadius, minY, position.z - playerRadius),
-    new THREE.Vector3(position.x + playerRadius, maxY, position.z + playerRadius)
-  );
-  if (colliders.some((box) => box.intersectsBox(playerBox))) return true;
+  const playerBox = playerCollisionBoxScratch;
+  playerBox.min.set(position.x - playerRadius, minY, position.z - playerRadius);
+  playerBox.max.set(position.x + playerRadius, maxY, position.z + playerRadius);
+  for (const box of collidersNearPosition(position.x, position.z)) {
+    if (box.intersectsBox(playerBox)) return true;
+  }
   for (const door of automaticDoors) {
     if (door.leftCollider.intersectsBox(playerBox) || door.rightCollider.intersectsBox(playerBox)) return true;
   }
@@ -7084,32 +7163,54 @@ if (localQaEnabled) {
   document.body.appendChild(qaCreativeInput);
 }
 
+function resetOutboundMotionState() {
+  lastStateSent = 0;
+  lastSentMotionState = null;
+  lastVehicleInputSent = 0;
+  lastVehicleControlState = null;
+}
+
 function syncState(now: number) {
-  if (!self.joined || now - lastStateSent < 75) return;
-  lastStateSent = now;
-  if (activeVehicleId && now - lastVehicleInputSent >= 70) {
+  if (!self.joined) return;
+  if (activeVehicleId) {
     const throttle = mobileMoveIntensity > 0
       ? THREE.MathUtils.clamp(-mobileMoveY, -1, 1)
       : (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0);
     const steer = mobileMoveIntensity > 0
       ? THREE.MathUtils.clamp(mobileMoveX, -1, 1)
       : (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0);
-    send({
-      type: "vehicle_input",
-      throttle,
-      steer,
-      braking: mobileBraking || keys.has("Space")
-    });
-    lastVehicleInputSent = now;
+    const braking = mobileBraking || keys.has("Space");
+    const controlsChanged = !lastVehicleControlState
+      || lastVehicleControlState.throttle !== throttle
+      || lastVehicleControlState.steer !== steer
+      || lastVehicleControlState.braking !== braking;
+    if (now - lastVehicleInputSent >= 80 && (controlsChanged || now - lastVehicleInputSent >= 450)) {
+      send({ type: "vehicle_input", throttle, steer, braking });
+      lastVehicleInputSent = now;
+      lastVehicleControlState = { throttle, steer, braking };
+    }
+  } else {
+    lastVehicleControlState = null;
   }
-  send({
-    type: "state",
+
+  const state = {
     x: self.position.x,
     y: self.position.y,
     z: self.position.z,
     yaw: self.yaw,
     pitch: self.pitch
-  });
+  };
+  if (!shouldSendMotionState(lastSentMotionState, state, {
+    now,
+    lastSentAt: lastStateSent,
+    minimumIntervalMs: document.hidden ? 500 : isCoarsePointer() ? 115 : 95,
+    forceIntervalMs: document.hidden ? 2500 : 1000,
+    positionEpsilon: 0.045,
+    angleEpsilon: 0.008
+  })) return;
+  send({ type: "state", ...state });
+  lastStateSent = now;
+  lastSentMotionState = state;
 }
 
 function syncPlayerMotionSnapshots(snapshots: PlayerState[], snapshotAt: number) {
@@ -7190,9 +7291,13 @@ function updateRemotePlayers(delta: number) {
     mesh = playerMeshes.get(player.id) || mesh;
     mesh.position.set(sampled.x, Math.max(0, sampled.y - 1.6), sampled.z);
     mesh.rotation.y = sampled.yaw;
-    animateRemotePlayer(mesh, playerMotionTracks.get(player.id) || [], delta);
-    mesh.children[4].visible = Math.max(player.shieldUntil || 0, player.spawnProtectedUntil || 0) > Date.now();
-    mesh.visible = player.health > 0;
+    const distance = Math.hypot(sampled.x - self.position.x, sampled.y - self.position.y, sampled.z - self.position.z);
+    mesh.visible = player.health > 0 && distance < 210;
+    if (!mesh.visible) continue;
+    const lodLevel = updateRemotePlayerLod(mesh, distance);
+    if (lodLevel === 0) animateRemotePlayer(mesh, playerMotionTracks.get(player.id) || [], delta);
+    const shield = mesh.userData.shieldMesh as THREE.Mesh | undefined;
+    if (shield) shield.visible = Math.max(player.shieldUntil || 0, player.spawnProtectedUntil || 0) > Date.now();
   }
 }
 
@@ -7230,6 +7335,7 @@ function createVehicleMesh(snapshot: VehicleSnapshot) {
   const rearBumper = frontBumper.clone();
   rearBumper.position.z = 1.78;
   group.add(body, lower, hood, rear, dash, windshield, leftRail, rightRail, frontBumper, rearBumper);
+  const mediumDetails: THREE.Object3D[] = [dash, leftRail, rightRail, frontBumper, rearBumper];
 
   for (const x of [-0.58, 0.58]) {
     const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.2, 0.08), materials.light);
@@ -7238,6 +7344,7 @@ function createVehicleMesh(snapshot: VehicleSnapshot) {
     const tail = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.08), materials.red);
     tail.position.set(x, 0.82, 1.68);
     group.add(tail);
+    mediumDetails.push(headlight, tail);
   }
 
   const wheels: THREE.Mesh[] = [];
@@ -7260,6 +7367,9 @@ function createVehicleMesh(snapshot: VehicleSnapshot) {
   );
   statusBeacon.position.set(0, 1.86, 1.16);
   group.add(shadow, statusBeacon);
+  group.userData.vehicleMediumDetails = [...mediumDetails, statusBeacon];
+  group.userData.vehicleFarDetails = [hood, rear, windshield, ...wheels, shadow];
+  group.userData.vehicleLodLevel = -1;
   group.position.set(snapshot.x, 0, snapshot.z);
   group.rotation.y = snapshot.yaw;
   scene.add(group);
@@ -7349,8 +7459,20 @@ function updateVehicleVisuals(delta: number) {
       visual.group.position.set(sampled.x, 0, sampled.z);
       visual.group.rotation.y = sampled.yaw;
     }
+    const distance = Math.hypot(visual.group.position.x - self.position.x, visual.group.position.z - self.position.z);
+    const detailDistance = isCoarsePointer() ? 34 : 48;
+    const silhouetteDistance = isCoarsePointer() ? 72 : 96;
+    const lodLevel = active ? 0 : distance > silhouetteDistance ? 2 : distance > detailDistance ? 1 : 0;
+    visual.group.visible = active || distance < 210;
+    if (visual.group.userData.vehicleLodLevel !== lodLevel) {
+      for (const detail of (visual.group.userData.vehicleMediumDetails as THREE.Object3D[] | undefined) || []) detail.visible = lodLevel === 0;
+      for (const detail of (visual.group.userData.vehicleFarDetails as THREE.Object3D[] | undefined) || []) detail.visible = lodLevel < 2;
+      visual.group.userData.vehicleLodLevel = lodLevel;
+    }
     visual.wheelSpin += snapshot.speed * delta / 0.38;
-    for (const wheel of visual.wheels) wheel.rotation.x = visual.wheelSpin;
+    if (lodLevel < 2) {
+      for (const wheel of visual.wheels) wheel.rotation.x = visual.wheelSpin;
+    }
     const healthRatio = THREE.MathUtils.clamp((snapshot.health ?? 600) / Math.max(1, snapshot.maxHealth ?? 600), 0, 1);
     const disabled = (snapshot.disabledUntil || 0) > Date.now() || healthRatio <= 0;
     const beaconMaterial = visual.statusBeacon.material as THREE.MeshBasicMaterial;
@@ -8887,7 +9009,12 @@ function updateAdaptiveQuality(delta: number, now: number) {
     frameAverageMs,
     now,
     minimum: floor,
-    maximum: cap
+    maximum: cap,
+    cooldownMs: isCoarsePointer() ? 2200 : 3200,
+    pressureFrameMs: isCoarsePointer() ? 19.2 : 20.5,
+    recoveryFrameMs: 16.8,
+    decreaseStep: isCoarsePointer() ? 0.14 : 0.12,
+    increaseStep: 0.06
   });
   qualityPressureSamples = quality.pressureSamples;
   qualityRecoverySamples = quality.recoverySamples;
@@ -8913,11 +9040,59 @@ function updateMeasuredFps(now: number) {
   }
 }
 
+function publishPerformanceDiagnostics(now: number) {
+  if (now - lastPerformanceDiagnosticAt < 1000) return;
+  lastPerformanceDiagnosticAt = now;
+  let detailedPlayers = 0;
+  for (const mesh of playerMeshes.values()) {
+    if (mesh.visible && mesh.userData.lodLevel === 0) detailedPlayers += 1;
+  }
+  let detailedVehicles = 0;
+  for (const visual of vehicleMeshes.values()) {
+    if (visual.group.visible && visual.group.userData.vehicleLodLevel === 0) detailedVehicles += 1;
+  }
+  const diagnostics = {
+    fps: measuredFps || 0,
+    frameMs: Math.round(frameAverageMs * 10) / 10,
+    pixelRatio: activePixelRatio,
+    drawCalls: renderer.info.render.calls,
+    triangles: renderer.info.render.triangles,
+    remotePlayers: playerMeshes.size,
+    detailedPlayers,
+    detailedVehicles,
+    colliders: colliders.length,
+    colliderCells: colliderGrid.size
+  };
+  (window as Window & { __DONPACHI_PERF__?: Record<string, number> }).__DONPACHI_PERF__ = diagnostics;
+  document.documentElement.dataset.renderPerf = JSON.stringify(diagnostics);
+}
+
 function shortestAngleDelta(from: number, to: number) {
   return THREE.MathUtils.euclideanModulo(to - from + Math.PI, Math.PI * 2) - Math.PI;
 }
 
-function findMobileAimTarget() {
+type MobileAimTarget = { target: PlayerState; yawDelta: number; pitchDelta: number; distance: number; score: number; dx: number; dy: number; dz: number };
+
+function mobileAimMetrics(target: PlayerState, me: PlayerState, maxDistance: number, yawLimit: number, pitchLimit: number): MobileAimTarget | null {
+  if (target.id === self.id || target.connected === false || target.color === me.color || target.eliminated || target.health <= 0 || target.creative) return null;
+  const rendered = renderedPlayerMotion.get(target.id);
+  const targetX = rendered?.x ?? target.x;
+  const targetY = rendered?.y ?? target.y;
+  const targetZ = rendered?.z ?? target.z;
+  const dx = targetX - self.position.x;
+  const dy = targetY - 0.68 - self.position.y;
+  const dz = targetZ - self.position.z;
+  const distance = Math.hypot(dx, dy, dz);
+  if (distance <= 0.1 || distance > maxDistance) return null;
+  const targetYaw = Math.atan2(-dx, -dz);
+  const targetPitch = Math.asin(THREE.MathUtils.clamp(dy / distance, -0.98, 0.98));
+  const yawDelta = shortestAngleDelta(self.yaw, targetYaw);
+  const pitchDelta = targetPitch - self.pitch;
+  if (Math.abs(yawDelta) > yawLimit || Math.abs(pitchDelta) > pitchLimit) return null;
+  return { target, yawDelta, pitchDelta, distance, score: Math.hypot(yawDelta * 1.25, pitchDelta), dx, dy, dz };
+}
+
+function findMobileAimTarget(now = performance.now()) {
   if (!isCoarsePointer()) return null;
   const me = players.get(self.id);
   if (!me || me.eliminated || me.health <= 0) return null;
@@ -8925,33 +9100,35 @@ function findMobileAimTarget() {
   const maxDistance = Math.min(gun.range, scoped ? 96 : 62);
   const yawLimit = scoped ? 0.18 : 0.16;
   const pitchLimit = scoped ? 0.15 : 0.13;
-  let best: { target: PlayerState; yawDelta: number; pitchDelta: number; distance: number; score: number } | null = null;
-  for (const target of players.values()) {
-    if (target.id === self.id || target.connected === false || target.color === me.color || target.eliminated || target.health <= 0 || target.creative) continue;
-    const rendered = renderedPlayerMotion.get(target.id);
-    const targetX = rendered?.x ?? target.x;
-    const targetY = rendered?.y ?? target.y;
-    const targetZ = rendered?.z ?? target.z;
-    const dx = targetX - self.position.x;
-    const dy = targetY - 0.68 - self.position.y;
-    const dz = targetZ - self.position.z;
-    const distance = Math.hypot(dx, dy, dz);
-    if (distance <= 0.1 || distance > maxDistance) continue;
-    const targetYaw = Math.atan2(-dx, -dz);
-    const targetPitch = Math.asin(THREE.MathUtils.clamp(dy / distance, -0.98, 0.98));
-    const yawDelta = shortestAngleDelta(self.yaw, targetYaw);
-    const pitchDelta = targetPitch - self.pitch;
-    if (Math.abs(yawDelta) > yawLimit || Math.abs(pitchDelta) > pitchLimit) continue;
-    const direction = mobileAimDirectionScratch.set(dx, dy, dz).normalize();
-    if (firstObstacleDistance(self.position, direction, distance) < distance - 0.38) continue;
-    const score = Math.hypot(yawDelta * 1.25, pitchDelta);
-    if (!best || score < best.score) best = { target, yawDelta, pitchDelta, distance, score };
+  const scanInterval = mobileFiring ? 45 : 75;
+  if (cachedMobileAimTargetId && now - lastMobileAimScanAt < scanInterval) {
+    const cached = players.get(cachedMobileAimTargetId);
+    if (cached) {
+      const metrics = mobileAimMetrics(cached, me, maxDistance, yawLimit, pitchLimit);
+      if (metrics) return metrics;
+    }
+    cachedMobileAimTargetId = "";
   }
-  return best;
+
+  lastMobileAimScanAt = now;
+  const candidates: MobileAimTarget[] = [];
+  for (const target of players.values()) {
+    const metrics = mobileAimMetrics(target, me, maxDistance, yawLimit, pitchLimit);
+    if (metrics) candidates.push(metrics);
+  }
+  candidates.sort((left, right) => left.score - right.score);
+  for (const candidate of candidates.slice(0, 3)) {
+    const direction = mobileAimDirectionScratch.set(candidate.dx, candidate.dy, candidate.dz).normalize();
+    if (firstObstacleDistance(self.position, direction, candidate.distance) < candidate.distance - 0.38) continue;
+    cachedMobileAimTargetId = candidate.target.id;
+    return candidate;
+  }
+  cachedMobileAimTargetId = "";
+  return null;
 }
 
 function applyMobileAimAssist(delta: number) {
-  const target = findMobileAimTarget();
+  const target = findMobileAimTarget(performance.now());
   if (!target) return false;
   const strength = THREE.MathUtils.clamp(delta * (mobileFiring ? 2.4 : scoped ? 1.25 : 1.05), 0, mobileFiring ? 0.075 : scoped ? 0.045 : 0.034);
   self.yaw = wrapAngle(self.yaw + target.yawDelta * strength);
@@ -9011,6 +9188,7 @@ function animate() {
   updateFireworks(delta);
   syncState(now);
   if (!graphicsContextLost) renderer.render(scene, camera);
+  publishPerformanceDiagnostics(now);
   requestAnimationFrame(animate);
 }
 

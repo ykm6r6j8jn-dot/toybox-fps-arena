@@ -17,6 +17,25 @@ export function shortestAngleDelta(from, to) {
   return delta;
 }
 
+export function shouldSendMotionState(previous, next, options = {}) {
+  const now = Math.max(0, finite(options.now));
+  const lastSentAt = Math.max(0, finite(options.lastSentAt));
+  const minimumIntervalMs = Math.max(20, finite(options.minimumIntervalMs, 100));
+  const forceIntervalMs = Math.max(minimumIntervalMs, finite(options.forceIntervalMs, 1000));
+  if (now - lastSentAt < minimumIntervalMs) return false;
+  if (!previous || !Number.isFinite(Number(previous.x))) return true;
+  if (now - lastSentAt >= forceIntervalMs) return true;
+
+  const positionEpsilon = Math.max(0.001, finite(options.positionEpsilon, 0.045));
+  const angleEpsilon = Math.max(0.0005, finite(options.angleEpsilon, 0.008));
+  const dx = finite(next?.x) - finite(previous.x);
+  const dy = finite(next?.y) - finite(previous.y);
+  const dz = finite(next?.z) - finite(previous.z);
+  if (dx * dx + dy * dy + dz * dz >= positionEpsilon * positionEpsilon) return true;
+  if (Math.abs(shortestAngleDelta(previous.yaw, next?.yaw)) >= angleEpsilon) return true;
+  return Math.abs(finite(next?.pitch) - finite(previous.pitch)) >= angleEpsilon;
+}
+
 function normalizedSample(sample) {
   return {
     at: finite(sample?.at),
