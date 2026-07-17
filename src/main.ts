@@ -675,6 +675,7 @@ const renderer = new THREE.WebGLRenderer({
   antialias: true,
   powerPreference: "high-performance"
 });
+let graphicsContextLost = false;
 renderer.setClearColor(0x77c7ff);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -1699,18 +1700,24 @@ const materials = {
   orange: makeTexturedMaterial(palette.orange, blockGrainTexture, 0.78, 0.018),
   purple: makeTexturedMaterial(palette.purple, blockGrainTexture, 0.78, 0.018),
   cyan: makeTexturedMaterial(palette.cyan, blockGrainTexture, 0.78, 0.018),
-  dark: makeMaterial(0x1b252d, 0.58),
+  dark: makeMaterial(0x293843, 0.58),
   metal: makeMaterial(0x46515a, 0.34),
   rubber: makeMaterial(0x10161b, 0.72),
   light: new THREE.MeshBasicMaterial({ color: 0xfff0a8 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x8bd7ff, roughness: 0.2, metalness: 0.02, transparent: true, opacity: 0.34 })
 };
 const weaponMaterials = {
-  metal: new THREE.MeshStandardMaterial({ color: 0x2b343c, roughness: 0.28, metalness: 0.82, envMapIntensity: 0.86 }),
-  polymer: new THREE.MeshStandardMaterial({ color: 0x11181d, roughness: 0.64, metalness: 0.08 }),
-  steel: new THREE.MeshStandardMaterial({ color: 0x11171b, roughness: 0.23, metalness: 0.9, envMapIntensity: 0.92 }),
-  brass: new THREE.MeshStandardMaterial({ color: 0xb98732, roughness: 0.34, metalness: 0.78 })
+  metal: new THREE.MeshStandardMaterial({ color: 0x46535d, roughness: 0.38, metalness: 0.52, envMapIntensity: 0.72 }),
+  polymer: new THREE.MeshStandardMaterial({ color: 0x202a31, roughness: 0.7, metalness: 0.06 }),
+  steel: new THREE.MeshStandardMaterial({ color: 0x303b43, roughness: 0.34, metalness: 0.62, envMapIntensity: 0.76 }),
+  brass: new THREE.MeshStandardMaterial({ color: 0xc4943d, roughness: 0.38, metalness: 0.58 })
 };
+const sharedUnitBoxGeometry = new THREE.BoxGeometry(1, 1, 1);
+const sharedUnitShadowGeometry = new THREE.PlaneGeometry(1, 1);
+const sharedGeometryResources = new Set<THREE.BufferGeometry>([
+  sharedUnitBoxGeometry,
+  sharedUnitShadowGeometry
+]);
 const contactShadowTexture = createContactShadowTexture();
 const shadowMaterial = new THREE.MeshBasicMaterial({
   color: 0x07121d,
@@ -1729,7 +1736,8 @@ const sharedMaterialResources = new Set<THREE.Material>([
 ]);
 
 function addLights() {
-  scene.add(new THREE.HemisphereLight(0xdff3ff, 0x53645b, 0.82));
+  scene.add(new THREE.HemisphereLight(0xe9f7ff, 0x7d8b7d, 1.08));
+  scene.add(new THREE.AmbientLight(0xd7eaff, 0.13));
   const sun = new THREE.DirectionalLight(0xfff0cf, 3.0);
   sun.position.set(42, 72, 36);
   sun.castShadow = dynamicShadowsEnabled;
@@ -1752,11 +1760,13 @@ function addLights() {
 }
 
 function addSoftShadow(name: string, position: [number, number, number], scale: [number, number, number]) {
-  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(Math.max(1.2, scale[0] * 1.12), Math.max(1.2, scale[2] * 1.12)), shadowMaterial);
+  const shadow = new THREE.Mesh(sharedUnitShadowGeometry, shadowMaterial);
   shadow.name = `${name} shadow`;
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.set(position[0] + 0.22, 0.018, position[2] + 0.28);
+  shadow.scale.set(Math.max(1.2, scale[0] * 1.12), Math.max(1.2, scale[2] * 1.12), 1);
   shadow.renderOrder = 1;
+  shadow.userData.staticBatchKind = "shadow";
   trackArenaObject(shadow);
 }
 
@@ -1767,9 +1777,10 @@ function addBox(
   material: THREE.Material,
   collidable = true
 ) {
-  const box = new THREE.Mesh(new THREE.BoxGeometry(scale[0], scale[1], scale[2]), material);
+  const box = new THREE.Mesh(sharedUnitBoxGeometry, material);
   box.name = name;
   box.position.set(position[0], position[1], position[2]);
+  box.scale.set(scale[0], scale[1], scale[2]);
   box.castShadow = dynamicShadowsEnabled
     && !material.transparent
     && Math.abs(position[0]) <= 62
@@ -1777,6 +1788,7 @@ function addBox(
     && scale[1] >= 2.2
     && scale[0] * scale[2] >= 14;
   box.receiveShadow = true;
+  if (!material.transparent) box.userData.staticBatchKind = "box";
   trackArenaObject(box);
   if (collidable && scale[1] > 1.2 && scale[0] * scale[2] > 10) addSoftShadow(name, position, scale);
   if (collidable) {
@@ -1790,6 +1802,53 @@ function addBox(
     });
   }
   return box;
+}
+
+function finalizeStaticArenaBatches() {
+  const candidates = arenaObjects.filter((object): object is THREE.Mesh => (
+    object instanceof THREE.Mesh
+    && typeof object.userData.staticBatchKind === "string"
+    && !Array.isArray(object.material)
+    && (object.userData.staticBatchKind === "shadow" || !object.material.transparent)
+  ));
+  if (!candidates.length) return;
+
+  const candidateSet = new Set<THREE.Object3D>(candidates);
+  const retained = arenaObjects.filter((object) => !candidateSet.has(object));
+  arenaObjects.length = 0;
+  arenaObjects.push(...retained);
+
+  const groups = new Map<string, THREE.Mesh[]>();
+  for (const mesh of candidates) {
+    const kind = String(mesh.userData.staticBatchKind);
+    const material = mesh.material as THREE.Material;
+    const key = `${kind}:${material.uuid}:${mesh.castShadow ? 1 : 0}:${mesh.receiveShadow ? 1 : 0}:${mesh.renderOrder}`;
+    const group = groups.get(key) || [];
+    group.push(mesh);
+    groups.set(key, group);
+  }
+
+  for (const meshes of groups.values()) {
+    const first = meshes[0];
+    const material = first.material as THREE.Material;
+    const geometry = first.userData.staticBatchKind === "shadow" ? sharedUnitShadowGeometry : sharedUnitBoxGeometry;
+    const batch = new THREE.InstancedMesh(geometry, material, meshes.length);
+    batch.name = `static ${first.userData.staticBatchKind} batch`;
+    batch.castShadow = first.castShadow;
+    batch.receiveShadow = first.receiveShadow;
+    batch.renderOrder = first.renderOrder;
+    batch.matrixAutoUpdate = true;
+    meshes.forEach((mesh, index) => {
+      mesh.updateMatrixWorld(true);
+      batch.setMatrixAt(index, mesh.matrixWorld);
+      mesh.parent?.remove(mesh);
+    });
+    batch.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    batch.instanceMatrix.needsUpdate = true;
+    batch.computeBoundingBox();
+    batch.computeBoundingSphere();
+    trackArenaObject(batch);
+  }
 }
 
 function hexToRgba(hex: string, alpha: number) {
@@ -3089,6 +3148,7 @@ function addToyboxArena() {
   addSign("BROADCAST", [0, 7.0, 45.75], 0, "#2fc4bf");
   addSign("ROOF ROUTE", [15, 4.8, -17.72], Math.PI, "#93e43c");
   addSign("CENTER", [0, 2.35, -57.45], Math.PI, "#111827");
+  finalizeStaticArenaBatches();
 }
 
 function addOkakoJArena() {
@@ -4731,6 +4791,24 @@ window.addEventListener("online", () => {
   openFpsSocket(true);
 });
 
+canvas.addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  graphicsContextLost = true;
+  desktopFiring = false;
+  mobileFiring = false;
+  connectionRecoveryText.textContent = "描画エンジンを復旧しています";
+  connectionRecovery.classList.add("show");
+});
+
+canvas.addEventListener("webglcontextrestored", () => {
+  graphicsContextLost = false;
+  renderer.resetState();
+  activePixelRatio = minPixelRatio();
+  resize();
+  if (!fpsConnectionRecovering) connectionRecovery.classList.remove("show");
+  showToast("描画を復旧しました");
+});
+
 async function joinBaccarat(qaMode = false) {
   const entryButton = qaMode ? joinBaccaratQaRoomButton : joinBaccaratRoomButton;
   if (entryButton.disabled || (qaMode && entryButton.hidden)) return;
@@ -5334,6 +5412,11 @@ function getAudioContext() {
 
 function unlockAudio(force = false) {
   if (!soundEnabled) return Promise.resolve();
+  const activation = navigator.userActivation;
+  if (!force && activation && !activation.isActive && !activation.hasBeenActive) {
+    syncAudioDataset();
+    return Promise.resolve();
+  }
   if (audioUnlocking && !force) return audioUnlocking;
   audioUnlocking = null;
   const context = getAudioContext();
@@ -7757,7 +7840,7 @@ function disposeMaterial(material?: THREE.Material | THREE.Material[]) {
 
 function disposeObjectResources(object: THREE.Object3D) {
   const renderable = object as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
-  renderable.geometry?.dispose();
+  if (renderable.geometry && !sharedGeometryResources.has(renderable.geometry)) renderable.geometry.dispose();
   disposeMaterial(renderable.material);
 }
 
@@ -8631,7 +8714,7 @@ function animate() {
   updateBulletDecals();
   updateFireworks(delta);
   syncState(now);
-  renderer.render(scene, camera);
+  if (!graphicsContextLost) renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
 
