@@ -12,6 +12,7 @@ import Copy from "lucide/dist/esm/icons/copy.js";
 import Crosshair from "lucide/dist/esm/icons/crosshair.js";
 import DoorOpen from "lucide/dist/esm/icons/door-open.js";
 import HeartPulse from "lucide/dist/esm/icons/heart-pulse.js";
+import LockKeyhole from "lucide/dist/esm/icons/lock-keyhole.js";
 import MapPin from "lucide/dist/esm/icons/map-pin.js";
 import Maximize2 from "lucide/dist/esm/icons/maximize-2.js";
 import MicOff from "lucide/dist/esm/icons/mic-off.js";
@@ -23,6 +24,7 @@ import Send from "lucide/dist/esm/icons/send.js";
 import Settings from "lucide/dist/esm/icons/settings.js";
 import Signal from "lucide/dist/esm/icons/signal.js";
 import Smartphone from "lucide/dist/esm/icons/smartphone.js";
+import ShoppingBag from "lucide/dist/esm/icons/shopping-bag.js";
 import Users from "lucide/dist/esm/icons/users.js";
 import Volume2 from "lucide/dist/esm/icons/volume-2.js";
 import X from "lucide/dist/esm/icons/x.js";
@@ -218,7 +220,7 @@ type HealthPickupSnapshot = {
   respawnAt?: number;
 };
 
-type PowerupKind = "speed" | "ammo" | "damage" | "comeback";
+type PowerupKind = "speed" | "heal" | "damage" | "comeback";
 
 type PowerupSnapshot = {
   id: string;
@@ -311,6 +313,31 @@ type ProfileInventory = {
   don: number;
   barrierCharges: number;
   boostTickets: number;
+  upgrades: { attack: number; armor: number; recovery: number };
+  ownedSkins: SkinId[];
+};
+
+type CombatBonuses = {
+  level: number;
+  attackMultiplier: number;
+  attackPercent: number;
+  damageReduction: number;
+  armorPercent: number;
+  startingHealPacks: number;
+  startingEquipmentTier: number;
+};
+
+type ShopEntry = {
+  id: string;
+  category: "upgrade" | "item" | "skin";
+  name: string;
+  description: string;
+  cost: number;
+  owned: boolean;
+  level?: number;
+  maxLevel?: number;
+  count?: number;
+  skin?: SkinId;
 };
 
 type LoginProfile = {
@@ -320,6 +347,9 @@ type LoginProfile = {
   level?: number;
   progress?: Partial<ProgressState>;
   inventory?: Partial<ProfileInventory>;
+  bonuses?: Partial<CombatBonuses>;
+  shop?: ShopEntry[];
+  progressionVersion?: string;
 };
 
 const $ = <T extends HTMLElement>(selector: string) => {
@@ -368,6 +398,7 @@ const lucideIcons = {
   Crosshair,
   DoorOpen,
   HeartPulse,
+  LockKeyhole,
   MapPin,
   Maximize2,
   MicOff,
@@ -379,6 +410,7 @@ const lucideIcons = {
   Settings,
   Signal,
   Smartphone,
+  ShoppingBag,
   Users,
   Volume2,
   X,
@@ -399,9 +431,12 @@ const minimapCanvas = $("#minimap") as HTMLCanvasElement;
 const minimap = minimapCanvas.getContext("2d")!;
 const joinPanel = $("#joinPanel");
 const loginIdInput = $("#loginIdInput") as HTMLInputElement;
+const loginPasswordInput = $("#loginPasswordInput") as HTMLInputElement;
 const createLoginIdButton = $("#createLoginId") as HTMLButtonElement;
 const loginProfileButton = $("#loginProfile") as HTMLButtonElement;
 const loginStatus = $("#loginStatus");
+const loginCard = $("#loginCard");
+const accountSecurityNote = $("#accountSecurityNote");
 const nameInput = $("#nameInput") as HTMLInputElement;
 const onlinePlayersEl = $("#onlinePlayers");
 const modeSelect = $("#modeSelect");
@@ -553,6 +588,15 @@ const resultRows = $("#resultRows");
 const resultProgress = $("#resultProgress");
 const progressRank = $("#progressRank");
 const lobbyWalletDonEl = $("#lobbyWalletDon");
+const lobbyHeaderWallet = $("#lobbyHeaderWallet");
+const shopWalletDon = $("#shopWalletDon");
+const combatBonusRow = $("#combatBonusRow");
+const shopBenefitStrip = $("#shopBenefitStrip");
+const shopCatalogEl = $("#shopCatalog");
+const lobbyMatchTab = $("#lobbyMatchTab") as HTMLButtonElement;
+const lobbyShopTab = $("#lobbyShopTab") as HTMLButtonElement;
+const lobbyMatchPane = $("#lobbyMatchPane");
+const lobbyShopPane = $("#lobbyShopPane");
 const progressMeter = $("#progressMeter") as HTMLElement;
 const progressStats = $("#progressStats");
 const progressHint = $("#progressHint");
@@ -570,6 +614,8 @@ const inventoryStorageKey = "donpachi-inventory-v1";
 const loginStorageKey = "donpachi-login-id";
 const inviteRoomStorageKey = "donpachi-last-invite-room";
 const guestWalletStorageKey = "donpachi-guest-wallet-v1";
+const accountSessionStorageKey = "donpachi-account-session-v2";
+const accountVaultStorageKey = "donpachi-account-vault-v2";
 const globalFpsRoomCode = "DONPCH";
 const globalBaccaratTableCode = "DONBAC";
 const installInviteRequested = launchParams.get("install") === "1";
@@ -579,9 +625,22 @@ const autoJoinInviteRequested = launchParams.get("join") === "1" || (installInvi
 let progressState = loadProgressState();
 let profileInventory = loadProfileInventory();
 let loggedInLoginId = sanitizeLoginId(localStorage.getItem(loginStorageKey) || "");
+let accountSessionToken = String(localStorage.getItem(accountSessionStorageKey) || "").slice(0, 1024);
+let accountVault = String(localStorage.getItem(accountVaultStorageKey) || "").slice(0, 48_000);
+let combatBonuses: CombatBonuses = {
+  level: 1,
+  attackMultiplier: 1,
+  attackPercent: 0,
+  damageReduction: 0,
+  armorPercent: 0,
+  startingHealPacks: 5,
+  startingEquipmentTier: 0
+};
+let shopEntries: ShopEntry[] = [];
 let profileSyncTimer = 0;
 let applyingProfile = false;
 let lastBaccaratRewardKey = "";
+let lastFpsProgressReward = { gained: 0, leveled: false, level: 1, reason: "" };
 let guestWalletToken = getOrCreateGuestWalletToken();
 let sharedWalletSyncIdentity = "";
 let sharedWalletSyncPromise: Promise<number> | null = null;
@@ -748,7 +807,8 @@ const guns: Gun[] = [
   { kind: "type95", name: "95式", magSize: 30, fireDelay: 205, pelletCount: 3, spread: 0.007, range: 76, recoilPitch: 0.012, recoilYaw: 0.011, recoilDrift: 0.002, kick: 0.26, bloomPerShot: 0.002, maxBloom: 0.014, bloomRecovery: 0.02, tracerColor: 0xff4dff }
 ];
 type WeaponAmmoState = { ammo: number; reserve: number };
-const weaponAmmoStates: WeaponAmmoState[] = guns.map((gun) => ({ ammo: gun.magSize, reserve: gun.magSize * 4 }));
+const unlimitedReserveAmmo = 999;
+const weaponAmmoStates: WeaponAmmoState[] = guns.map((gun) => ({ ammo: gun.magSize, reserve: unlimitedReserveAmmo }));
 let currentGunIndex = 0;
 const currentGun = () => guns[currentGunIndex];
 const isScopedGun = (gun = currentGun()) => gun.kind === "marksman" || gun.kind === "awm";
@@ -818,19 +878,19 @@ const self = {
 
 function saveCurrentWeaponAmmo() {
   weaponAmmoStates[currentGunIndex].ammo = Math.max(0, Math.floor(self.ammo));
-  weaponAmmoStates[currentGunIndex].reserve = Math.max(0, Math.floor(self.reserve));
+  weaponAmmoStates[currentGunIndex].reserve = unlimitedReserveAmmo;
 }
 
 function loadCurrentWeaponAmmo() {
   const state = weaponAmmoStates[currentGunIndex];
   self.ammo = state.ammo;
-  self.reserve = state.reserve;
+  self.reserve = unlimitedReserveAmmo;
 }
 
 function resetWeaponAmmo() {
   weaponAmmoStates.forEach((state, index) => {
     state.ammo = guns[index].magSize;
-    state.reserve = guns[index].magSize * 4;
+    state.reserve = unlimitedReserveAmmo;
   });
   loadCurrentWeaponAmmo();
 }
@@ -847,6 +907,7 @@ let fpsReconnectTimer = 0;
 let pingTimer = 0;
 let lastStateSent = 0;
 let reloadTimer = 0;
+let reloadWeaponIndex = -1;
 let roundSeconds = 525;
 let targetScore = 0;
 let gameMode: GameMode = "oneLife";
@@ -1173,8 +1234,14 @@ function normalizeSkinId(skin?: string): SkinId {
   return skin === "scout" || skin === "heavy" || skin === "bee" ? skin : "rounded";
 }
 
-function setSkin(skin: SkinId | string) {
-  currentSkin = normalizeSkinId(skin);
+function setSkin(skin: SkinId | string, force = false) {
+  const nextSkin = normalizeSkinId(skin);
+  if (!force && !profileInventory.ownedSkins.includes(nextSkin)) {
+    showToast("このスキンはショップで購入できます");
+    setLobbyTab("shop");
+    return;
+  }
+  currentSkin = nextSkin;
   localStorage.setItem("toybox-skin", currentSkin);
   for (const button of skinSelect.querySelectorAll<HTMLButtonElement>("[data-skin]")) {
     button.classList.toggle("active", button.dataset.skin === currentSkin);
@@ -1246,17 +1313,29 @@ function emptyProfileInventory(): ProfileInventory {
     healPacks: 5,
     don: 2000,
     barrierCharges: 0,
-    boostTickets: 0
+    boostTickets: 0,
+    upgrades: { attack: 0, armor: 0, recovery: 0 },
+    ownedSkins: ["rounded"]
   };
 }
 
 function normalizeInventory(inventory?: Partial<ProfileInventory> & { pokerDon?: number }): ProfileInventory {
   const base = emptyProfileInventory();
+  const upgrades = inventory?.upgrades || base.upgrades;
+  const ownedSkins = Array.isArray(inventory?.ownedSkins)
+    ? [...new Set(["rounded", ...inventory.ownedSkins.map((skin) => normalizeSkinId(String(skin)))])]
+    : base.ownedSkins;
   return {
     healPacks: THREE.MathUtils.clamp(Math.floor(Number(inventory?.healPacks ?? base.healPacks)), 0, 12),
     don: THREE.MathUtils.clamp(Math.floor(Number(inventory?.don ?? inventory?.pokerDon ?? base.don)), 0, 999999),
     barrierCharges: THREE.MathUtils.clamp(Math.floor(Number(inventory?.barrierCharges ?? base.barrierCharges)), 0, 9),
-    boostTickets: THREE.MathUtils.clamp(Math.floor(Number(inventory?.boostTickets ?? base.boostTickets)), 0, 99)
+    boostTickets: THREE.MathUtils.clamp(Math.floor(Number(inventory?.boostTickets ?? base.boostTickets)), 0, 20),
+    upgrades: {
+      attack: THREE.MathUtils.clamp(Math.floor(Number(upgrades.attack) || 0), 0, 5),
+      armor: THREE.MathUtils.clamp(Math.floor(Number(upgrades.armor) || 0), 0, 5),
+      recovery: THREE.MathUtils.clamp(Math.floor(Number(upgrades.recovery) || 0), 0, 5)
+    },
+    ownedSkins: ownedSkins as SkinId[]
   };
 }
 
@@ -1302,6 +1381,17 @@ function currentSharedWalletIdentity() {
   return loggedInLoginId ? `account:${loggedInLoginId}` : `guest:${guestWalletToken}`;
 }
 
+function saveAccountCredentials(sessionToken?: string, vault?: string) {
+  if (typeof sessionToken === "string" && sessionToken) {
+    accountSessionToken = sessionToken.slice(0, 1024);
+    localStorage.setItem(accountSessionStorageKey, accountSessionToken);
+  }
+  if (typeof vault === "string" && vault) {
+    accountVault = vault.slice(0, 48_000);
+    localStorage.setItem(accountVaultStorageKey, accountVault);
+  }
+}
+
 async function syncSharedWallet(force = false) {
   const identity = currentSharedWalletIdentity();
   if (!force && sharedWalletSyncPromise && sharedWalletSyncIdentity === identity) return sharedWalletSyncPromise;
@@ -1310,13 +1400,19 @@ async function syncSharedWallet(force = false) {
       method: "POST",
       headers: { "content-type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify({ loginId: loggedInLoginId, guestToken: guestWalletToken })
+      body: JSON.stringify({
+        loginId: loggedInLoginId,
+        guestToken: guestWalletToken,
+        sessionToken: accountSessionToken,
+        accountVault
+      })
     });
     const data = await response.json().catch(() => null) as {
       ok?: boolean;
       message?: string;
       balance?: number;
       guestToken?: string;
+      accountVault?: string;
       scope?: "account" | "guest";
     } | null;
     if (!response.ok || !data?.ok || !Number.isFinite(Number(data.balance))) {
@@ -1326,6 +1422,7 @@ async function syncSharedWallet(force = false) {
       guestWalletToken = data.guestToken;
       localStorage.setItem(guestWalletStorageKey, guestWalletToken);
     }
+    saveAccountCredentials(undefined, data.accountVault);
     profileInventory.don = THREE.MathUtils.clamp(Math.floor(Number(data.balance)), 0, 999999);
     saveProfileInventory();
     renderProgressCard();
@@ -1367,6 +1464,56 @@ function currentProfilePayload() {
   };
 }
 
+function normalizeCombatBonuses(value?: Partial<CombatBonuses>): CombatBonuses {
+  return {
+    level: Math.max(1, Math.floor(Number(value?.level) || progressInfo().level)),
+    attackMultiplier: THREE.MathUtils.clamp(Number(value?.attackMultiplier) || 1, 1, 1.18),
+    attackPercent: THREE.MathUtils.clamp(Math.floor(Number(value?.attackPercent) || 0), 0, 18),
+    damageReduction: THREE.MathUtils.clamp(Number(value?.damageReduction) || 0, 0, 0.14),
+    armorPercent: THREE.MathUtils.clamp(Math.floor(Number(value?.armorPercent) || 0), 0, 14),
+    startingHealPacks: THREE.MathUtils.clamp(Math.floor(Number(value?.startingHealPacks) || 5), 5, 12),
+    startingEquipmentTier: THREE.MathUtils.clamp(Math.floor(Number(value?.startingEquipmentTier) || 0), 0, 5)
+  };
+}
+
+function renderSkinOwnership() {
+  const owned = new Set(profileInventory.ownedSkins);
+  for (const button of skinSelect.querySelectorAll<HTMLButtonElement>("[data-skin]")) {
+    const skin = normalizeSkinId(button.dataset.skin);
+    const available = owned.has(skin);
+    button.setAttribute("aria-disabled", String(!available));
+    button.title = available ? `${button.textContent?.trim() || "スキン"}を使用` : "ショップで購入できます";
+  }
+}
+
+function renderShop() {
+  shopWalletDon.textContent = `${profileInventory.don.toLocaleString()} Don`;
+  const bonusText = [
+    `攻撃 +${combatBonuses.attackPercent}%`,
+    `防御 +${combatBonuses.armorPercent}%`,
+    `開始回復 ${combatBonuses.startingHealPacks}`
+  ];
+  shopBenefitStrip.innerHTML = bonusText.map((text) => `<span>${escapeHtml(text)}</span>`).join("");
+  if (!loggedInLoginId || !accountSessionToken) {
+    shopCatalogEl.innerHTML = "<p>購入にはセキュアアカウントへのログインが必要です。</p>";
+    return;
+  }
+  if (!shopEntries.length) {
+    shopCatalogEl.innerHTML = "<p>ショップ情報を同期中です。</p>";
+    return;
+  }
+  const iconLabel = { upgrade: "UP", item: "ITEM", skin: "SKIN" } as const;
+  shopCatalogEl.innerHTML = shopEntries.map((item) => {
+    const status = item.category === "upgrade"
+      ? `Lv.${item.level || 0}/${item.maxLevel || 5}`
+      : item.category === "item"
+        ? `所持 ${item.count || 0}`
+        : item.owned ? "所持済み" : "未所持";
+    const button = item.owned ? "所持済み" : `${Math.max(0, item.cost).toLocaleString()} Don`;
+    return `<article class="shop-item" data-category="${escapeHtml(item.category)}"><span class="shop-item-icon">${iconLabel[item.category]}</span><div class="shop-item-copy"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.description)}</span><small>${escapeHtml(status)}</small></div><button type="button" data-shop-item="${escapeHtml(item.id)}" ${item.owned ? "disabled" : ""}>${escapeHtml(button)}</button></article>`;
+  }).join("");
+}
+
 function applyLoginProfile(profile: LoginProfile) {
   applyingProfile = true;
   const nextName = sanitizeTextInput(profile.name, 14, nameInput.value).replace(/[<>]/g, "");
@@ -1374,8 +1521,6 @@ function applyLoginProfile(profile: LoginProfile) {
     nameInput.value = nextName;
     localStorage.setItem("toybox-name", nextName);
   }
-  if (profile.skin) setSkin(profile.skin);
-  if (profile.cosmeticColor && /^#[0-9a-f]{6}$/i.test(profile.cosmeticColor)) setCustomColor(profile.cosmeticColor);
   if (profile.progress) {
     progressState = normalizeProgressState(profile.progress);
     saveProgressState();
@@ -1384,9 +1529,15 @@ function applyLoginProfile(profile: LoginProfile) {
     profileInventory = normalizeInventory(profile.inventory);
     saveProfileInventory();
   }
+  combatBonuses = normalizeCombatBonuses(profile.bonuses);
+  shopEntries = Array.isArray(profile.shop) ? profile.shop : shopEntries;
+  if (profile.skin) setSkin(profile.skin, true);
+  if (profile.cosmeticColor && /^#[0-9a-f]{6}$/i.test(profile.cosmeticColor)) setCustomColor(profile.cosmeticColor);
   applyingProfile = false;
+  renderSkinOwnership();
+  renderShop();
   refreshBaccaratQaAccess();
-  renderProgressCard(`ログイン済み / 回復${profileInventory.healPacks}個`);
+  renderProgressCard(`ログイン済み / 毎試合 回復${combatBonuses.startingHealPacks}個`);
 }
 
 async function requestProfile(mode: "create" | "login" | "save") {
@@ -1397,23 +1548,105 @@ async function requestProfile(mode: "create" | "login" | "save") {
     loginIdInput.focus();
     return null;
   }
-  const response = await fetch(appHttpUrl("/api/profile"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...currentProfilePayload(), loginId, mode })
-  });
-  const data = await response.json().catch(() => null) as { ok?: boolean; message?: string; profile?: LoginProfile } | null;
+  const password = loginPasswordInput.value;
+  if (mode !== "save" && !accountSessionToken && (password.length < 10 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password))) {
+    showToast("パスワードは英字と数字を含む10文字以上にしてください");
+    loginPasswordInput.focus();
+    return null;
+  }
+  createLoginIdButton.disabled = true;
+  loginProfileButton.disabled = true;
+  let response: Response;
+  try {
+    response = await fetch(appHttpUrl("/api/profile"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        ...currentProfilePayload(),
+        loginId,
+        mode,
+        password: mode === "save" ? "" : password,
+        sessionToken: accountSessionToken,
+        accountVault,
+        legacyMigration: mode === "create" && localStorage.getItem(loginStorageKey) === loginId
+      })
+    });
+  } catch {
+    createLoginIdButton.disabled = false;
+    loginProfileButton.disabled = false;
+    if (mode !== "save") showToast("サーバーに接続できませんでした");
+    return null;
+  }
+  const data = await response.json().catch(() => null) as {
+    ok?: boolean;
+    message?: string;
+    profile?: LoginProfile;
+    sessionToken?: string;
+    accountVault?: string;
+    shop?: ShopEntry[];
+    migrated?: boolean;
+  } | null;
+  createLoginIdButton.disabled = false;
+  loginProfileButton.disabled = false;
   if (!response.ok || !data?.ok || !data.profile) {
-    showToast(data?.message || "ログインに失敗しました");
+    if (mode !== "save") showToast(data?.message || "ログインに失敗しました");
+    if (response.status === 401 && mode === "save") {
+      loginStatus.textContent = "再ログインが必要";
+      loginCard.classList.remove("authenticated");
+    }
     return null;
   }
   loggedInLoginId = loginId;
   localStorage.setItem(loginStorageKey, loginId);
+  saveAccountCredentials(data.sessionToken, data.accountVault);
+  loginPasswordInput.value = "";
   loginStatus.textContent = `ログイン中 Lv.${data.profile.level || 1}`;
+  loginCard.classList.add("authenticated");
+  accountSecurityNote.textContent = "認証済み / 暗号化バックアップ有効";
+  if (Array.isArray(data.shop)) data.profile.shop = data.shop;
   applyLoginProfile(data.profile);
   sharedWalletSyncIdentity = currentSharedWalletIdentity();
   sharedWalletSyncPromise = Promise.resolve(profileInventory.don);
   return data.profile;
+}
+
+async function buyShopItem(itemId: string) {
+  if (!loggedInLoginId || !accountSessionToken) {
+    showToast("ショップを使うにはログインしてください");
+    return;
+  }
+  const button = shopCatalogEl.querySelector<HTMLButtonElement>(`[data-shop-item="${CSS.escape(itemId)}"]`);
+  if (button) button.disabled = true;
+  let response: Response;
+  try {
+    response = await fetch(appHttpUrl("/api/shop"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ loginId: loggedInLoginId, sessionToken: accountSessionToken, accountVault, itemId })
+    });
+  } catch {
+    if (button) button.disabled = false;
+    showToast("ショップに接続できませんでした");
+    return;
+  }
+  const data = await response.json().catch(() => null) as {
+    ok?: boolean;
+    message?: string;
+    profile?: LoginProfile;
+    accountVault?: string;
+    shop?: ShopEntry[];
+  } | null;
+  if (!response.ok || !data?.ok || !data.profile) {
+    if (button) button.disabled = false;
+    showToast(data?.message || "購入できませんでした");
+    return;
+  }
+  saveAccountCredentials(undefined, data.accountVault);
+  if (Array.isArray(data.shop)) data.profile.shop = data.shop;
+  applyLoginProfile(data.profile);
+  showToast(data.message || "購入しました");
 }
 
 function scheduleProfileSync(delay = 650) {
@@ -1449,10 +1682,14 @@ function renderProgressCard(note = "") {
   const remaining = Math.max(0, info.next - progressState.xp);
   progressRank.textContent = `${info.title} Lv.${info.level}`;
   lobbyWalletDonEl.textContent = `${profileInventory.don.toLocaleString()} Don`;
+  lobbyHeaderWallet.textContent = `${profileInventory.don.toLocaleString()} Don`;
+  shopWalletDon.textContent = `${profileInventory.don.toLocaleString()} Don`;
   progressMeter.style.width = `${Math.round(info.progress * 100)}%`;
   progressStats.textContent = `連続 ${progressState.streakDays}日 / 最高 ${progressState.bestScore}pt ${progressState.bestKills}K / バカラ的中${progressState.baccaratWins} / ${profileInventory.don.toLocaleString()}Don`;
   progressHint.textContent = note || (progressState.lastReward ? `${progressState.lastReward} / 次まで ${remaining}XP` : `次のランクまで ${remaining}XP`);
+  combatBonusRow.innerHTML = `<span>攻撃 +${combatBonuses.attackPercent}%</span><span>防御 +${combatBonuses.armorPercent}%</span><span>回復 ${combatBonuses.startingHealPacks}</span>`;
   if (loggedInLoginId) loginStatus.textContent = `ログイン中 Lv.${info.level}`;
+  renderShop();
 }
 
 function touchProgressSession(kind: "fps" | "baccarat") {
@@ -2123,7 +2360,7 @@ function addHealthPickupMesh() {
 
 function powerupColor(kind: PowerupKind) {
   if (kind === "speed") return 0x44d7ff;
-  if (kind === "ammo") return 0xffd23a;
+  if (kind === "heal") return 0x93e43c;
   if (kind === "damage") return 0xff4d4d;
   return 0xff4dff;
 }
@@ -2132,7 +2369,7 @@ function createPowerupMesh(kind: PowerupKind) {
   const color = powerupColor(kind);
   const group = new THREE.Group();
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.72, 0.12, 12), makeMaterial(0xffffff, 0.5));
-  const coreGeometry = kind === "ammo"
+  const coreGeometry = kind === "heal"
     ? new THREE.BoxGeometry(0.58, 0.42, 0.58)
     : kind === "speed"
       ? new THREE.ConeGeometry(0.42, 0.82, 5)
@@ -3862,6 +4099,27 @@ document.addEventListener("touchend", unlockAudioFromGesture, { capture: true, p
 document.addEventListener("click", unlockAudioFromGesture, { capture: true });
 document.addEventListener("keydown", unlockAudioFromGesture, { capture: true });
 
+function setLobbyTab(tab: "match" | "shop") {
+  const showShop = tab === "shop";
+  lobbyMatchTab.classList.toggle("active", !showShop);
+  lobbyShopTab.classList.toggle("active", showShop);
+  lobbyMatchTab.setAttribute("aria-selected", String(!showShop));
+  lobbyShopTab.setAttribute("aria-selected", String(showShop));
+  lobbyMatchPane.classList.toggle("active", !showShop);
+  lobbyShopPane.classList.toggle("active", showShop);
+  lobbyMatchPane.hidden = showShop;
+  lobbyShopPane.hidden = !showShop;
+  if (showShop) renderShop();
+}
+
+lobbyMatchTab.addEventListener("click", () => setLobbyTab("match"));
+lobbyShopTab.addEventListener("click", () => setLobbyTab("shop"));
+shopCatalogEl.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-shop-item]");
+  if (!button?.dataset.shopItem) return;
+  void buyShopItem(button.dataset.shopItem);
+});
+
 createRoomButton.addEventListener("click", () => { void join(""); });
 joinRoomButton.addEventListener("click", () => joinTypedRoom());
 joinBaccaratRoomButton.addEventListener("click", () => { void joinBaccarat(false); });
@@ -4583,13 +4841,21 @@ setArenaChoice(arenaChoice);
 setPartySize(partySize);
 setCpuFill(cpuFillEnabled);
 setRelationMode(relationMode);
-setSkin(currentSkin);
+setSkin(currentSkin, true);
+renderSkinOwnership();
+renderShop();
 showPwaSplashIfNeeded();
 async function initializeLobbyWallet() {
-  if (loggedInLoginId) {
+  if (loggedInLoginId && accountSessionToken) {
     loginStatus.textContent = "自動ログイン中";
     const profile = await requestProfile("login").catch(() => null);
     if (!profile) loginStatus.textContent = "ログイン確認が必要";
+  } else if (loggedInLoginId) {
+    loginStatus.textContent = "パスワード登録が必要";
+    accountSecurityNote.textContent = "新規作成・移行からパスワードを登録すると、今後の更新でもデータを復元できます。";
+    renderProgressCard("セキュリティ移行待ち / ローカルデータ保持中");
+    window.setTimeout(maybeStartInviteAutoJoin, 0);
+    return;
   }
   try {
     await syncSharedWallet();
@@ -4710,6 +4976,8 @@ function fpsJoinPayload() {
     cosmeticColor: customColor,
     skin: currentSkin,
     loginId: loggedInLoginId,
+    sessionToken: accountSessionToken,
+    accountVault,
     progress: progressState,
     inventory: profileInventory,
     guestToken: guestWalletToken,
@@ -4855,6 +5123,8 @@ function openBaccaratSocket() {
       type: "baccarat_join",
       name: sanitizePlayerNameInput(),
       loginId: loggedInLoginId,
+      sessionToken: accountSessionToken,
+      accountVault,
       guestToken: guestWalletToken,
       cosmeticColor: customColor,
       skin: currentSkin,
@@ -4999,8 +5269,9 @@ function handleMessage(event: MessageEvent<string>) {
     history.replaceState(null, "", baccaratQaMode
       ? `?play=baccarat&room=${tableCode}&join=1&baccaratQa=1`
       : `?play=baccarat&room=${globalBaccaratTableCode}&join=1`);
+    saveAccountCredentials(undefined, typeof message.accountVault === "string" ? message.accountVault : undefined);
     if (message.profile) applyLoginProfile(message.profile as LoginProfile);
-    if (firstEntry && !baccaratQaMode) touchProgressSession("baccarat");
+    if (firstEntry && !baccaratQaMode && !loggedInLoginId) touchProgressSession("baccarat");
     showToast(firstEntry
       ? baccaratQaMode ? "検証卓に参加しました。仮想Don・報酬なしです。" : "公開CHAOSルールの共通バカラに参加しました。"
       : baccaratQaMode ? "検証卓へ再接続しました。" : "バカラ卓へ再接続しました。");
@@ -5015,7 +5286,7 @@ function handleMessage(event: MessageEvent<string>) {
     }
     renderBaccarat(latestBaccaratSnapshot);
     syncBaccaratSnapshotAudio(latestBaccaratSnapshot);
-    if (!baccaratQaMode) awardBaccaratProgress(latestBaccaratSnapshot);
+    if (!baccaratQaMode && !loggedInLoginId) awardBaccaratProgress(latestBaccaratSnapshot);
     return;
   }
   if (message.type === "baccarat_error") {
@@ -5042,6 +5313,7 @@ function handleMessage(event: MessageEvent<string>) {
     fpsReconnectAttempt = 0;
     setConnectionRecovery(false);
     if (!resumed) {
+      lastFpsProgressReward = { gained: 0, leveled: false, level: progressInfo().level, reason: "" };
       serverClockReady = false;
       lastSnapshotArrivalAt = 0;
       snapshotJitterMs = 0;
@@ -5090,6 +5362,7 @@ function handleMessage(event: MessageEvent<string>) {
     setArenaChoice(arenaChoice);
     if (!resumed || currentArena !== arenaChoice) switchArena(arenaChoice);
     setTeamChoice((message.team as TeamChoice) || teamChoice);
+    saveAccountCredentials(undefined, typeof message.accountVault === "string" ? message.accountVault : undefined);
     if (message.profile) applyLoginProfile(message.profile as LoginProfile);
     roomCodeEl.textContent = self.room;
     roomInput.value = self.room;
@@ -5101,7 +5374,7 @@ function handleMessage(event: MessageEvent<string>) {
     playerMotionTracks.clear();
     vehicleMotionTracks.clear();
     renderedPlayerMotion.clear();
-    if (!resumed) touchProgressSession("fps");
+    if (!resumed && !loggedInLoginId) touchProgressSession("fps");
     showToast(resumed ? "接続を復旧しました" : "ルームに参加しました。画面をクリックして開始。");
     ping();
     return;
@@ -5109,11 +5382,33 @@ function handleMessage(event: MessageEvent<string>) {
   if (message.type === "fps_don_reward") {
     const amount = Math.max(0, Math.floor(Number(message.amount) || 0));
     const balance = THREE.MathUtils.clamp(Math.floor(Number(message.balance) || profileInventory.don), 0, 999999);
-    profileInventory.don = balance;
-    saveProfileInventory();
-    renderProgressCard(`+${amount}Don FPS報酬 / 残高 ${balance.toLocaleString()}Don`);
+    const previousLevel = progressInfo().level;
+    saveAccountCredentials(undefined, typeof message.accountVault === "string" ? message.accountVault : undefined);
+    if (message.profile) applyLoginProfile(message.profile as LoginProfile);
+    else {
+      profileInventory.don = balance;
+      saveProfileInventory();
+      if (!loggedInLoginId) awardProgressXp(Math.max(0, Math.floor(Number(message.xp) || 0)), "キル・戦績報酬");
+    }
+    const gainedXp = Math.max(0, Math.floor(Number(message.xp) || 0));
+    lastFpsProgressReward = {
+      gained: gainedXp,
+      leveled: progressInfo().level > previousLevel,
+      level: progressInfo().level,
+      reason: "キル・戦績報酬"
+    };
+    renderProgressCard(`+${gainedXp}XP / +${amount}Don / 残高 ${balance.toLocaleString()}Don`);
     const breakdown = message.breakdown as { kills?: number; damage?: number; items?: number; won?: boolean } | undefined;
-    showToast(`+${amount}Don / ${breakdown?.kills || 0}K 与${breakdown?.damage || 0} 拾${breakdown?.items || 0}${breakdown?.won ? " 勝利" : ""}`);
+    showToast(`+${gainedXp}XP +${amount}Don / ${breakdown?.kills || 0}K 与${breakdown?.damage || 0} 拾${breakdown?.items || 0}${breakdown?.won ? " 勝利" : ""}`);
+    if (resultPanel.classList.contains("open")) {
+      resultProgress.innerHTML = resultProgressHtml(lastFpsProgressReward);
+      resultProgress.classList.toggle("show", gainedXp > 0);
+    }
+    return;
+  }
+  if (message.type === "account_sync") {
+    saveAccountCredentials(undefined, typeof message.accountVault === "string" ? message.accountVault : undefined);
+    if (message.profile) applyLoginProfile(message.profile as LoginProfile);
     return;
   }
   if (message.type === "snapshot") {
@@ -6159,11 +6454,13 @@ function move(delta: number) {
   if (reloadTimer > 0) {
     reloadTimer -= delta;
     if (reloadTimer <= 0) {
-      const needed = currentGun().magSize - self.ammo;
-      const loaded = Math.min(needed, self.reserve);
-      self.ammo += loaded;
-      self.reserve -= loaded;
-      saveCurrentWeaponAmmo();
+      const completedIndex = reloadWeaponIndex;
+      reloadWeaponIndex = -1;
+      if (completedIndex >= 0 && completedIndex < guns.length) {
+        weaponAmmoStates[completedIndex].ammo = guns[completedIndex].magSize;
+        weaponAmmoStates[completedIndex].reserve = unlimitedReserveAmmo;
+        if (completedIndex === currentGunIndex) loadCurrentWeaponAmmo();
+      }
     }
   }
 }
@@ -6249,6 +6546,7 @@ function resetSelf() {
   self.health = maxHealth;
   resetWeaponAmmo();
   reloadTimer = 0;
+  reloadWeaponIndex = -1;
   trampolineBoostStep = 0;
   trampolineChainActive = false;
   scoped = false;
@@ -6444,8 +6742,9 @@ function updateShellCasings(delta: number) {
 }
 
 function reload() {
-  if (reloadTimer > 0 || self.ammo === currentGun().magSize || self.reserve <= 0) return;
+  if (reloadTimer > 0 || self.ammo === currentGun().magSize) return;
   reloadTimer = 1.15;
+  reloadWeaponIndex = currentGunIndex;
   playReloadSound();
   showToast("リロード");
 }
@@ -6460,6 +6759,7 @@ function switchGun(index: number) {
   scoped = false;
   document.body.classList.remove("scoped");
   reloadTimer = 0;
+  reloadWeaponIndex = -1;
   addWeapon();
   showToast(`${currentGun().name} / 飛距離 ${currentGun().range}m`);
 }
@@ -6567,7 +6867,7 @@ function showResults(name: string) {
   resultWinnerSeen = name;
   resultTitle.textContent = `${name} 勝利 - リザルト`;
   const rows = [...players.values()].sort((a, b) => b.score - a.score || b.kills - a.kills || (b.damageDealt || 0) - (a.damageDealt || 0));
-  const reward = awardRoundProgress(name, rows);
+  const reward = lastFpsProgressReward;
   resultRows.innerHTML = rows.map((player, index) => `
     <div class="result-row ${player.color}">
       <span>#${index + 1} ${escapeHtml(player.name)}</span>
@@ -7631,12 +7931,8 @@ function updatePowerups(powerups: PowerupSnapshot[]) {
 }
 
 function applyPowerupPickup(kind: PowerupKind) {
-  if (kind === "ammo") {
-    self.reserve = Math.max(self.reserve, currentGun().magSize * 4);
-    self.ammo = currentGun().magSize;
-    saveCurrentWeaponAmmo();
-    reloadTimer = 0;
-    showToast("弾薬パック取得");
+  if (kind === "heal") {
+    showToast("メディカルキット取得 / HP+40・回復+1");
   } else if (kind === "speed") {
     showToast("スピードブースト取得");
   } else if (kind === "damage") {
@@ -7961,7 +8257,7 @@ function updateHud(feed: FeedItem[]) {
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
   ammoEl.textContent = reloadTimer > 0 ? "--" : String(self.ammo);
-  reserveAmmoEl.textContent = String(self.reserve);
+  reserveAmmoEl.textContent = "∞";
   const gearTier = Math.max(0, Math.floor(Number(me?.equipmentTier) || 0));
   const gearText = gearTier > 0 ? ` / 装備Lv.${gearTier}` : "";
   const activeVehicle = activeVehicleId ? vehicleSnapshots.get(activeVehicleId) : null;

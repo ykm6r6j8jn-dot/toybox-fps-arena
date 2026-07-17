@@ -109,8 +109,8 @@ try {
   });
   await waitFor(() => impacts.some((impact) => impact.point?.y > 5.3 && impact.point?.y < 5.7), "elevator platform blocks projectiles");
 
-  send({ type: "set_cpu", count: 19 });
-  await waitFor(() => latest()?.players?.filter((player) => player.isBot).length === 19, "19 CP vertical opponents", 9000);
+  send({ type: "set_cpu", count: 13 });
+  await waitFor(() => latest()?.players?.filter((player) => player.isBot).length === 13, "13 CP vertical opponents", 9000);
   send({ type: "ready", ready: true });
   await waitFor(() => latest()?.matchPhase === "active", "vertical CP match restarts after CPU fill", 7000);
   send({ type: "creative_toggle", enabled: true });
@@ -160,7 +160,7 @@ try {
 
   send({ type: "leave" });
   await delay(80);
-  console.log("vertical live passed: remote lift use rejected, two lifts synchronized, arrival and projectile collision completed, 19 CPs climbed without warping");
+  console.log("vertical live passed: remote lift use rejected, two lifts synchronized, arrival and projectile collision completed, 13 CPs climbed without warping");
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close(1000, "cleanup");
   if (server.exitCode === null) server.kill("SIGTERM");

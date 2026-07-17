@@ -12,7 +12,12 @@ async function startManagedServer() {
   endpoint = `ws://127.0.0.1:${port}/ws`;
   managedServer = spawn(process.execPath, ["server.mjs"], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
-    env: { ...process.env, PORT: String(port), NODE_ENV: "test" },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      NODE_ENV: "production",
+      DONPACHI_ACCOUNT_SECRET: "smoke-test-account-secret-2026"
+    },
     stdio: ["ignore", "pipe", "pipe"]
   });
   managedServer.stdout.on("data", (chunk) => {

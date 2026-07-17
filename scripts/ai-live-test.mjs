@@ -75,7 +75,7 @@ try {
     ws.on("error", reject);
   });
 
-  await waitFor(() => snapshots.some((snapshot) => snapshot.players?.filter((player) => player.isBot).length === 19), "19 tactical CPs", 8000);
+  await waitFor(() => snapshots.some((snapshot) => snapshot.players?.filter((player) => player.isBot).length === 13), "13 tactical CPs", 8000);
   ws.send(JSON.stringify({ type: "ready", ready: true }));
   await waitFor(() => snapshots.at(-1)?.matchPhase === "active", "AI room enters active combat", 7000);
   snapshots.length = 0;
@@ -85,7 +85,7 @@ try {
   assert.ok(tacticalSnapshots.length >= 20, "server must continuously publish tactical snapshots");
   const latest = tacticalSnapshots.at(-1);
   const bots = latest.players.filter((player) => player.isBot);
-  assert.equal(bots.length, 19);
+  assert.equal(bots.length, 13);
   assert.deepEqual(new Set(bots.map((bot) => bot.botRole)), new Set(["assault", "support", "flanker", "marksman"]));
   assert.ok(bots.every((bot) => ["patrol", "objective", "zone", "push", "hold", "strafe", "flank", "retreat"].includes(bot.botTactic)));
   assert.ok(tacticalSnapshots.some((snapshot) => snapshot.players.some((player) => player.isBot && player.botTactic !== "patrol")), "at least one CP must enter a combat tactic");
@@ -112,7 +112,7 @@ try {
       tracks.set(bot.id, { x: bot.x, z: bot.z, now: snapshot.now });
     }
   }
-  assert.ok([...tracks.values()].length === 19);
+  assert.ok([...tracks.values()].length === 13);
   assert.ok(minimumHumanDistance >= 2, `CP crossed the first-person safety radius: ${minimumHumanDistance.toFixed(2)}m ${JSON.stringify(minimumHumanDistanceAt)}`);
   assert.ok(tacticalSnapshots.some((snapshot, index) => {
     if (index < 1) return false;
@@ -131,12 +131,12 @@ try {
     assert.equal(response.ok, true);
     healthLatencies.push(performance.now() - startedAt);
   }
-  assert.ok(Math.max(...healthLatencies) < 250, "19 CPs must not stall the health endpoint");
+  assert.ok(Math.max(...healthLatencies) < 250, "13 CPs must not stall the health endpoint");
 
   ws.send(JSON.stringify({ type: "leave" }));
   await delay(80);
   ws.close(1000, "done");
-  console.log(`AI live passed: room ${welcome.room}, 19 CPs, 4 roles, tactical movement, ${shots.length} visible shots, min player gap ${minimumHumanDistance.toFixed(2)}m, max health latency ${Math.max(...healthLatencies).toFixed(1)}ms`);
+  console.log(`AI live passed: room ${welcome.room}, 13 CPs, 4 roles, tactical movement, ${shots.length} visible shots, min player gap ${minimumHumanDistance.toFixed(2)}m, max health latency ${Math.max(...healthLatencies).toFixed(1)}ms`);
 } catch (error) {
   throw new Error(`${error.message}\n${serverOutput}`);
 } finally {

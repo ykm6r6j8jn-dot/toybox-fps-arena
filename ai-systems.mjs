@@ -1,10 +1,10 @@
 const CPU_ROLE_LIST = Object.freeze(["assault", "support", "flanker", "marksman"]);
 
 const CPU_ROLE_PROFILES = Object.freeze({
-  assault: Object.freeze({ minRange: 15, idealRange: 28, maxRange: 42, reactionMs: 410, decisionMs: 650, memoryMs: 2100 }),
-  support: Object.freeze({ minRange: 22, idealRange: 37, maxRange: 52, reactionMs: 490, decisionMs: 760, memoryMs: 2500 }),
-  flanker: Object.freeze({ minRange: 8, idealRange: 20, maxRange: 34, reactionMs: 470, decisionMs: 820, memoryMs: 2900 }),
-  marksman: Object.freeze({ minRange: 34, idealRange: 54, maxRange: 70, reactionMs: 610, decisionMs: 930, memoryMs: 2400 })
+  assault: Object.freeze({ minRange: 15, idealRange: 28, maxRange: 42, reactionMs: 465, decisionMs: 690, memoryMs: 2100 }),
+  support: Object.freeze({ minRange: 22, idealRange: 37, maxRange: 52, reactionMs: 550, decisionMs: 805, memoryMs: 2500 }),
+  flanker: Object.freeze({ minRange: 8, idealRange: 20, maxRange: 34, reactionMs: 530, decisionMs: 865, memoryMs: 2900 }),
+  marksman: Object.freeze({ minRange: 34, idealRange: 54, maxRange: 70, reactionMs: 690, decisionMs: 985, memoryMs: 2400 })
 });
 
 const TACTICS = new Set(["patrol", "objective", "zone", "push", "hold", "strafe", "flank", "retreat"]);
@@ -199,7 +199,7 @@ export function cpuFireDelayMultiplier(role = "assault", index = 0) {
     flanker: 1.02,
     marksman: 1.08
   }[roleName(role)];
-  return base + Math.abs(Math.floor(finite(index))) % 3 * 0.035;
+  return base + 0.065 + Math.abs(Math.floor(finite(index))) % 3 * 0.04;
 }
 
 export function cpuCanFire({ now = 0, targetSeenAt = 0, visible = false, distance = Infinity, range = 0, reactionDelay = 0 } = {}) {

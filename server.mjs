@@ -1,7 +1,17 @@
 import { createServer } from "node:http";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { createHash, randomInt as cryptoRandomInt } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt as cryptoRandomInt,
+  scrypt as scryptCallback,
+  timingSafeEqual
+} from "node:crypto";
+import { promisify } from "node:util";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
@@ -29,6 +39,16 @@ import {
 import { appendMotionSample, rewindPose } from "./network-systems.mjs";
 import { hitZoneDamage, resolveHumanoidHit } from "./combat-systems.mjs";
 import { clampMovementRequest, isNearToyboxTrampoline, wrapAngle } from "./movement-systems.mjs";
+import {
+  calculateFpsXpReward,
+  levelFromProgressXp,
+  progressionBonuses,
+  progressionVersion,
+  publicShopState,
+  purchaseShopItem,
+  sanitizeOwnedSkins,
+  sanitizeUpgrades
+} from "./progression-systems.mjs";
 import {
   createDoorState,
   distanceToDoor,
@@ -72,6 +92,17 @@ const configuredPrivilegedLoginIdHash = String(process.env.DONPACHI_PRIVILEGED_L
 const privilegedLoginIdHash = /^[a-f0-9]{64}$/.test(configuredPrivilegedLoginIdHash)
   ? configuredPrivilegedLoginIdHash
   : "909f5cb6161de820bee3aa5e94b9ef77d21a6f94578c1b39154364558acbcb38";
+const configuredAccountSecret = String(process.env.DONPACHI_ACCOUNT_SECRET || "").trim();
+const accountSecret = configuredAccountSecret.length >= 32
+  ? configuredAccountSecret
+  : createHash("sha256").update(`donpachi-account-fallback:${privilegedLoginIdHash}`).digest("hex");
+const accountEncryptionKey = createHash("sha256").update(accountSecret).digest();
+const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1000;
+const authRateWindowMs = 10 * 60 * 1000;
+const authRateMaxAttempts = 8;
+const authLockMs = 5 * 60 * 1000;
+const scryptAsync = promisify(scryptCallback);
+const authRateLimits = new Map();
 
 function isPrivilegedLoginId(loginId) {
   const normalized = normalizeLoginId(loginId);
@@ -81,11 +112,14 @@ function isPrivilegedLoginId(loginId) {
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isProd = process.env.NODE_ENV === "production";
+if (isProd && configuredAccountSecret.length < 32) {
+  console.warn("DONPACHI_ACCOUNT_SECRET is not configured; set a 32+ character secret before public account use.");
+}
 const port = Number(process.env.PORT || 5188);
 const exposeQaState = process.env.DONPACHI_QA_STATE === "1";
 const maxPlayers = 20;
 const globalFpsRoomCode = "DONPCH";
-const maxCpuPlayers = 19;
+const maxCpuPlayers = 13;
 const maxWsMessageBytes = 8192;
 const maxHttpJsonBytes = 12_288;
 const pokerStartingChips = 2000;
@@ -115,11 +149,11 @@ const vehicleRepairPerSecond = 72;
 const reconnectGraceMs = 15_000;
 const lagCompensationMs = 220;
 const barrierSpawn = { x: -88, y: 1.6, z: 82 };
-const powerupRespawnMs = 18_000;
+const powerupRespawnMs = 10_000;
 const powerupDurationMs = 10_000;
 const focusTaskDurationMs = 52_000;
 const focusTaskCooldownMs = 8_000;
-const powerupKinds = ["speed", "ammo", "damage", "comeback"];
+const powerupKinds = ["speed", "heal", "damage", "comeback"];
 const powerupSpawns = [
   { x: -58, y: 1.6, z: -24 },
   { x: 42, y: 1.6, z: -58 },
@@ -201,7 +235,7 @@ const cpuWeaponMaxRange = new Map([
   ["type95", 50],
   ["cpu", 26]
 ]);
-const cpuDamageMultiplier = 0.54;
+const cpuDamageMultiplier = 0.5;
 const cpuCastleDamageMultiplier = 0.52;
 const maxEquipmentTier = 5;
 const allowedWeapons = new Set(weaponDamage.keys());
@@ -510,11 +544,11 @@ function securityHeaders(contentType = "text/plain; charset=utf-8") {
   return {
     "content-type": contentType,
     "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
     "referrer-policy": "no-referrer",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type",
     "content-security-policy": "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
   };
 }
@@ -627,6 +661,193 @@ function profileHash(loginId) {
   return createHash("sha256").update(`donpachi-profile-v1:${loginId}`).digest("hex");
 }
 
+function encodeTokenPart(value) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function decodeTokenPart(value) {
+  return Buffer.from(String(value || ""), "base64url");
+}
+
+function signedAccountToken(payload) {
+  const body = encodeTokenPart(JSON.stringify(payload));
+  const signature = createHmac("sha256", accountSecret).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+function verifySignedAccountToken(token) {
+  const [body, signature, extra] = String(token || "").split(".");
+  if (!body || !signature || extra) return null;
+  const expected = createHmac("sha256", accountSecret).update(body).digest();
+  let provided;
+  try {
+    provided = decodeTokenPart(signature);
+  } catch {
+    return null;
+  }
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) return null;
+  try {
+    return JSON.parse(decodeTokenPart(body).toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function issueAccountSession(profileKey) {
+  return signedAccountToken({
+    version: 1,
+    profileKey,
+    expiresAt: Date.now() + sessionLifetimeMs,
+    nonce: randomBytes(12).toString("base64url")
+  });
+}
+
+function verifyAccountSession(token, profileKey) {
+  const payload = verifySignedAccountToken(token);
+  return Boolean(
+    payload
+    && payload.version === 1
+    && payload.profileKey === profileKey
+    && Number(payload.expiresAt) > Date.now()
+  );
+}
+
+function sealProfileVault(profileKey, profile) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", accountEncryptionKey, iv);
+  const plaintext = Buffer.from(JSON.stringify({ version: 2, profileKey, profile }), "utf8");
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, encrypted].map((part) => part.toString("base64url")).join(".");
+}
+
+function openProfileVault(vault) {
+  const parts = String(vault || "").split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const [iv, tag, encrypted] = parts.map((part) => Buffer.from(part, "base64url"));
+    if (iv.length !== 12 || tag.length !== 16 || encrypted.length > 32_768) return null;
+    const decipher = createDecipheriv("aes-256-gcm", accountEncryptionKey, iv);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    const payload = JSON.parse(plaintext.toString("utf8"));
+    return payload?.version === 2 ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function restoreProfileFromVault(loginId, vault) {
+  const normalized = normalizeLoginId(loginId);
+  if (normalized.length < 6 || !vault) return null;
+  const expectedKey = profileHash(normalized);
+  const payload = openProfileVault(vault);
+  if (!payload || payload.profileKey !== expectedKey || !payload.profile?.auth?.passwordHash || !payload.profile?.auth?.salt) return null;
+  const restored = {
+    ...makeProfile(),
+    ...payload.profile,
+    name: sanitizePlayerName(payload.profile.name),
+    skin: normalizeSkin(payload.profile.skin),
+    cosmeticColor: safeColor(payload.profile.cosmeticColor) || "#1598f0",
+    progress: sanitizeProgress(payload.profile.progress),
+    inventory: sanitizeInventory(payload.profile.inventory, payload.profile.skin),
+    auth: sanitizeStoredAuth(payload.profile.auth),
+    updatedAt: Math.max(0, Number(payload.profile.updatedAt) || Date.now())
+  };
+  if (!restored.auth.passwordHash) return null;
+  const existing = profileStore.profiles[expectedKey];
+  const existingAuth = sanitizeStoredAuth(existing?.auth);
+  const sameAccount = !existingAuth.passwordHash || existingAuth.passwordHash === restored.auth.passwordHash;
+  if (!existing || (sameAccount && restored.updatedAt > (Number(existing.updatedAt) || 0))) {
+    profileStore.profiles[expectedKey] = restored;
+    saveProfileSoon();
+  }
+  return { key: expectedKey, profile: profileStore.profiles[expectedKey] };
+}
+
+function authenticatedProfileRecord(loginId, sessionToken, vault) {
+  const normalized = normalizeLoginId(loginId);
+  if (normalized.length < 6) return null;
+  const key = profileHash(normalized);
+  if (!verifyAccountSession(sessionToken, key)) return null;
+  const record = restoreProfileFromVault(normalized, vault) || getProfileRecord(normalized);
+  if (!record || record.key !== key) return null;
+  return record;
+}
+
+function normalizePassword(value) {
+  return String(value || "").normalize("NFKC").slice(0, 72);
+}
+
+function validPassword(password) {
+  return password.length >= 10 && /[A-Za-z]/.test(password) && /[0-9]/.test(password);
+}
+
+function sanitizeStoredAuth(auth = {}) {
+  if (!auth || typeof auth !== "object") auth = {};
+  const salt = /^[A-Za-z0-9_-]{16,64}$/.test(String(auth.salt || "")) ? String(auth.salt) : "";
+  const passwordHash = /^[A-Za-z0-9_-]{40,128}$/.test(String(auth.passwordHash || "")) ? String(auth.passwordHash) : "";
+  return {
+    salt,
+    passwordHash,
+    failedAttempts: clamp(Math.floor(Number(auth.failedAttempts) || 0), 0, 20),
+    lockUntil: clamp(Math.floor(Number(auth.lockUntil) || 0), 0, Number.MAX_SAFE_INTEGER),
+    passwordUpdatedAt: clamp(Math.floor(Number(auth.passwordUpdatedAt) || 0), 0, Number.MAX_SAFE_INTEGER)
+  };
+}
+
+async function createPasswordAuth(password) {
+  const salt = randomBytes(18).toString("base64url");
+  const derived = await scryptAsync(password, salt, 64, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  return {
+    salt,
+    passwordHash: Buffer.from(derived).toString("base64url"),
+    failedAttempts: 0,
+    lockUntil: 0,
+    passwordUpdatedAt: Date.now()
+  };
+}
+
+async function verifyPassword(password, auth) {
+  const stored = sanitizeStoredAuth(auth);
+  const salt = stored.salt || "donpachi-dummy-auth";
+  const expected = stored.passwordHash ? Buffer.from(stored.passwordHash, "base64url") : Buffer.alloc(64);
+  const derived = Buffer.from(await scryptAsync(password, salt, 64, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }));
+  return Boolean(stored.passwordHash && expected.length === derived.length && timingSafeEqual(expected, derived));
+}
+
+function requestAddress(req) {
+  const forwardedParts = String(req.headers?.["x-forwarded-for"] || "").split(",").map((part) => part.trim()).filter(Boolean);
+  const forwarded = forwardedParts.at(-1) || "";
+  return forwarded || String(req.socket?.remoteAddress || "unknown");
+}
+
+function authRateAllowed(req, loginId) {
+  const now = Date.now();
+  if (authRateLimits.size > 5_000) {
+    for (const [storedKey, entry] of authRateLimits) {
+      if (entry.resetAt <= now) authRateLimits.delete(storedKey);
+    }
+    while (authRateLimits.size > 5_000) authRateLimits.delete(authRateLimits.keys().next().value);
+  }
+  const key = `${requestAddress(req)}:${profileHash(normalizeLoginId(loginId))}`;
+  const current = authRateLimits.get(key);
+  const next = !current || current.resetAt <= now ? { count: 0, resetAt: now + authRateWindowMs } : current;
+  next.count += 1;
+  authRateLimits.set(key, next);
+  return next.count <= authRateMaxAttempts;
+}
+
+function accountResponse(record, sessionToken = "") {
+  return {
+    profile: publicProfile(record.profile),
+    sessionToken: sessionToken || issueAccountSession(record.key),
+    accountVault: sealProfileVault(record.key, record.profile),
+    shop: publicShopState(record.profile.inventory),
+    progressionVersion
+  };
+}
+
 function emptyProgress() {
   return {
     xp: 0,
@@ -654,7 +875,7 @@ function sanitizeProgress(progress = {}) {
   };
 }
 
-function sanitizeInventory(inventory = {}) {
+function sanitizeInventory(inventory = {}, selectedSkin = "rounded") {
   const healPacks = Number.isFinite(Number(inventory.healPacks)) ? Number(inventory.healPacks) : initialHealPacks;
   const storedDon = inventory.don ?? inventory.pokerDon;
   const don = Number.isFinite(Number(storedDon)) ? Number(storedDon) : initialSharedDon;
@@ -662,12 +883,14 @@ function sanitizeInventory(inventory = {}) {
     healPacks: clamp(Math.floor(healPacks), 0, 12),
     don: clamp(Math.floor(don), 0, 999_999),
     barrierCharges: clamp(Math.floor(Number(inventory.barrierCharges) || 0), 0, 9),
-    boostTickets: clamp(Math.floor(Number(inventory.boostTickets) || 0), 0, 99)
+    boostTickets: clamp(Math.floor(Number(inventory.boostTickets) || 0), 0, 20),
+    upgrades: sanitizeUpgrades(inventory.upgrades),
+    ownedSkins: sanitizeOwnedSkins(inventory.ownedSkins, selectedSkin)
   };
 }
 
 function levelFromXp(xp = 0) {
-  return Math.floor(Math.sqrt(Math.max(0, Number(xp) || 0) / 120)) + 1;
+  return levelFromProgressXp(xp);
 }
 
 function makeProfile() {
@@ -678,6 +901,7 @@ function makeProfile() {
     cosmeticColor: "#1598f0",
     progress: emptyProgress(),
     inventory: sanitizeInventory(),
+    auth: sanitizeStoredAuth(),
     createdAt: now,
     updatedAt: now
   };
@@ -687,11 +911,11 @@ async function loadProfileStore() {
   try {
     const parsed = JSON.parse(await readFile(profileStorePath, "utf8"));
     return {
-      version: 1,
+      version: 2,
       profiles: parsed && typeof parsed.profiles === "object" && parsed.profiles ? parsed.profiles : {}
     };
   } catch {
-    return { version: 1, profiles: {} };
+    return { version: 2, profiles: {} };
   }
 }
 
@@ -720,12 +944,16 @@ function getOrCreateProfile(loginId) {
   return { key, profile: profileStore.profiles[key] };
 }
 
-function mergeProfile(profile, payload = {}) {
+function mergeProfile(profile, payload = {}, options = {}) {
   if (!profile) return null;
   if (payload.name !== undefined) profile.name = sanitizePlayerName(payload.name);
-  if (payload.skin !== undefined) profile.skin = normalizeSkin(payload.skin);
+  if (payload.skin !== undefined) {
+    const requestedSkin = normalizeSkin(payload.skin);
+    const ownedSkins = sanitizeInventory(profile.inventory, profile.skin).ownedSkins;
+    if (ownedSkins.includes(requestedSkin) || options.allowLegacySkin) profile.skin = requestedSkin;
+  }
   if (payload.cosmeticColor !== undefined) profile.cosmeticColor = safeColor(payload.cosmeticColor) || profile.cosmeticColor || "#1598f0";
-  if (payload.progress && typeof payload.progress === "object") {
+  if (options.allowProgress && payload.progress && typeof payload.progress === "object") {
     const next = sanitizeProgress(payload.progress);
     const current = sanitizeProgress(profile.progress);
     profile.progress = {
@@ -742,37 +970,92 @@ function mergeProfile(profile, payload = {}) {
   } else {
     profile.progress = sanitizeProgress(profile.progress);
   }
-  if (payload.inventory && typeof payload.inventory === "object") {
-    const next = sanitizeInventory(payload.inventory);
-    const current = sanitizeInventory(profile.inventory);
+  if (options.allowInventory && payload.inventory && typeof payload.inventory === "object") {
+    const next = sanitizeInventory(payload.inventory, profile.skin);
+    const current = sanitizeInventory(profile.inventory, profile.skin);
     profile.inventory = {
       healPacks: clamp(Math.floor(Number(next.healPacks)), 0, 12),
-      don: current.don,
+      don: options.allowDon ? Math.max(current.don, next.don) : current.don,
       barrierCharges: Math.max(current.barrierCharges, next.barrierCharges),
-      boostTickets: Math.max(current.boostTickets, next.boostTickets)
+      boostTickets: Math.max(current.boostTickets, next.boostTickets),
+      upgrades: {
+        attack: Math.max(current.upgrades.attack, next.upgrades.attack),
+        armor: Math.max(current.upgrades.armor, next.upgrades.armor),
+        recovery: Math.max(current.upgrades.recovery, next.upgrades.recovery)
+      },
+      ownedSkins: sanitizeOwnedSkins([...current.ownedSkins, ...next.ownedSkins], profile.skin)
     };
   } else {
-    profile.inventory = sanitizeInventory(profile.inventory);
+    profile.inventory = sanitizeInventory(profile.inventory, profile.skin);
   }
+  profile.auth = sanitizeStoredAuth(profile.auth);
   profile.updatedAt = Date.now();
   return profile;
 }
 
 function publicProfile(profile) {
   const progress = sanitizeProgress(profile?.progress);
-  const inventory = sanitizeInventory(profile?.inventory);
+  const inventory = sanitizeInventory(profile?.inventory, profile?.skin);
+  const bonuses = progressionBonuses(progress.xp, inventory.upgrades);
   return {
     name: sanitizePlayerName(profile?.name),
     skin: normalizeSkin(profile?.skin),
     cosmeticColor: safeColor(profile?.cosmeticColor) || "#1598f0",
     level: levelFromXp(progress.xp),
     progress,
-    inventory
+    inventory,
+    bonuses,
+    shop: publicShopState(inventory),
+    progressionVersion
   };
 }
 
 function profileForPlayer(player) {
   return player?.profileKey ? profileStore.profiles[player.profileKey] : null;
+}
+
+function combatBonusesForProfile(profile) {
+  const progress = sanitizeProgress(profile?.progress);
+  const inventory = sanitizeInventory(profile?.inventory, profile?.skin);
+  return progressionBonuses(progress.xp, inventory.upgrades);
+}
+
+function applyPersistentCombatBonuses(player) {
+  if (!player || player.isBot) return;
+  const profile = profileForPlayer(player);
+  const bonuses = combatBonusesForProfile(profile);
+  player.profileAttackMultiplier = bonuses.attackMultiplier;
+  player.damageReduction = bonuses.damageReduction;
+  player.healPacks = bonuses.startingHealPacks;
+  player.equipmentTier = bonuses.startingEquipmentTier;
+}
+
+function consumeMatchItems(player, now = Date.now()) {
+  if (!player || player.isBot) return false;
+  const profile = profileForPlayer(player);
+  if (!profile) return false;
+  const inventory = sanitizeInventory(profile.inventory, profile.skin);
+  let changed = false;
+  if (inventory.barrierCharges > 0) {
+    inventory.barrierCharges -= 1;
+    player.shieldUntil = Math.max(player.shieldUntil || 0, now + barrierDurationMs);
+    changed = true;
+  }
+  if (inventory.boostTickets > 0) {
+    inventory.boostTickets -= 1;
+    player.speedBoostUntil = Math.max(player.speedBoostUntil || 0, now + powerupDurationMs);
+    changed = true;
+  }
+  if (!changed) return false;
+  profile.inventory = sanitizeInventory(inventory, profile.skin);
+  profile.updatedAt = now;
+  send(player.ws, {
+    type: "account_sync",
+    profile: publicProfile(profile),
+    accountVault: sealProfileVault(player.profileKey, profile),
+    reason: "match_items"
+  });
+  return true;
 }
 
 function saveProfileSoon() {
@@ -818,18 +1101,101 @@ async function handleProfileRequest(req, res) {
       res.end(JSON.stringify({ ok: false, message: "ログインIDは6文字以上で、英数字・_・-だけ使えます。" }));
       return;
     }
-    const mode = String(payload.mode || "login");
-    const existingProfile = getProfile(loginId);
-    if (mode === "login" && !existingProfile) {
+    const mode = ["create", "login", "save"].includes(String(payload.mode)) ? String(payload.mode) : "login";
+    const sessionToken = String(payload.sessionToken || "").slice(0, 1024);
+    const accountVault = String(payload.accountVault || "").slice(0, 48_000);
+    const authenticated = authenticatedProfileRecord(loginId, sessionToken, accountVault);
+
+    if (mode === "save") {
+      if (!authenticated) {
+        res.writeHead(401, securityHeaders("application/json; charset=utf-8"));
+        res.end(JSON.stringify({ ok: false, message: "ログイン期限が切れました。パスワードで再ログインしてください。" }));
+        return;
+      }
+      mergeProfile(authenticated.profile, payload);
+      await saveProfileStore();
+      res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: true, ...accountResponse(authenticated, sessionToken) }));
+      return;
+    }
+
+    if (mode === "login" && authenticated) {
+      res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: true, ...accountResponse(authenticated, sessionToken) }));
+      return;
+    }
+
+    if (!authRateAllowed(req, loginId)) {
+      res.writeHead(429, { ...securityHeaders("application/json; charset=utf-8"), "retry-after": "600" });
+      res.end(JSON.stringify({ ok: false, message: "ログイン試行が多すぎます。10分後に再試行してください。" }));
+      return;
+    }
+
+    const password = normalizePassword(payload.password);
+    if (!validPassword(password)) {
+      res.writeHead(400, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "パスワードは英字と数字を含む10文字以上にしてください。" }));
+      return;
+    }
+
+    let record = restoreProfileFromVault(loginId, accountVault) || getProfileRecord(loginId);
+    if (mode === "create") {
+      if (record?.profile?.auth?.passwordHash) {
+        res.writeHead(409, securityHeaders("application/json; charset=utf-8"));
+        res.end(JSON.stringify({ ok: false, message: "このログインIDは使用済みです。ログインを選んでください。" }));
+        return;
+      }
+      const legacyMigration = Boolean(record) || payload.legacyMigration === true;
+      record ||= getOrCreateProfile(loginId);
+      record.profile.auth = await createPasswordAuth(password);
+      mergeProfile(record.profile, payload, {
+        allowProgress: legacyMigration,
+        allowInventory: legacyMigration,
+        allowDon: legacyMigration,
+        allowLegacySkin: true
+      });
+      await saveProfileStore();
+      const nextSession = issueAccountSession(record.key);
+      res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: true, migrated: legacyMigration, ...accountResponse(record, nextSession) }));
+      return;
+    }
+
+    if (!record) {
+      await verifyPassword(password, null);
       res.writeHead(404, securityHeaders("application/json; charset=utf-8"));
       res.end(JSON.stringify({ ok: false, message: "このログインIDはまだ作成されていません。" }));
       return;
     }
-    const record = getOrCreateProfile(loginId);
-    mergeProfile(record.profile, mode === "login" ? {} : payload);
-    if (mode !== "login") await saveProfileStore();
+    const auth = sanitizeStoredAuth(record.profile.auth);
+    if (!auth.passwordHash) {
+      res.writeHead(409, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "セキュリティ更新が必要です。「このIDで作成」からパスワードを登録してください。" }));
+      return;
+    }
+    if (auth.lockUntil > Date.now()) {
+      res.writeHead(423, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "このIDは一時ロック中です。5分後に再試行してください。" }));
+      return;
+    }
+    if (!await verifyPassword(password, auth)) {
+      auth.failedAttempts += 1;
+      if (auth.failedAttempts >= 5) {
+        auth.failedAttempts = 0;
+        auth.lockUntil = Date.now() + authLockMs;
+      }
+      record.profile.auth = auth;
+      await saveProfileStore();
+      res.writeHead(401, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "ログインIDまたはパスワードが違います。" }));
+      return;
+    }
+    record.profile.auth = { ...auth, failedAttempts: 0, lockUntil: 0 };
+    record.profile.updatedAt = Date.now();
+    await saveProfileStore();
+    const nextSession = issueAccountSession(record.key);
     res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
-    res.end(JSON.stringify({ ok: true, profile: publicProfile(record.profile) }));
+    res.end(JSON.stringify({ ok: true, ...accountResponse(record, nextSession) }));
   } catch (error) {
     res.writeHead(error?.status || 500, securityHeaders("application/json; charset=utf-8"));
     res.end(JSON.stringify({ ok: false, message: "プロフィール処理に失敗しました。" }));
@@ -846,10 +1212,11 @@ async function handleWalletRequest(req, res) {
     const payload = await readJsonRequest(req);
     const loginId = normalizeLoginId(payload.loginId);
     if (loginId) {
-      const record = getProfileRecord(loginId);
+      const sessionToken = String(payload.sessionToken || "").slice(0, 1024);
+      const record = authenticatedProfileRecord(loginId, sessionToken, String(payload.accountVault || "").slice(0, 48_000));
       if (!record) {
-        res.writeHead(404, securityHeaders("application/json; charset=utf-8"));
-        res.end(JSON.stringify({ ok: false, message: "ログインIDを確認してから共通Donを同期してください。" }));
+        res.writeHead(401, securityHeaders("application/json; charset=utf-8"));
+        res.end(JSON.stringify({ ok: false, message: "共通Donの同期には再ログインが必要です。" }));
         return;
       }
       res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
@@ -857,7 +1224,8 @@ async function handleWalletRequest(req, res) {
         ok: true,
         scope: "account",
         balance: sanitizeInventory(record.profile.inventory).don,
-        guestToken: ""
+        guestToken: "",
+        accountVault: sealProfileVault(record.key, record.profile)
       }));
       return;
     }
@@ -873,6 +1241,51 @@ async function handleWalletRequest(req, res) {
   } catch (error) {
     res.writeHead(error?.status || 500, securityHeaders("application/json; charset=utf-8"));
     res.end(JSON.stringify({ ok: false, message: "共通Donの同期に失敗しました。" }));
+  }
+}
+
+async function handleShopRequest(req, res) {
+  if (req.method !== "POST") {
+    res.writeHead(405, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: false, message: "method not allowed" }));
+    return;
+  }
+  try {
+    const payload = await readJsonRequest(req);
+    const loginId = normalizeLoginId(payload.loginId);
+    const sessionToken = String(payload.sessionToken || "").slice(0, 1024);
+    const record = authenticatedProfileRecord(loginId, sessionToken, String(payload.accountVault || "").slice(0, 48_000));
+    if (!record) {
+      res.writeHead(401, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: "ショップを使うにはログインしてください。" }));
+      return;
+    }
+    const purchase = purchaseShopItem(sanitizeInventory(record.profile.inventory, record.profile.skin), String(payload.itemId || ""));
+    if (!purchase.ok) {
+      const messages = {
+        insufficient_don: "Donが足りません。",
+        max_level: "この強化は最大レベルです。",
+        max_items: "このアイテムは所持上限です。",
+        already_owned: "すでに所持しています。",
+        unknown_item: "商品が見つかりません。"
+      };
+      res.writeHead(400, securityHeaders("application/json; charset=utf-8"));
+      res.end(JSON.stringify({ ok: false, message: messages[purchase.reason] || "購入できませんでした。" }));
+      return;
+    }
+    record.profile.inventory = sanitizeInventory(purchase.inventory, record.profile.skin);
+    record.profile.updatedAt = Date.now();
+    await saveProfileStore();
+    res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({
+      ok: true,
+      message: `${purchase.item.name}を購入しました。`,
+      cost: purchase.cost,
+      ...accountResponse(record, sessionToken)
+    }));
+  } catch (error) {
+    res.writeHead(error?.status || 500, securityHeaders("application/json; charset=utf-8"));
+    res.end(JSON.stringify({ ok: false, message: "購入処理に失敗しました。" }));
   }
 }
 
@@ -913,6 +1326,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (String(req.url || "").split("?")[0] === "/api/shop") {
+    await handleShopRequest(req, res);
+    return;
+  }
+
   if (req.url === "/health") {
     const now = Date.now();
     const players = [...rooms.values()].flatMap((room) => [...room.players.values()]
@@ -924,7 +1342,13 @@ const server = createServer(async (req, res) => {
         score: player.score
       })));
     res.writeHead(200, securityHeaders("application/json; charset=utf-8"));
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, players }));
+    res.end(JSON.stringify({
+      ok: true,
+      rooms: rooms.size,
+      players,
+      progressionVersion,
+      maxCpuPlayers
+    }));
     return;
   }
 
@@ -1099,7 +1523,7 @@ function createCastleCores(playerTeam = "blue") {
 }
 
 function nextHealthPickupAt(now = Date.now()) {
-  return now + 25_000 + Math.floor(Math.random() * 16_000);
+  return now + 16_000 + Math.floor(Math.random() * 9_000);
 }
 
 function randomPickupSpawn(arena = "toybox") {
@@ -1116,8 +1540,8 @@ function createPowerups(now = Date.now()) {
     id: `powerup-${index}`,
     kind: powerupKinds[index % powerupKinds.length],
     ...spawn,
-    available: index < 3,
-    respawnAt: index < 3 ? 0 : now + powerupRespawnMs + index * 2400
+    available: true,
+    respawnAt: 0
   }));
 }
 
@@ -1927,6 +2351,8 @@ function publicPlayer(player) {
     creative: Boolean(player.creative),
     healPacks: player.healPacks || 0,
     equipmentTier: player.equipmentTier || 0,
+    attackBonus: Math.max(0, Math.round(((Number(player.profileAttackMultiplier) || 1) - 1) * 100)),
+    armorBonus: Math.max(0, Math.round((Number(player.damageReduction) || 0) * 100)),
     focusTask: publicFocusTask(player.focusTask),
     donPunchCharge: player.donPunchCharge || 0,
     x: player.x,
@@ -1984,6 +2410,7 @@ function fpsWelcomePayload(player, room, profile, resumed = false) {
     ...publicMatchLifecycle(room),
     spawn: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
     profile: profile ? publicProfile(profile) : null,
+    accountVault: player.profileKey && profile ? sealProfileVault(player.profileKey, profile) : "",
     guestToken: player.guestToken || "",
     walletDon: playerWalletDon(player),
     isHost: Boolean(player.isHost),
@@ -2700,14 +3127,12 @@ wss.on("connection", (ws) => {
       const requestedLoginId = normalizeLoginId(message.loginId);
       const qaRequested = Boolean(message.qaMode);
       const chaosConsent = message.chaosConsent === true;
-      const profileRecord = requestedLoginId ? getProfileRecord(requestedLoginId) : null;
+      const profileRecord = requestedLoginId
+        ? authenticatedProfileRecord(requestedLoginId, message.sessionToken, message.accountVault)
+        : null;
       if (requestedLoginId && !profileRecord) {
-        send(ws, { type: "baccarat_error", message: "ログインIDを確認してから共通Donを同期してください。" });
+        send(ws, { type: "baccarat_error", message: "安全な接続のため、ロビーで再ログインしてください。" });
         return;
-      }
-      if (profileRecord && !qaRequested) {
-        mergeProfile(profileRecord.profile, { progress: message.progress });
-        saveProfileSoon();
       }
       const profile = profileRecord?.profile || null;
       const qaAuthorized = isPrivilegedLoginId(requestedLoginId);
@@ -2762,7 +3187,8 @@ wss.on("connection", (ws) => {
         chaosMode: !qaRequested && Boolean(table.chaosMode),
         chaosWinPermille: !qaRequested ? baccaratChaosWinPermille : 0,
         guestToken,
-        profile: profile ? publicProfile(profile) : null
+        profile: profile ? publicProfile(profile) : null,
+        accountVault: profileRecord ? sealProfileVault(profileRecord.key, profileRecord.profile) : ""
       });
       broadcastBaccarat(table);
       return;
@@ -2801,14 +3227,12 @@ wss.on("connection", (ws) => {
       const requestedCpuFill = normalizeCpuFill(message.cpuFill);
       const requestedRelationMode = normalizeRelationMode(message.relationMode);
       const requestedLoginId = normalizeLoginId(message.loginId);
-      const profileRecord = requestedLoginId ? getProfileRecord(requestedLoginId) : null;
+      const profileRecord = requestedLoginId
+        ? authenticatedProfileRecord(requestedLoginId, message.sessionToken, message.accountVault)
+        : null;
       if (requestedLoginId && !profileRecord) {
-        send(ws, { type: "error", message: "ログインIDを確認してから共通Donを同期してください。" });
+        send(ws, { type: "error", message: "安全な接続のため、ロビーで再ログインしてください。" });
         return;
-      }
-      if (profileRecord) {
-        mergeProfile(profileRecord.profile, { progress: message.progress });
-        saveProfileSoon();
       }
       const loginProfile = profileRecord?.profile || null;
       const guestToken = profileRecord ? "" : normalizeGuestWalletToken(message.guestToken) || crypto.randomUUID();
@@ -2883,7 +3307,7 @@ wss.on("connection", (ws) => {
         name: sanitizePlayerName(loginProfile?.name || message.name),
         color: team,
         cosmeticColor: safeColor(loginProfile?.cosmeticColor || message.cosmeticColor) || (team === "blue" ? "#1598f0" : "#ff4d4d"),
-        skin: normalizeSkin(loginProfile?.skin || message.skin),
+        skin: loginProfile ? normalizeSkin(loginProfile.skin) : "rounded",
         ready: false,
         health: maxHealth,
         score: 0,
@@ -2901,6 +3325,8 @@ wss.on("connection", (ws) => {
         creative: false,
         healPacks: sanitizeInventory(loginProfile?.inventory).healPacks,
         equipmentTier: 0,
+        profileAttackMultiplier: 1,
+        damageReduction: 0,
         focusTask: null,
         nextFocusTaskAt: Date.now() + 2400,
         donPunchCharge: 0,
@@ -2920,6 +3346,7 @@ wss.on("connection", (ws) => {
         ...spawn
       };
 
+      applyPersistentCombatBonuses(player);
       room.players.set(id, player);
       recordPlayerPose(player);
       currentRoom = room;
@@ -3143,15 +3570,25 @@ wss.on("connection", (ws) => {
 
     if (message.type === "customize") {
       currentPlayer.cosmeticColor = safeColor(message.cosmeticColor) || currentPlayer.cosmeticColor;
-      currentPlayer.skin = normalizeSkin(message.skin || currentPlayer.skin);
       const profile = profileForPlayer(currentPlayer);
       if (profile) {
+        const requestedSkin = normalizeSkin(message.skin || currentPlayer.skin);
+        const ownedSkins = sanitizeInventory(profile.inventory, profile.skin).ownedSkins;
+        currentPlayer.skin = ownedSkins.includes(requestedSkin) ? requestedSkin : normalizeSkin(profile.skin);
         mergeProfile(profile, {
           name: currentPlayer.name,
           skin: currentPlayer.skin,
           cosmeticColor: currentPlayer.cosmeticColor
         });
         saveProfileSoon();
+        send(currentPlayer.ws, {
+          type: "account_sync",
+          profile: publicProfile(profile),
+          accountVault: sealProfileVault(currentPlayer.profileKey, profile),
+          reason: "customize"
+        });
+      } else {
+        currentPlayer.skin = "rounded";
       }
       return;
     }
@@ -3162,9 +3599,7 @@ wss.on("connection", (ws) => {
         mergeProfile(profile, {
           name: currentPlayer.name,
           skin: currentPlayer.skin,
-          cosmeticColor: currentPlayer.cosmeticColor,
-          progress: message.progress,
-          inventory: message.inventory
+          cosmeticColor: currentPlayer.cosmeticColor
         });
         saveProfileSoon();
       }
@@ -3226,12 +3661,6 @@ wss.on("connection", (ws) => {
       currentPlayer.healPacks -= 1;
       currentPlayer.healsUsed = (currentPlayer.healsUsed || 0) + 1;
       currentPlayer.health = Math.min(maxHealth, currentPlayer.health + healPackAmount);
-      const profile = profileForPlayer(currentPlayer);
-      if (profile) {
-        profile.inventory = sanitizeInventory({ ...profile.inventory, healPacks: currentPlayer.healPacks });
-        profile.updatedAt = Date.now();
-        saveProfileSoon();
-      }
       progressFocusTask(currentRoom, currentPlayer, "recover", 1);
       addFeed(currentRoom, `${currentPlayer.name} が回復アイテムを使用`, currentPlayer.color);
       send(currentPlayer.ws, { type: "sound", sound: "heal" });
@@ -3479,12 +3908,21 @@ setInterval(() => {
         const player = settlement.player;
         persistPlayerWallet(player);
         const profile = player.profileKey ? profileStore.profiles[player.profileKey] : null;
-        if (profile && settlement.net > 0) {
+        if (profile) {
           const progress = sanitizeProgress(profile.progress);
-          progress.baccaratWins += 1;
-          progress.lastReward = `バカラ +${settlement.net}Don`;
+          if (settlement.net > 0) {
+            progress.baccaratWins += 1;
+            progress.xp += Math.min(160, 25 + Math.floor(settlement.net / 25));
+          }
+          progress.lastReward = `バカラ ${settlement.net >= 0 ? "+" : ""}${settlement.net}Don`;
           profile.progress = sanitizeProgress(progress);
           profile.updatedAt = now;
+          send(player.ws, {
+            type: "account_sync",
+            profile: publicProfile(profile),
+            accountVault: sealProfileVault(player.profileKey, profile),
+            reason: "baccarat_reward"
+          });
           profileChanged = true;
         }
       }
@@ -3522,7 +3960,8 @@ function equipmentTier(player) {
 }
 
 function equipmentDamageMultiplier(player) {
-  return 1 + equipmentTier(player) * 0.035;
+  const profileMultiplier = clamp(Number(player?.profileAttackMultiplier) || 1, 1, 1.18);
+  return profileMultiplier * (1 + equipmentTier(player) * 0.02);
 }
 
 function combatGrowthTargetTier(player) {
@@ -3785,7 +4224,9 @@ function applyDirectDamage(room, shooter, target, damage, weapon = "銃ダメー
     broadcast(room, { type: "hit", shooter: shooter.id, shooterName: shooter.name, target: target.id, damage: 0, blocked: true, weapon, hitZone, source });
     return;
   }
-  const appliedDamage = Math.min(target.health, damage);
+  const damageReduction = target.isBot ? 0 : clamp(Number(target.damageReduction) || 0, 0, 0.14);
+  const mitigatedDamage = Math.max(1, Math.round(damage * (1 - damageReduction)));
+  const appliedDamage = Math.min(target.health, mitigatedDamage);
   target.health = Math.max(0, target.health - appliedDamage);
   const headshot = hitZone === "head" && appliedDamage > 0;
   shooter.hits = (shooter.hits || 0) + 1;
@@ -4240,18 +4681,31 @@ function awardFpsDonRewards(room) {
     const breakdown = fpsDonReward(room, player);
     const balance = creditPlayerWallet(player, breakdown.total);
     const profile = profileForPlayer(player);
+    const xpBreakdown = calculateFpsXpReward(player, fpsPlayerWon(room, player));
+    let profilePayload = null;
+    let accountVault = "";
     if (profile) {
       const progress = sanitizeProgress(profile.progress);
-      progress.lastReward = `FPS +${breakdown.total}Don`;
-      profile.progress = progress;
+      progress.xp += xpBreakdown.total;
+      progress.sessions += 1;
+      progress.bestScore = Math.max(progress.bestScore, Math.floor(Number(player.score) || 0));
+      progress.bestKills = Math.max(progress.bestKills, Math.floor(Number(player.kills) || 0));
+      progress.lastReward = `FPS +${xpBreakdown.total}XP / +${breakdown.total}Don`;
+      profile.progress = sanitizeProgress(progress);
       profile.updatedAt = Date.now();
+      profilePayload = publicProfile(profile);
+      accountVault = sealProfileVault(player.profileKey, profile);
       profileChanged = true;
     }
     send(player.ws, {
       type: "fps_don_reward",
       amount: breakdown.total,
       balance,
-      breakdown
+      breakdown,
+      xp: xpBreakdown.total,
+      xpBreakdown,
+      profile: profilePayload,
+      accountVault
     });
   }
   if (profileChanged) saveProfileSoon();
@@ -4273,7 +4727,7 @@ function updateMatchLifecycle(room, now = Date.now()) {
   if (next.transition === "countdown") {
     addFeed(room, "マッチ開始カウントダウン", "blue");
   } else if (next.transition === "start") {
-    resetRoomScores(room, now);
+    resetRoomScores(room, now, true);
     room.matchPhase = "active";
     room.phaseEndsAt = 0;
     room.matchStarted = true;
@@ -4374,7 +4828,7 @@ function applyRoomConfig(room, host, mode, teamChoice, cpuFill = room.cpuFill, r
   }
 }
 
-function resetRoomScores(room, now = Date.now()) {
+function resetRoomScores(room, now = Date.now(), consumeItems = false) {
   room.winner = null;
   room.roundStartedAt = room.matchStarted ? now : 0;
   room.weaponStats = Object.create(null);
@@ -4385,6 +4839,7 @@ function resetRoomScores(room, now = Date.now()) {
     room.playerTeam = firstHuman?.color || "blue";
   }
   let index = 0;
+  let profileItemsChanged = false;
   for (const player of room.players.values()) {
     player.score = 0;
     player.ready = false;
@@ -4417,12 +4872,17 @@ function resetRoomScores(room, now = Date.now()) {
     player.nextZoneDamageAt = 0;
     player.nextTeamPingAt = 0;
     player.poseHistory = [];
+    if (!player.isBot) {
+      applyPersistentCombatBonuses(player);
+      if (consumeItems) profileItemsChanged = consumeMatchItems(player, now) || profileItemsChanged;
+    }
     const spawn = spawnPoint(index);
     Object.assign(player, spawn);
     recordPlayerPose(player);
     if (!player.isBot) send(player.ws, { type: "respawn", target: player.id, spawn });
     index += 1;
   }
+  if (profileItemsChanged) saveProfileSoon();
   if (room.mode !== "castle" && room.relationMode !== "coop") room.playerTeam = null;
   room.donPunches.clear();
   room.vehicles = createVehicles();
@@ -4516,13 +4976,15 @@ function tryPickupPowerups(room, player) {
     if (distance > 1.9) continue;
     powerup.available = false;
     powerup.pickedBy = player.name;
-    powerup.respawnAt = now + powerupRespawnMs + Math.floor(Math.random() * 6500);
+    powerup.respawnAt = now + powerupRespawnMs + Math.floor(Math.random() * 3500);
     player.itemPickups = (player.itemPickups || 0) + 1;
     if (powerup.kind === "speed") {
       player.speedBoostUntil = now + powerupDurationMs;
       addFeed(room, `${player.name} がスピードブーストを取得`, player.color);
-    } else if (powerup.kind === "ammo") {
-      addFeed(room, `${player.name} が弾薬パックを取得`, player.color);
+    } else if (powerup.kind === "heal") {
+      player.health = Math.min(maxHealth, player.health + 40);
+      player.healPacks = Math.min(12, (player.healPacks || 0) + 1);
+      addFeed(room, `${player.name} がメディカルキットを取得`, player.color);
     } else if (powerup.kind === "damage") {
       player.damageBoostUntil = now + 8500;
       addFeed(room, `${player.name} が火力ブーストを取得`, player.color);
@@ -4536,7 +4998,7 @@ function tryPickupPowerups(room, player) {
     }
     progressFocusTask(room, player, "item", 1);
     send(player.ws, { type: "powerup", kind: powerup.kind });
-    send(player.ws, { type: "sound", sound: powerup.kind === "ammo" ? "reload" : powerup.kind === "speed" ? "jump" : "barrier" });
+    send(player.ws, { type: "sound", sound: powerup.kind === "heal" ? "heal" : powerup.kind === "speed" ? "jump" : "barrier" });
     broadcast(room, { type: "feed", feed: room.feed });
     return;
   }
@@ -4608,7 +5070,7 @@ function cpuAimSpread(weapon, distance, index = 0) {
     awm: 0.026,
     type95: 0.036
   }[weapon] || 0.04;
-  return base + Math.min(0.045, Math.max(0, distance) * 0.00072) + (index % 3) * 0.005;
+  return base * 1.12 + Math.min(0.052, Math.max(0, distance) * 0.00082) + (index % 3) * 0.0055;
 }
 
 function applyCpuAimError(direction, weapon, distance, index = 0) {

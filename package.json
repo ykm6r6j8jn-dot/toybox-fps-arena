@@ -19,6 +19,8 @@
     "test:controls": "node scripts/control-physics-test.mjs",
     "test:systems": "node scripts/gameplay-systems-test.mjs",
     "test:economy": "node scripts/economy-systems-test.mjs",
+    "test:progression": "node scripts/progression-systems-test.mjs",
+    "test:account-live": "node scripts/account-progression-live-test.mjs",
     "test:network": "node scripts/network-systems-test.mjs",
     "test:render": "node scripts/render-systems-test.mjs",
     "test:combat": "node scripts/combat-systems-test.mjs",

@@ -23,6 +23,9 @@ if (!healthResponse.ok) {
 
 const health = await healthResponse.json();
 if (!health?.ok) throw new Error(`health check returned unexpected body: ${JSON.stringify(health)}`);
+if (health.progressionVersion !== "PROGRESSION 2.0" || health.maxCpuPlayers !== 13) {
+  throw new Error(`public health is missing progression/cpu limits: ${JSON.stringify(health)}`);
+}
 
 const pageResponse = await fetch(baseUrl, { cache: "no-store" });
 if (!pageResponse.ok) throw new Error(`page check failed: ${pageResponse.status} ${pageResponse.statusText}`);
@@ -31,6 +34,7 @@ if (!pageHtml.includes("QUALITY 6.0 ワールド品質・安定性更新")) thro
 if (!pageHtml.includes("MATCH 5.0 マッチ進行更新")) throw new Error("public page is missing the MATCH 5.0 update marker");
 if (!pageHtml.includes("ECONOMY 1.1 共通Donウォレット")) throw new Error("public page is missing the ECONOMY 1.1 update marker");
 if (!pageHtml.includes("SOUND 1.0 バカラ・ジャズラウンジ")) throw new Error("public page is missing the SOUND 1.0 update marker");
+if (!pageHtml.includes("PROGRESSION 2.0 成長・セキュアショップ更新")) throw new Error("public page is missing the PROGRESSION 2.0 update marker");
 const assetNames = [...pageHtml.matchAll(/\/assets\/(?:index|three)-[^\"']+\.(?:js|css)/g)].map((match) => match[0]);
 if (assetNames.length < 3) throw new Error(`public page asset list is incomplete: ${assetNames.join(", ")}`);
 
@@ -198,4 +202,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, PROGRESSION 2.0, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);

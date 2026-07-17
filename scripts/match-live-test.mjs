@@ -13,7 +13,8 @@ const server = spawn(process.execPath, ["server.mjs"], {
     ...process.env,
     PORT: String(port),
     NODE_ENV: "production",
-    DONPACHI_PROFILE_STORE: `/tmp/donpachi-match-test-${process.pid}.json`
+    DONPACHI_PROFILE_STORE: `/tmp/donpachi-match-test-${process.pid}.json`,
+    DONPACHI_ACCOUNT_SECRET: "match-live-test-account-secret-2026"
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -85,7 +86,7 @@ try {
       && snapshot.matchStarted === false
       && snapshot.humanCount === 1
       && snapshot.minimumHumans === 1
-      && snapshot.players?.length === 20;
+      && snapshot.players?.length === 14;
   }, "server-owned warmup with CPU fill");
 
   const waitingSnapshot = latest(alpha);

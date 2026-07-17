@@ -13,6 +13,7 @@ const profileEndpoint = `http://127.0.0.1:${port}/api/profile`;
 const profileStore = `/tmp/donpachi-baccarat-live-${process.pid}.json`;
 const privilegedLoginId = `Privileged${process.pid}`;
 const privilegedLoginIdHash = createHash("sha256").update(privilegedLoginId).digest("hex");
+const accountPassword = "DonPaChiTest987";
 let serverOutput = "";
 const server = spawn(process.execPath, ["server.mjs"], {
   cwd: root,
@@ -21,6 +22,7 @@ const server = spawn(process.execPath, ["server.mjs"], {
     PORT: String(port),
     NODE_ENV: "production",
     DONPACHI_PROFILE_STORE: profileStore,
+    DONPACHI_ACCOUNT_SECRET: "baccarat-live-test-account-secret-2026",
     DONPACHI_PRIVILEGED_LOGIN_ID_HASH: privilegedLoginIdHash
   },
   stdio: ["ignore", "pipe", "pipe"]
@@ -118,7 +120,7 @@ try {
   const accountProfileResponse = await fetch(profileEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ mode: "create", loginId: accountLoginId, name: "WalletAccount" })
+    body: JSON.stringify({ mode: "create", loginId: accountLoginId, password: accountPassword, name: "WalletAccount" })
   });
   const accountProfile = await accountProfileResponse.json();
   assert.equal(accountProfileResponse.status, 200);
@@ -126,7 +128,11 @@ try {
   const accountWalletResponse = await fetch(walletEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginId: accountLoginId })
+    body: JSON.stringify({
+      loginId: accountLoginId,
+      sessionToken: accountProfile.sessionToken,
+      accountVault: accountProfile.accountVault
+    })
   });
   const accountWallet = await accountWalletResponse.json();
   assert.equal(accountWallet.scope, "account");
@@ -135,17 +141,25 @@ try {
   const qaProfileResponse = await fetch(profileEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ mode: "create", loginId: privilegedLoginId, name: "QA Player" })
+    body: JSON.stringify({ mode: "create", loginId: privilegedLoginId, password: accountPassword, name: "QA Player" })
   });
   assert.equal(qaProfileResponse.status, 200);
+  const qaProfile = await qaProfileResponse.json();
   const qaDenied = await expectBaccaratError({
     name: "QA Player",
     loginId: accountLoginId,
+    sessionToken: accountProfile.sessionToken,
+    accountVault: accountProfile.accountVault,
     qaMode: true
   }, "QA access from a display-name impersonator");
   assert.match(qaDenied, /検証アカウント専用/);
 
-  const qa = await openClient("QA Player", "", { loginId: privilegedLoginId, qaMode: true });
+  const qa = await openClient("QA Player", "", {
+    loginId: privilegedLoginId,
+    sessionToken: qaProfile.sessionToken,
+    accountVault: qaProfile.accountVault,
+    qaMode: true
+  });
   assert.equal(qa.state.welcome.table, "DONQA");
   assert.equal(qa.state.welcome.qaMode, true);
   assert.equal(qa.state.welcome.walletScope, "qa");
@@ -155,7 +169,11 @@ try {
   const qaWallet = await fetch(walletEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginId: privilegedLoginId })
+    body: JSON.stringify({
+      loginId: privilegedLoginId,
+      sessionToken: qaProfile.sessionToken,
+      accountVault: qa.state.welcome.accountVault || qaProfile.accountVault
+    })
   }).then((response) => response.json());
   assert.equal(qaWallet.balance, 2000, "QA table must not alter the shared account wallet");
   send(qa, { type: "baccarat_leave" });

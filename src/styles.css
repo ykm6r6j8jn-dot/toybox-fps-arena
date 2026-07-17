@@ -24,6 +24,586 @@
   --keyboard-offset: 0px;
 }
 
+/* PROGRESSION 2.0 lobby command center */
+.join-panel {
+  place-items: start center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(36px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background:
+    linear-gradient(180deg, rgba(20, 96, 142, 0.1), rgba(5, 20, 31, 0.4)),
+    rgba(21, 151, 220, 0.12);
+}
+
+.join-card {
+  width: min(1160px, calc(100vw - 36px));
+  max-width: none;
+  gap: 12px;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lobby-command-header,
+.lobby-command-footer,
+.lobby-profile-rail,
+.lobby-main-stage {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(7, 23, 34, 0.9);
+  box-shadow: 0 18px 50px rgba(2, 13, 23, 0.24);
+  backdrop-filter: blur(16px);
+}
+
+.lobby-command-header {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 14px;
+  border-bottom: 3px solid rgba(147, 228, 60, 0.72);
+}
+
+.lobby-brand-lockup,
+.lobby-live-state,
+.lobby-command-footer,
+.skin-section header,
+.lobby-setting-block > header,
+.shop-hero,
+.shop-benefit-strip,
+.combat-bonus-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lobby-brand-lockup > div,
+.lobby-live-state,
+.shop-hero > div {
+  display: grid;
+  gap: 2px;
+}
+
+.lobby-bee-mark {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 2px solid #17231d;
+  border-radius: 50%;
+  background: repeating-linear-gradient(90deg, #ffd23a 0 9px, #17231d 9px 15px);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+  text-shadow: 0 1px 2px #000;
+}
+
+.lobby-brand-lockup strong {
+  color: #ffffff;
+  font-size: 23px;
+  font-weight: 950;
+}
+
+.lobby-brand-lockup small,
+.lobby-live-state span,
+.skin-section span,
+.lobby-setting-block > header span,
+.shop-hero span {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.lobby-live-state {
+  justify-items: end;
+}
+
+.lobby-live-state span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lobby-live-state span i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(147, 228, 60, 0.72);
+}
+
+.lobby-live-state strong,
+.shop-hero > div:last-child strong {
+  color: #ffdc64;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.lobby-command-grid {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.lobby-profile-rail {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.lobby-main-stage {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.login-card {
+  border-color: rgba(68, 215, 255, 0.34);
+  background: rgba(3, 17, 26, 0.66);
+}
+
+.login-card header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.login-card header svg,
+.lobby-tabs svg,
+.join-actions > #createRoom svg,
+.online-panel > strong svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.3;
+}
+
+.login-card.authenticated {
+  border-color: rgba(147, 228, 60, 0.5);
+}
+
+.login-card.authenticated #accountSecurityNote {
+  color: #bff78d;
+}
+
+.nickname-field {
+  padding: 0 2px;
+}
+
+.skin-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.skin-section header strong,
+.lobby-setting-block > header strong {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.skin-select button[aria-disabled="true"] {
+  position: relative;
+  filter: saturate(0.35);
+  opacity: 0.58;
+}
+
+.skin-select button[aria-disabled="true"]::after {
+  content: "LOCK";
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(4, 12, 20, 0.86);
+  color: #ffdc64;
+  font-size: 8px;
+  font-weight: 950;
+}
+
+.progress-card {
+  margin-top: 2px;
+  background: rgba(15, 45, 42, 0.76);
+}
+
+.combat-bonus-row {
+  flex-wrap: wrap;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.combat-bonus-row span,
+.shop-benefit-strip span {
+  color: #eafedb;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.lobby-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(4, 16, 25, 0.7);
+}
+
+.lobby-tabs button {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.lobby-tabs button.active {
+  border-bottom-color: var(--green);
+  background: rgba(147, 228, 60, 0.08);
+  color: #ffffff;
+}
+
+.lobby-tab-pane {
+  display: none;
+  gap: 14px;
+  padding: 16px;
+}
+
+.lobby-tab-pane.active {
+  display: grid;
+}
+
+.lobby-setting-block {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.lobby-setting-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.lobby-setting-columns .lobby-setting-block {
+  padding-bottom: 12px;
+}
+
+.lobby-setting-block .party-select,
+.lobby-setting-block .team-select {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lobby-setting-block .cpu-fill-select,
+.lobby-setting-block .relation-select {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.lobby-setting-block .mode-select button,
+.lobby-setting-block .party-select button,
+.lobby-setting-block .team-select button {
+  min-height: 58px;
+}
+
+.join-actions {
+  padding: 12px;
+  border: 1px solid rgba(147, 228, 60, 0.25);
+  border-radius: 8px;
+  background: rgba(8, 28, 35, 0.72);
+}
+
+.join-actions > #createRoom {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #92e53b;
+  box-shadow: 0 8px 22px rgba(105, 205, 38, 0.2);
+  font-size: 16px;
+}
+
+.room-join-row {
+  grid-template-columns: minmax(0, 1fr) 110px;
+}
+
+.shop-hero {
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 210, 58, 0.24);
+  background: rgba(255, 210, 58, 0.07);
+}
+
+.shop-hero > div:last-child {
+  justify-items: end;
+}
+
+.shop-hero strong {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.shop-benefit-strip {
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid rgba(147, 228, 60, 0.22);
+  border-radius: 7px;
+  background: rgba(147, 228, 60, 0.08);
+}
+
+.shop-catalog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.shop-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 88px;
+  padding: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.shop-item-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(68, 215, 255, 0.14);
+  color: #9feaff;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.shop-item[data-category="skin"] .shop-item-icon {
+  background: rgba(255, 210, 58, 0.14);
+  color: #ffe27d;
+}
+
+.shop-item[data-category="item"] .shop-item-icon {
+  background: rgba(147, 228, 60, 0.14);
+  color: #c9ff92;
+}
+
+.shop-item-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.shop-item-copy strong {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.shop-item-copy span,
+.shop-item-copy small {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shop-item button {
+  min-width: 82px;
+  min-height: 38px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 216, 77, 0.38);
+  border-radius: 7px;
+  background: #ffd23a;
+  color: #17231d;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.shop-item button:disabled {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.lobby-command-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  align-items: stretch;
+  padding: 10px;
+}
+
+.lobby-command-footer .online-panel {
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+}
+
+.online-panel > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.lobby-command-footer .update-log-button {
+  min-height: 46px;
+}
+
+@media (max-width: 900px) {
+  .join-card {
+    width: min(760px, calc(100vw - 24px));
+  }
+
+  .lobby-command-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lobby-profile-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .login-card,
+  .progress-card {
+    grid-row: span 2;
+  }
+
+  .lobby-main-stage {
+    overflow: visible;
+  }
+
+  .join-actions {
+    position: static;
+    margin: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .join-panel {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(90px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .join-card {
+    width: calc(100vw - 16px);
+  }
+
+  .lobby-command-header {
+    min-height: 62px;
+    padding: 8px 10px;
+  }
+
+  .lobby-brand-lockup strong {
+    font-size: 18px;
+  }
+
+  .lobby-bee-mark {
+    width: 40px;
+    height: 40px;
+  }
+
+  .lobby-live-state strong {
+    font-size: 14px;
+  }
+
+  .lobby-profile-rail,
+  .lobby-setting-columns,
+  .shop-catalog,
+  .lobby-command-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .login-card,
+  .progress-card {
+    grid-row: auto;
+  }
+
+  .lobby-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+  }
+
+  .lobby-tab-pane {
+    padding: 12px;
+  }
+
+  .lobby-setting-block .mode-select {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shop-item {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    min-height: 80px;
+    padding: 9px;
+  }
+
+  .shop-item-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .lobby-command-footer .update-log-button {
+    width: 100%;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape), (max-height: 520px) and (orientation: landscape) {
+  .join-panel {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(26px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .join-card {
+    width: min(1060px, calc(100vw - 16px));
+    gap: 8px;
+    padding: 0;
+  }
+
+  .lobby-command-header {
+    min-height: 54px;
+  }
+
+  .lobby-command-grid {
+    grid-template-columns: minmax(280px, 0.8fr) minmax(430px, 1.4fr);
+    gap: 8px;
+  }
+
+  .lobby-profile-rail {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .lobby-tab-pane {
+    padding: 10px;
+  }
+
+  .join-actions {
+    position: static;
+    margin: 0;
+    padding: 9px;
+  }
+
+  .shop-catalog {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -4898,6 +5478,103 @@ body.celebrating::after {
     font-size: 9px;
     font-weight: 900;
     letter-spacing: 0;
+  }
+}
+
+/* Keep the command-center lobby free of inactive match HUD controls on every viewport. */
+body:not(.game-active) .top-left,
+body:not(.game-active) .top-center,
+body:not(.game-active) .top-right,
+body:not(.game-active) .minimap,
+body:not(.game-active) .center-reticle,
+body:not(.game-active) .chat-panel,
+body:not(.game-active) .status-strip,
+body:not(.game-active) .ammo-card,
+body:not(.game-active) .movement-card,
+body:not(.game-active) .donpunch-button,
+body:not(.game-active) .damage-feedback,
+body:not(.game-active) .damage-feed,
+body:not(.game-active) .feed,
+body:not(.game-active) .flow-card,
+body:not(.game-active) .focus-task-card,
+body:not(.game-active) .killcam-card,
+body:not(.game-active) .spectator-card,
+body:not(.game-active) .zone-status,
+body:not(.game-active) .vehicle-status,
+body:not(.game-active) .interaction-hint,
+body:not(.game-active) .mobile-controls,
+body:not(.game-active) .lobby-strip,
+body:not(.game-active) .player-slots {
+  display: none !important;
+}
+
+/* Keep the command-center layout authoritative over legacy lobby rules. */
+.join-panel {
+  place-items: start center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(36px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background: linear-gradient(180deg, rgba(20, 96, 142, 0.1), rgba(5, 20, 31, 0.4)), rgba(21, 151, 220, 0.12);
+}
+
+.join-card {
+  width: min(1160px, calc(100vw - 36px));
+  max-width: none;
+  gap: 12px;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lobby-profile-rail .login-card,
+.lobby-profile-rail .progress-card {
+  border-radius: 8px;
+}
+
+.lobby-main-stage .join-actions {
+  position: static;
+  margin: 0;
+}
+
+.lobby-main-stage .room-join-row {
+  grid-template-columns: minmax(0, 1fr) 110px;
+}
+
+@media (max-width: 900px) {
+  .join-card {
+    width: min(760px, calc(100vw - 24px));
+    gap: 9px;
+    padding: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .join-panel {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(90px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .join-card {
+    width: calc(100vw - 16px);
+    padding: 0;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape), (max-height: 520px) and (orientation: landscape) {
+  .join-panel {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(26px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .join-card {
+    width: min(1060px, calc(100vw - 16px));
+    gap: 8px;
+    padding: 0;
+  }
+
+  .lobby-main-stage .join-actions {
+    position: static;
+    margin: 0;
+    padding: 9px;
   }
 }
 

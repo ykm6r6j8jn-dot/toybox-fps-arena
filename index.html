@@ -98,7 +98,7 @@
           </div>
         </div>
         <div class="ammo-card">
-          <strong><span id="ammo">30</span><small>/<span id="reserveAmmo">120</span></small></strong>
+          <strong><span id="ammo">30</span><small>/<span id="reserveAmmo">∞</span></small></strong>
           <span id="weaponRange">飛距離 --m</span>
         </div>
         <div class="movement-card">
@@ -289,162 +289,176 @@
 
       <section class="join-panel" id="joinPanel">
         <div class="join-card">
-          <strong>DonPaChi FPS</strong>
-          <p>友達にリンクを送って、同じルームで軽く撃ち合えます。</p>
-          <div class="login-card" id="loginCard">
-            <header>
-              <span>ログインID</span>
-              <strong id="loginStatus">未ログイン</strong>
-            </header>
-            <label>
-              好きなログインID
-              <input id="loginIdInput" maxlength="32" placeholder="6-32文字 / 英数字・_・-" autocomplete="off" autocapitalize="none" inputmode="latin" />
-            </label>
-            <div class="login-actions">
-              <button id="createLoginId" type="button">このIDで作成</button>
-              <button id="loginProfile" type="button">IDでログイン</button>
-            </div>
-            <small>自分で決めたIDを作成できます。未入力で作成すると自動IDになります。</small>
-          </div>
-          <label>
-            ニックネーム
-            <input id="nameInput" maxlength="14" placeholder="プレイヤー" autocomplete="nickname" />
-          </label>
-          <div class="skin-select" id="skinSelect" role="group" aria-label="スキン選択">
-            <button type="button" class="active" data-skin="rounded">
-              <b class="skin-preview skin-rounded"></b>
-              <strong>まる型</strong>
-            </button>
-            <button type="button" data-skin="scout">
-              <b class="skin-preview skin-scout"></b>
-              <strong>軽量</strong>
-            </button>
-            <button type="button" data-skin="heavy">
-              <b class="skin-preview skin-heavy"></b>
-              <strong>重装</strong>
-            </button>
-            <button type="button" data-skin="bee">
-              <b class="skin-preview skin-bee"></b>
-              <strong>ハチ</strong>
-            </button>
-          </div>
-          <div class="progress-card" id="progressCard" aria-label="Donランク">
-            <header>
+          <header class="lobby-command-header">
+            <div class="lobby-brand-lockup">
+              <span class="lobby-bee-mark" aria-hidden="true">DP</span>
               <div>
-                <span>Donランク</span>
-                <strong id="progressRank">読み込み中</strong>
+                <strong>DonPaChi FPS</strong>
+                <small>共通都市アリーナ / 最大20枠</small>
               </div>
-              <div class="shared-wallet-summary">
-                <span>全ゲーム共通Don</span>
-                <strong id="lobbyWalletDon">2,000 Don</strong>
-              </div>
-            </header>
-            <div class="progress-meter"><i id="progressMeter"></i></div>
-            <div class="progress-stats" id="progressStats">連続 0日 / 最高 0pt</div>
-            <small id="progressHint">次のランクまで</small>
-          </div>
-          <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
-            <button type="button" class="active" data-mode="oneLife">
-              <strong>ワンライフ</strong>
-              <span>一回死亡で終了</span>
-            </button>
-            <button type="button" data-mode="practice">
-              <strong>練習</strong>
-              <span>復活ありで練習</span>
-            </button>
-            <button type="button" data-mode="life3">
-              <strong>ライフ3</strong>
-              <span>3ライフ制</span>
-            </button>
-            <button type="button" data-mode="castle">
-              <strong>城攻め</strong>
-              <span>敵の白を破壊</span>
-            </button>
-          </div>
-          <div class="party-select" id="partySelect" role="group" aria-label="マッチ人数">
-            <button type="button" class="active" data-party="1">
-              <strong>シングル</strong>
-              <span>1人チーム</span>
-            </button>
-            <button type="button" data-party="2">
-              <strong>デュオ</strong>
-              <span>2人チーム</span>
-            </button>
-            <button type="button" data-party="4">
-              <strong>スクワッド</strong>
-              <span>4人チーム</span>
-            </button>
-          </div>
-          <div class="party-select cpu-fill-select" id="lobbyCpuFillSelect" role="group" aria-label="CP補充">
-            <button type="button" class="active" data-cpu-fill="on">
-              <strong>CPあり</strong>
-              <span>不足分を補充</span>
-            </button>
-            <button type="button" data-cpu-fill="off">
-              <strong>CPなし</strong>
-              <span>人間だけで対戦</span>
-            </button>
-          </div>
-          <div class="party-select relation-select" id="relationSelect" role="group" aria-label="プレイヤー関係">
-            <button type="button" data-relation="coop">
-              <strong>協力</strong>
-              <span>人間は仲間</span>
-            </button>
-            <button type="button" class="active" data-relation="versus">
-              <strong>対戦</strong>
-              <span>人間同士も敵</span>
-            </button>
-          </div>
-          <div class="team-select" id="teamSelect" role="group" aria-label="チーム選択">
-            <button type="button" class="active" data-team="auto">
-              <strong>自動</strong>
-              <span>人数で振分</span>
-            </button>
-            <button type="button" data-team="blue">
-              <strong>青チーム</strong>
-              <span>協力して守る</span>
-            </button>
-            <button type="button" data-team="red">
-              <strong>赤チーム</strong>
-              <span>協力して攻める</span>
-            </button>
-          </div>
-          <div class="join-actions">
-            <button id="createRoom">自動マッチ開始</button>
-            <div class="room-join-row">
-              <label for="roomInput">
-                ルームコード
-                <input id="roomInput" maxlength="6" placeholder="ABC123" autocomplete="off" autocapitalize="characters" inputmode="latin" />
-              </label>
-              <button id="joinRoom" type="button">FPS入室</button>
             </div>
-            <small class="global-room-note">FPSは全員が共通ルーム DONPCH に入ります。招待リンクを開くと自動参加できます。</small>
-            <div class="baccarat-lobby-band">
-              <header>
-                <div>
-                  <span>DonPaChi TABLE</span>
-                  <strong>チップバカラ</strong>
+            <div class="lobby-live-state">
+              <span><i></i> ONLINE</span>
+              <strong id="lobbyHeaderWallet">2,000 Don</strong>
+            </div>
+          </header>
+
+          <div class="lobby-command-grid">
+            <aside class="lobby-profile-rail">
+              <div class="login-card" id="loginCard">
+                <header>
+                  <span><i data-lucide="lock-keyhole"></i> セキュアアカウント</span>
+                  <strong id="loginStatus">未ログイン</strong>
+                </header>
+                <label>
+                  ログインID
+                  <input id="loginIdInput" maxlength="32" placeholder="6-32文字 / 英数字・_・-" autocomplete="username" autocapitalize="none" inputmode="latin" />
+                </label>
+                <label>
+                  パスワード
+                  <input id="loginPasswordInput" type="password" maxlength="72" placeholder="英字+数字を含む10文字以上" autocomplete="current-password" autocapitalize="none" />
+                </label>
+                <div class="login-actions">
+                  <button id="createLoginId" type="button">新規作成・移行</button>
+                  <button id="loginProfile" type="button">ログイン</button>
                 </div>
-                <span>8デッキ / 12秒ベット / 全員共通卓</span>
-              </header>
-              <button id="baccaratChaosConsent" class="baccarat-chaos-consent" type="button" aria-pressed="false">
-                <span>
-                  <strong>公開CHAOSルールに同意する</strong>
-                  <small>優遇対象プレイヤーの最大ベット先は99.9%で的中します。全員の共通Donが実際に増減します。</small>
-                </span>
-              </button>
-              <button id="joinBaccaratRoom" type="button" disabled>同意後にバカラへ</button>
-              <button id="joinBaccaratQaRoom" class="baccarat-qa-entry" type="button" hidden>検証用バカラへ</button>
-              <small>ロビーの共通Don残高をそのまま使用。FPS報酬も同じ残高へ加算されます。</small>
-              <small id="baccaratQaEntryNote" class="baccarat-qa-note" hidden>指定検証アカウント専用・仮想Don・報酬なし・最大ベット先99.9%</small>
-            </div>
+                <small id="accountSecurityNote">暗号化バックアップとログイン試行制限で保護されます。</small>
+              </div>
+
+              <label class="nickname-field">
+                ニックネーム
+                <input id="nameInput" maxlength="14" placeholder="プレイヤー" autocomplete="nickname" />
+              </label>
+
+              <div class="skin-section">
+                <header><strong>スキン</strong><span>購入品は自動保存</span></header>
+                <div class="skin-select" id="skinSelect" role="group" aria-label="スキン選択">
+                  <button type="button" class="active" data-skin="rounded">
+                    <b class="skin-preview skin-rounded"></b>
+                    <strong>まる型</strong>
+                  </button>
+                  <button type="button" data-skin="scout">
+                    <b class="skin-preview skin-scout"></b>
+                    <strong>軽量</strong>
+                  </button>
+                  <button type="button" data-skin="heavy">
+                    <b class="skin-preview skin-heavy"></b>
+                    <strong>重装</strong>
+                  </button>
+                  <button type="button" data-skin="bee">
+                    <b class="skin-preview skin-bee"></b>
+                    <strong>ハチ</strong>
+                  </button>
+                </div>
+              </div>
+
+              <div class="progress-card" id="progressCard" aria-label="Donランク">
+                <header>
+                  <div>
+                    <span>プレイヤーレベル</span>
+                    <strong id="progressRank">読み込み中</strong>
+                  </div>
+                  <div class="shared-wallet-summary">
+                    <span>共通ウォレット</span>
+                    <strong id="lobbyWalletDon">2,000 Don</strong>
+                  </div>
+                </header>
+                <div class="progress-meter"><i id="progressMeter"></i></div>
+                <div class="progress-stats" id="progressStats">戦績を読み込み中</div>
+                <small id="progressHint">次のレベルまで</small>
+                <div class="combat-bonus-row" id="combatBonusRow">
+                  <span>攻撃 +0%</span><span>防御 +0%</span><span>回復 5</span>
+                </div>
+              </div>
+            </aside>
+
+            <main class="lobby-main-stage">
+              <div class="lobby-tabs" role="tablist" aria-label="ロビー表示">
+                <button id="lobbyMatchTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="lobbyMatchPane"><i data-lucide="crosshair"></i> マッチ</button>
+                <button id="lobbyShopTab" type="button" role="tab" aria-selected="false" aria-controls="lobbyShopPane"><i data-lucide="shopping-bag"></i> ショップ・強化</button>
+              </div>
+
+              <section class="lobby-tab-pane active" id="lobbyMatchPane" role="tabpanel">
+                <div class="lobby-setting-block lobby-mode-block">
+                  <header><strong>ゲームモード</strong><span>プレイスタイルを選択</span></header>
+                  <div class="mode-select" id="modeSelect" role="group" aria-label="ゲームモード">
+                    <button type="button" class="active" data-mode="oneLife"><strong>ワンライフ</strong><span>一回死亡で終了</span></button>
+                    <button type="button" data-mode="practice"><strong>練習</strong><span>復活ありで練習</span></button>
+                    <button type="button" data-mode="life3"><strong>ライフ3</strong><span>3ライフ制</span></button>
+                    <button type="button" data-mode="castle"><strong>城攻め</strong><span>敵の白を破壊</span></button>
+                  </div>
+                </div>
+
+                <div class="lobby-setting-columns">
+                  <div class="lobby-setting-block">
+                    <header><strong>チーム人数</strong><span>自動マッチ</span></header>
+                    <div class="party-select" id="partySelect" role="group" aria-label="マッチ人数">
+                      <button type="button" class="active" data-party="1"><strong>シングル</strong><span>1人</span></button>
+                      <button type="button" data-party="2"><strong>デュオ</strong><span>2人</span></button>
+                      <button type="button" data-party="4"><strong>スクワッド</strong><span>4人</span></button>
+                    </div>
+                  </div>
+                  <div class="lobby-setting-block">
+                    <header><strong>CP補充</strong><span>最大13体</span></header>
+                    <div class="party-select cpu-fill-select" id="lobbyCpuFillSelect" role="group" aria-label="CP補充">
+                      <button type="button" class="active" data-cpu-fill="on"><strong>CPあり</strong><span>不足補充</span></button>
+                      <button type="button" data-cpu-fill="off"><strong>CPなし</strong><span>人間のみ</span></button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="lobby-setting-columns">
+                  <div class="lobby-setting-block">
+                    <header><strong>対戦関係</strong><span>人間同士の関係</span></header>
+                    <div class="party-select relation-select" id="relationSelect" role="group" aria-label="プレイヤー関係">
+                      <button type="button" data-relation="coop"><strong>協力</strong><span>人間は仲間</span></button>
+                      <button type="button" class="active" data-relation="versus"><strong>対戦</strong><span>人間も敵</span></button>
+                    </div>
+                  </div>
+                  <div class="lobby-setting-block">
+                    <header><strong>所属チーム</strong><span>いつでも変更可能</span></header>
+                    <div class="team-select" id="teamSelect" role="group" aria-label="チーム選択">
+                      <button type="button" class="active" data-team="auto"><strong>自動</strong><span>均等</span></button>
+                      <button type="button" data-team="blue"><strong>青</strong><span>BLUE</span></button>
+                      <button type="button" data-team="red"><strong>赤</strong><span>RED</span></button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="join-actions">
+                  <button id="createRoom"><i data-lucide="crosshair"></i><span>自動マッチ開始</span></button>
+                  <div class="room-join-row">
+                    <label for="roomInput">ルームコード<input id="roomInput" maxlength="6" placeholder="DONPCH" autocomplete="off" autocapitalize="characters" inputmode="latin" /></label>
+                    <button id="joinRoom" type="button">FPS入室</button>
+                  </div>
+                  <small class="global-room-note">共通ルーム DONPCH。CPありの場合も最大13体に制限されます。</small>
+                </div>
+
+                <div class="baccarat-lobby-band">
+                  <header><div><span>DonPaChi TABLE</span><strong>チップバカラ</strong></div><span>全員共通卓</span></header>
+                  <button id="baccaratChaosConsent" class="baccarat-chaos-consent" type="button" aria-pressed="false"><span><strong>公開CHAOSルールに同意する</strong><small>表示ルールへ同意した場合のみ参加できます。</small></span></button>
+                  <button id="joinBaccaratRoom" type="button" disabled>同意後にバカラへ</button>
+                  <button id="joinBaccaratQaRoom" class="baccarat-qa-entry" type="button" hidden>検証用バカラへ</button>
+                  <small>FPS報酬と同じ共通Donを使用します。</small>
+                  <small id="baccaratQaEntryNote" class="baccarat-qa-note" hidden>指定検証アカウント専用・仮想Don・報酬なし</small>
+                </div>
+              </section>
+
+              <section class="lobby-tab-pane" id="lobbyShopPane" role="tabpanel" hidden>
+                <header class="shop-hero">
+                  <div><span>DON ARMORY</span><strong>装備・アイテム・スキン</strong></div>
+                  <div><span>利用可能</span><strong id="shopWalletDon">2,000 Don</strong></div>
+                </header>
+                <div class="shop-benefit-strip" id="shopBenefitStrip"><span>攻撃 +0%</span><span>防御 +0%</span><span>開始回復 5</span></div>
+                <div class="shop-catalog" id="shopCatalog"><p>ログインすると商品を読み込みます。</p></div>
+              </section>
+            </main>
           </div>
-          <div class="online-panel">
-            <strong>現在オンライン</strong>
-            <div id="onlinePlayers">確認中...</div>
-          </div>
-          <button id="updateLogButton" class="update-log-button" type="button">アップデート内容を見る</button>
-          <small>クリックで視点操作、WASDで移動、左クリックで射撃、Qで必殺技。</small>
+
+          <footer class="lobby-command-footer">
+            <div class="online-panel"><strong><i data-lucide="users"></i> 現在オンライン</strong><div id="onlinePlayers">確認中...</div></div>
+            <button id="updateLogButton" class="update-log-button" type="button">アップデート内容</button>
+          </footer>
         </div>
       </section>
 
@@ -460,6 +474,11 @@
           <div class="update-log-list">
             <article>
               <b>最新</b>
+              <strong>PROGRESSION 2.0 成長・セキュアショップ更新</strong>
+              <p>キル中心の試合XP、永続する攻撃・防御・回復強化、Donショップ、購入スキン、暗号化アカウント復元を追加。CP上限を13体へ調整し、無限予備弾、安定リロード、アイテム出現率も改善しました。</p>
+            </article>
+            <article>
+              <b>品質</b>
               <strong>QUALITY 6.0 ワールド品質・安定性更新</strong>
               <p>空・接地影・建材・銃素材・薬莢・着弾火花を軽量化したまま強化。武器切替の弾薬回復、3Dリソース漏れ、スポーン直後のCP集中攻撃、描画解像度の頻繁な変動を修正しました。</p>
             </article>
