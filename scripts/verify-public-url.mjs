@@ -165,7 +165,8 @@ const baccaratProbe = await new Promise((resolve, reject) => {
   ws.on("open", () => ws.send(JSON.stringify({
     type: "baccarat_join",
     name: `Table${Math.random().toString(36).slice(2, 7)}`,
-    guestToken: baccaratWalletToken
+    guestToken: baccaratWalletToken,
+    chaosConsent: true
   })));
   ws.on("message", (raw) => {
     const message = JSON.parse(String(raw));
@@ -184,12 +185,12 @@ const baccaratProbe = await new Promise((resolve, reject) => {
 });
 
 await waitFor(() => baccaratProbe.state.snapshots.some((table) => (
-  table.version === "BACCARAT 1.2"
+  table.version === "BACCARAT 1.3"
   && table.table === "DONBAC"
   && table.phase === "betting"
   && table.viewer?.chips >= 10
   && table.participantCount >= 1
-)), "public BACCARAT 1.1 shared table accepts a lobby wallet", 20_000);
+)), "public BACCARAT 1.3 shared table accepts a lobby wallet", 20_000);
 send(baccaratProbe.ws, { type: "baccarat_action", action: "bet", target: "player", amount: 10 });
 await waitFor(() => baccaratProbe.state.snapshots.some((table) => table.viewer?.bets?.player === 10), "public baccarat table records an authoritative bet");
 send(baccaratProbe.ws, { type: "baccarat_action", action: "undo" });
@@ -197,4 +198,4 @@ await waitFor(() => baccaratProbe.state.snapshots.at(-1)?.viewer?.bets?.player =
 send(baccaratProbe.ws, { type: "baccarat_leave" });
 baccaratProbe.ws.close(1000, "leave");
 
-console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.2 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
+console.log(`public verify passed: ${baseUrl.origin}, room ${probe.state.room}, QUALITY 6.0, MATCH 5.0 and BACCARAT 1.3 active, lobby wallet initialized before both games, shared DONBAC bet verified, assets ${assetNames.join(", ")}`);
