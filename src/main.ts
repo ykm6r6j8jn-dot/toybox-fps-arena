@@ -455,6 +455,7 @@ const settingsModeSelect = $("#settingsModeSelect");
 const settingsTeamSelect = $("#settingsTeamSelect");
 const settingsRelationSelect = $("#settingsRelationSelect");
 const createRoomButton = $("#createRoom") as HTMLButtonElement;
+const createRoomLabel = createRoomButton.querySelector("span")!;
 const roomInput = $("#roomInput") as HTMLInputElement;
 const joinRoomButton = $("#joinRoom") as HTMLButtonElement;
 const joinBaccaratRoomButton = $("#joinBaccaratRoom") as HTMLButtonElement;
@@ -913,12 +914,13 @@ let fpsReconnectWanted = false;
 let fpsConnectionRecovering = false;
 let fpsReconnectAttempt = 0;
 let fpsReconnectTimer = 0;
+let matchJoinPendingTimer = 0;
 let pingTimer = 0;
 let lastStateSent = 0;
 let lastSentMotionState: { x: number; y: number; z: number; yaw: number; pitch: number } | null = null;
 let reloadTimer = 0;
 let reloadWeaponIndex = -1;
-let roundSeconds = 525;
+let roundStartedAt = 0;
 let targetScore = 0;
 let gameMode: GameMode = "oneLife";
 let arenaChoice: ArenaId = "toybox";
@@ -1212,7 +1214,6 @@ function gameModeLabel(mode: GameMode) {
 
 function setGameMode(mode: GameMode) {
   gameMode = mode;
-  if (mode === "castle" && !castleEndsAt) roundSeconds = 240;
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
@@ -4312,6 +4313,7 @@ function applyMatchLifecycle(snapshot: Record<string, unknown>) {
   const changed = nextPhase !== matchPhase;
   matchPhase = nextPhase;
   matchPhaseEndsAt = Math.max(0, Number(snapshot.phaseEndsAt) || 0);
+  roundStartedAt = Math.max(0, Number(snapshot.roundStartedAt) || 0);
   matchHumanCount = Math.max(0, Math.floor(Number(snapshot.humanCount) || 0));
   matchReadyHumans = Math.max(0, Math.floor(Number(snapshot.readyHumans) || 0));
   matchMinimumHumans = Math.max(1, Math.floor(Number(snapshot.minimumHumans) || 1));
@@ -4405,8 +4407,13 @@ updateLogPanel.addEventListener("click", (event) => {
 });
 scoreboardToggle.addEventListener("click", () => scoreboard.classList.toggle("open"));
 closeScoreboard.addEventListener("click", () => scoreboard.classList.remove("open"));
-settingsButton.addEventListener("click", () => settingsPanel.classList.toggle("open"));
-closeSettings.addEventListener("click", () => settingsPanel.classList.remove("open"));
+function setSettingsOpen(open: boolean) {
+  settingsPanel.classList.toggle("open", open);
+  document.body.classList.toggle("settings-open", open);
+}
+
+settingsButton.addEventListener("click", () => setSettingsOpen(!settingsPanel.classList.contains("open")));
+closeSettings.addEventListener("click", () => setSettingsOpen(false));
 audioUnlockButton.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   setSoundEnabled(true);
@@ -5026,6 +5033,27 @@ function joinTypedRoom() {
   void join(globalFpsRoomCode);
 }
 
+function setMatchJoinPending(pending: boolean) {
+  if (matchJoinPendingTimer) window.clearTimeout(matchJoinPendingTimer);
+  matchJoinPendingTimer = 0;
+  createRoomButton.disabled = pending;
+  joinRoomButton.disabled = pending;
+  createRoomButton.setAttribute("aria-busy", String(pending));
+  createRoomLabel.textContent = pending ? "接続中..." : "自動マッチ開始";
+  document.body.classList.toggle("match-connecting", pending);
+  if (!pending) return;
+  matchJoinPendingTimer = window.setTimeout(() => {
+    matchJoinPendingTimer = 0;
+    if (self.joined) return;
+    createRoomButton.disabled = false;
+    joinRoomButton.disabled = false;
+    createRoomButton.setAttribute("aria-busy", "false");
+    createRoomLabel.textContent = "接続を再試行";
+    document.body.classList.remove("match-connecting");
+    showToast("接続に時間がかかっています。もう一度押すと再試行できます。");
+  }, 9000);
+}
+
 function setConnectionRecovery(active: boolean, detail = "試合状態を保持しています") {
   fpsConnectionRecovering = active;
   connectionRecovery.classList.toggle("show", active);
@@ -5291,18 +5319,14 @@ function sendBaccaratAction(action: "bet" | "undo" | "clear" | "repeat" | "confi
 
 async function join(room: string) {
   if (createRoomButton.disabled || joinRoomButton.disabled) return;
-  createRoomButton.disabled = true;
-  joinRoomButton.disabled = true;
+  setMatchJoinPending(true);
   try {
     await syncSharedWallet(true);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "共通Donを同期できませんでした。");
-    createRoomButton.disabled = false;
-    joinRoomButton.disabled = false;
+    setMatchJoinPending(false);
     return;
   }
-  createRoomButton.disabled = false;
-  joinRoomButton.disabled = false;
   const name = sanitizePlayerNameInput();
   nameInput.value = name;
   localStorage.setItem("toybox-name", name);
@@ -5417,6 +5441,7 @@ function handleMessage(event: MessageEvent<string>) {
       renderProgressCard();
     }
     fpsReconnectAttempt = 0;
+    setMatchJoinPending(false);
     setConnectionRecovery(false);
     if (!resumed) {
       lastFpsProgressReward = { gained: 0, leveled: false, level: progressInfo().level, reason: "" };
@@ -5557,9 +5582,6 @@ function handleMessage(event: MessageEvent<string>) {
       resultPanel.classList.remove("open");
     }
     castleEndsAt = Number(message.castleEndsAt) || 0;
-    if (gameMode === "castle" && castleEndsAt && typeof message.now === "number") {
-      roundSeconds = Math.max(0, (castleEndsAt - Number(message.now)) / 1000);
-    }
     const incomingPlayers = (message.players || []) as PlayerState[];
     syncPlayerMotionSnapshots(incomingPlayers, snapshotAt);
     syncVehicleSnapshots((message.vehicles || []) as VehicleSnapshot[], snapshotAt);
@@ -6075,11 +6097,12 @@ function updateLobbyBgm() {
 function setFpsActive(active: boolean) {
   document.body.classList.toggle("game-active", active);
   if (!active) {
+    setMatchJoinPending(false);
     for (const phase of ["waiting", "countdown", "active", "result"] as MatchPhase[]) document.body.classList.remove(`match-${phase}`);
     matchPhaseBanner.classList.remove("show");
     document.body.classList.remove("members-open");
     scoreboard.classList.remove("open");
-    settingsPanel.classList.remove("open");
+    setSettingsOpen(false);
   }
 }
 
@@ -9246,10 +9269,17 @@ function animate() {
   updateMeasuredFps(now);
   updateAdaptiveQuality(delta, now);
   updateMatchPhaseHud(now);
-  roundSeconds = Math.max(0, roundSeconds - delta);
-  const minutes = Math.floor(roundSeconds / 60).toString().padStart(2, "0");
-  const seconds = Math.floor(roundSeconds % 60).toString().padStart(2, "0");
-  const clockText = `${minutes}:${seconds}`;
+  const serverNow = Date.now() + serverClockOffsetMs;
+  const clockSeconds = matchPhase === "countdown" && matchPhaseEndsAt > 0
+    ? Math.max(0, (matchPhaseEndsAt - serverNow) / 1000)
+    : matchPhase === "active" && gameMode === "castle" && castleEndsAt > 0
+      ? Math.max(0, (castleEndsAt - serverNow) / 1000)
+      : matchPhase === "active" && roundStartedAt > 0
+        ? Math.max(0, (serverNow - roundStartedAt) / 1000)
+        : -1;
+  const minutes = Math.floor(Math.max(0, clockSeconds) / 60).toString().padStart(2, "0");
+  const seconds = Math.floor(Math.max(0, clockSeconds) % 60).toString().padStart(2, "0");
+  const clockText = clockSeconds < 0 ? "--:--" : `${minutes}:${seconds}`;
   if (clockText !== lastClockText) {
     lastClockText = clockText;
     roundClock.textContent = clockText;

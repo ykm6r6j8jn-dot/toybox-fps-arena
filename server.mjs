@@ -5201,13 +5201,23 @@ function syncMatchCpuFill(room) {
     if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
   }
   let botIndex = 0;
-  for (const team of ["blue", "red"]) {
-    const needed = Math.max(0, teamTarget - counts[team]);
-    for (let i = 0; i < needed && botIndex < maxCpuPlayers && room.players.size < maxPlayers; i += 1) {
-      const id = `cpu-${room.code}-match-${team}-${i}`;
-      room.players.set(id, createCpuPlayer(room, id, botIndex, team));
-      botIndex += 1;
-    }
+  while (botIndex < maxCpuPlayers && room.players.size < maxPlayers) {
+    const blueAvailable = counts.blue < teamTarget;
+    const redAvailable = counts.red < teamTarget;
+    if (!blueAvailable && !redAvailable) break;
+    const team = !blueAvailable
+      ? "red"
+      : !redAvailable
+        ? "blue"
+        : counts.blue < counts.red
+          ? "blue"
+          : counts.red < counts.blue
+            ? "red"
+            : botIndex % 2 === 0 ? "blue" : "red";
+    const id = `cpu-${room.code}-match-${team}-${botIndex}`;
+    room.players.set(id, createCpuPlayer(room, id, botIndex, team));
+    counts[team] += 1;
+    botIndex += 1;
   }
   room.cpuCount = botIndex;
 }

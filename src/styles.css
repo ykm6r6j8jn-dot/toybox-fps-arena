@@ -5289,6 +5289,19 @@ body.celebrating::after {
 }
 
 @media (pointer: coarse), (max-height: 520px) and (orientation: landscape) {
+  body.settings-open .mobile-controls,
+  body.settings-open .donpunch-button,
+  body.settings-open .chat-panel,
+  body.settings-open .damage-feed,
+  body.settings-open .flow-card,
+  body.settings-open .focus-task-card,
+  body.settings-open .bounty-card,
+  body.settings-open .zone-status,
+  body.settings-open .vehicle-status {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
   body.game-active .top-left,
   body.game-active #resetButton,
   body.game-active #scoreboardToggle,

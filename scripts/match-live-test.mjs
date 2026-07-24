@@ -90,6 +90,14 @@ try {
   }, "server-owned warmup with CPU fill");
 
   const waitingSnapshot = latest(alpha);
+  const waitingTeamCounts = waitingSnapshot.players.reduce((counts, player) => {
+    if (player.color === "blue" || player.color === "red") counts[player.color] += 1;
+    return counts;
+  }, { blue: 0, red: 0 });
+  assert.ok(
+    Math.abs(waitingTeamCounts.blue - waitingTeamCounts.red) <= 1,
+    `CPU fill must keep teams balanced, received ${waitingTeamCounts.blue}v${waitingTeamCounts.red}`
+  );
   const waitingBots = new Map(waitingSnapshot.players.filter((player) => player.isBot).map((player) => [player.id, { x: player.x, y: player.y, z: player.z }]));
   const shotsBeforeWarmupProbe = alpha.state.shots.length;
   const me = waitingSnapshot.players.find((player) => player.id === alpha.state.id);
