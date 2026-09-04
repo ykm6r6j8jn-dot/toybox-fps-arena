@@ -55,8 +55,8 @@
         </button>
         <button id="muteButton" class="icon-button" aria-label="ミュート" title="ミュート"><i data-lucide="mic-off"></i></button>
         <button id="settingsButton" class="icon-button" aria-label="設定" title="設定"><i data-lucide="settings"></i></button>
-        <button id="resetButton" class="hud-button"><span>リセット</span></button>
-        <button id="scoreboardToggle" class="hud-button"><span class="keycap">Tab</span><span>スコアボード</span></button>
+        <button id="resetButton" class="hud-button" aria-label="リセット" title="リセット"><i data-lucide="rotate-ccw"></i></button>
+        <button id="scoreboardToggle" class="hud-button" aria-label="スコアボード" title="スコアボード"><i data-lucide="users"></i><span class="keycap">Tab</span></button>
       </section>
 
       <section class="connection-recovery" id="connectionRecovery" role="status" aria-live="assertive">
@@ -95,11 +95,14 @@
           <div>
             <strong><span id="health">200</span><small>/200</small></strong>
             <div class="health-bar"><span id="healthBar"></span></div>
+            <small class="combat-status" id="combatStatus">回復 5</small>
           </div>
         </div>
         <div class="ammo-card">
+          <b class="weapon-name" id="weaponName">AR</b>
           <strong><span id="ammo">30</span><small>/<span id="reserveAmmo">∞</span></small></strong>
           <span id="weaponRange">飛距離 --m</span>
+          <div class="reload-progress" id="reloadProgress" role="progressbar" aria-label="リロード" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
         </div>
         <div class="movement-card">
           <strong id="movementStatus">WALK  高度 0.0m</strong>
@@ -109,6 +112,7 @@
       </section>
 
       <section class="hit-marker" id="hitMarker">HIT</section>
+      <section class="elimination-notice" id="eliminationNotice" role="status" aria-live="polite"></section>
       <section class="damage-direction" id="damageDirection" aria-hidden="true"><i></i></section>
       <section class="damage-feed" id="damageFeed" aria-live="polite"></section>
       <section class="flow-card" id="flowCard" aria-live="polite">
@@ -207,6 +211,10 @@
           <span>音</span>
           <button id="soundToggle" class="setting-toggle" type="button">ON</button>
         </div>
+        <label class="setting-row comfort-setting">
+          <span>カメラの揺れを軽減</span>
+          <input id="visualComfort" type="checkbox" />
+        </label>
         <div class="setting-row">
           <span>CP</span>
           <div class="cpu-buttons" id="cpuButtons">
@@ -478,7 +486,12 @@
           </header>
           <div class="update-log-list">
             <article>
-              <b>最新</b>
+              <b>最新 · 2026.09.05</b>
+              <strong>QUALITY 7.0 都市・銃撃リニューアル</strong>
+              <p>実寸のコンクリート素材、街路、建物の陰影、金属の反射を刷新。全銃に精密照準、立体的な銃モデル、弾倉交換アニメーション、残弾・回復・撃破表示を追加。車内リロードの停止と発射時の照準ずれを修正し、カメラの揺れを減らす設定も追加しました。</p>
+            </article>
+            <article>
+              <b>戦術</b>
               <strong>TACTICS 2.1 スムーズCP・賞金首更新</strong>
               <p>CPの移動を180msごとに更新し、重い視界・標的判断だけを低頻度化。段階的な移動を改善し、24秒の賞金首イベントと撃破時の回復・必殺ゲージ・装備報酬を追加しました。</p>
             </article>

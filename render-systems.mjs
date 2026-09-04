@@ -7,6 +7,34 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+export function projectBoxShadow(box, sun) {
+  if (!box?.min || !box?.max || !sun || !Number.isFinite(sun.y) || sun.y <= 0) return [];
+  const points = [];
+  for (const x of [box.min.x, box.max.x]) {
+    for (const z of [box.min.z, box.max.z]) {
+      for (const y of [box.min.y, box.max.y]) {
+        const height = Math.max(0, y);
+        const point = { x: x - height * sun.x / sun.y, z: z - height * sun.z / sun.y };
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.z)) return [];
+        points.push(point);
+      }
+    }
+  }
+  points.sort((a, b) => a.x - b.x || a.z - b.z);
+  const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+  const lower = [];
+  const upper = [];
+  for (const point of points) {
+    while (lower.length >= 2 && cross(lower.at(-2), lower.at(-1), point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  for (const point of [...points].reverse()) {
+    while (upper.length >= 2 && cross(upper.at(-2), upper.at(-1), point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
+}
+
 export function nextAdaptivePixelRatio(state = {}, sample = {}) {
   const minimum = Math.max(0.5, finite(sample.minimum, 1));
   const maximum = Math.max(minimum, finite(sample.maximum, minimum));

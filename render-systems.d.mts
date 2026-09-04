@@ -5,6 +5,11 @@ export type AdaptiveQualityState = {
   lastChangedAt?: number;
 };
 
+export function projectBoxShadow(
+  box: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } },
+  sun: { x: number; y: number; z: number }
+): { x: number; z: number }[];
+
 export type AdaptiveQualitySample = {
   frameAverageMs: number;
   now: number;

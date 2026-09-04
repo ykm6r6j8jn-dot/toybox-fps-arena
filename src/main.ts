@@ -1,5 +1,8 @@
 import "./styles.css";
+import "./combat-polish.css";
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { applyWorldMaterial, createBakedGroundShadow, createDaylightEnvironment } from "./arena-presentation";
 import ArrowDown from "lucide/dist/esm/icons/arrow-down.js";
 import ArrowLeft from "lucide/dist/esm/icons/arrow-left.js";
 import ArrowRight from "lucide/dist/esm/icons/arrow-right.js";
@@ -751,6 +754,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.02;
 renderer.shadowMap.enabled = dynamicShadowsAllowed;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.autoClear = false;
+renderer.info.autoReset = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x68bdf0);
@@ -758,6 +763,20 @@ scene.fog = new THREE.Fog(0xa8d9ed, 124, 226);
 
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 220);
 camera.position.set(0, 1.6, 8);
+const weaponScene = new THREE.Scene();
+const weaponCamera = new THREE.PerspectiveCamera(68, camera.aspect, 0.02, 10);
+const reticle = document.querySelector(".center-reticle") as HTMLElement;
+const reloadProgressEl = document.querySelector("#reloadProgress") as HTMLElement;
+const combatStatusEl = document.querySelector("#combatStatus") as HTMLElement;
+const weaponNameEl = document.querySelector("#weaponName") as HTMLElement;
+const eliminationEl = document.querySelector("#eliminationNotice") as HTMLElement;
+const visualComfortToggle = document.querySelector("#visualComfort") as HTMLInputElement;
+let visualComfort = localStorage.getItem("donpachi-visual-comfort") === "on";
+visualComfortToggle.checked = visualComfort;
+visualComfortToggle.addEventListener("change", () => {
+  visualComfort = visualComfortToggle.checked;
+  localStorage.setItem("donpachi-visual-comfort", visualComfort ? "on" : "off");
+});
 
 const clock = new THREE.Clock();
 const playerMeshes = new Map<string, THREE.Group>();
@@ -919,6 +938,8 @@ let pingTimer = 0;
 let lastStateSent = 0;
 let lastSentMotionState: { x: number; y: number; z: number; yaw: number; pitch: number } | null = null;
 let reloadTimer = 0;
+let reloadDuration = 1.15;
+let reloadEndsAt = 0;
 let reloadWeaponIndex = -1;
 let roundStartedAt = 0;
 let targetScore = 0;
@@ -951,19 +972,23 @@ let hitMarkerTotal = 0;
 let lastHitMarkerAt = 0;
 let lastHitMarkerMode = "";
 let weaponSwayClock = 0;
+let weaponAimBlend = 0;
+let eliminationUntil = 0;
+let lastCombatHudAt = 0;
 let muzzleFlashMesh: THREE.Group | null = null;
 let muzzleFlashLight: THREE.PointLight | null = null;
 let muzzleFlashUntil = 0;
 let sunLight: THREE.DirectionalLight | null = null;
+let skyDome: THREE.Mesh | null = null;
 let dynamicShadowsEnabled = dynamicShadowsAllowed;
 let shadowPerformanceDrops = 0;
 
 const palette = {
   concrete: 0xe2e3df,
   white: 0xf3f4f1,
-  blue: 0x177fd2,
-  green: 0x78c943,
-  yellow: 0xf3c83e,
+  blue: 0x287fa4,
+  green: 0x83aa59,
+  yellow: 0xeac755,
   red: 0xe95d4c,
   orange: 0xe79a46,
   purple: 0x7568d8,
@@ -1958,6 +1983,7 @@ const wallTexture = createConcreteTexture(5119, "#e3e4e1", 3.4, 3.4);
 
 const materials = {
   floor: makeTexturedMaterial(0xe8e9e6, floorTexture, 0.92, 0.036),
+  asphalt: makeTexturedMaterial(0x647076, floorTexture, 0.96),
   wall: makeTexturedMaterial(0xf3f4f1, wallTexture, 0.84, 0.058),
   blue: makeTexturedMaterial(palette.blue, blockGrainTexture, 0.72, 0.024),
   green: makeTexturedMaterial(palette.green, blockGrainTexture, 0.72, 0.024),
@@ -1970,7 +1996,8 @@ const materials = {
   metal: makeMaterial(0x46515a, 0.34),
   rubber: makeMaterial(0x10161b, 0.72),
   light: new THREE.MeshBasicMaterial({ color: 0xfff0a8 }),
-  glass: new THREE.MeshStandardMaterial({ color: 0x8bd7ff, roughness: 0.2, metalness: 0.02, transparent: true, opacity: 0.34 })
+  glass: new THREE.MeshStandardMaterial({ color: 0x8bd7ff, roughness: 0.2, metalness: 0.02, transparent: true, opacity: 0.34 }),
+  glazing: new THREE.MeshStandardMaterial({ color: 0x3e6473, roughness: 0.27, metalness: 0.5, envMapIntensity: 0.85 })
 };
 const weaponMaterials = {
   metal: new THREE.MeshStandardMaterial({ color: 0x46535d, roughness: 0.38, metalness: 0.52, envMapIntensity: 0.72 }),
@@ -1978,6 +2005,18 @@ const weaponMaterials = {
   steel: new THREE.MeshStandardMaterial({ color: 0x303b43, roughness: 0.34, metalness: 0.62, envMapIntensity: 0.76 }),
   brass: new THREE.MeshStandardMaterial({ color: 0xc4943d, roughness: 0.38, metalness: 0.58 })
 };
+for (const key of ["floor", "asphalt", "wall", "blue", "green", "yellow", "red", "orange", "purple", "cyan"] as const) {
+  applyWorldMaterial(materials[key], key === "floor" ? 0.2 : 0.42);
+}
+new THREE.TextureLoader().load("/textures/concrete-v7.jpg", (texture) => {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  materials.wall.map = texture;
+  materials.wall.needsUpdate = true;
+}, undefined, () => {
+  // The procedural material remains available offline or on an interrupted download.
+});
 const sharedUnitBoxGeometry = new THREE.BoxGeometry(1, 1, 1);
 const sharedUnitShadowGeometry = new THREE.PlaneGeometry(1, 1);
 const sharedGeometryResources = new Set<THREE.BufferGeometry>([
@@ -1989,7 +2028,7 @@ const shadowMaterial = new THREE.MeshBasicMaterial({
   color: 0x07121d,
   map: contactShadowTexture,
   transparent: true,
-  opacity: dynamicShadowsEnabled ? 0.1 : 0.32,
+  opacity: dynamicShadowsEnabled ? 0.1 : 0.18,
   depthWrite: false
 });
 const shellCasingGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.11, 8);
@@ -2002,9 +2041,12 @@ const sharedMaterialResources = new Set<THREE.Material>([
 ]);
 
 function addLights() {
-  scene.add(new THREE.HemisphereLight(0xe9f7ff, 0x7d8b7d, 1.08));
-  scene.add(new THREE.AmbientLight(0xd7eaff, 0.13));
-  const sun = new THREE.DirectionalLight(0xfff0cf, 3.0);
+  const environment = createDaylightEnvironment(renderer);
+  scene.environment = environment.texture;
+  weaponScene.environment = environment.texture;
+  scene.add(new THREE.HemisphereLight(0xe9f7ff, 0x677162, 0.85));
+  scene.add(new THREE.AmbientLight(0xd7eaff, 0.08));
+  const sun = new THREE.DirectionalLight(0xfff5df, 2.35);
   sun.position.set(42, 72, 36);
   sun.castShadow = dynamicShadowsEnabled;
   sun.shadow.mapSize.set(1024, 1024);
@@ -2023,6 +2065,10 @@ function addLights() {
   const rim = new THREE.DirectionalLight(0x7cc9ff, 0.22);
   rim.position.set(-28, 18, -32);
   scene.add(rim);
+  weaponScene.add(new THREE.HemisphereLight(0xf2f8ff, 0x5c6157, 1.35));
+  const weaponKey = new THREE.DirectionalLight(0xfff4df, 2.8);
+  weaponKey.position.set(-3, 5, 2);
+  weaponScene.add(weaponKey);
 }
 
 function addSoftShadow(name: string, position: [number, number, number], scale: [number, number, number]) {
@@ -2043,6 +2089,7 @@ function addBox(
   material: THREE.Material,
   collidable = true
 ) {
+  if (material === materials.glass && scale[1] >= 9) material = materials.glazing;
   const box = new THREE.Mesh(sharedUnitBoxGeometry, material);
   box.name = name;
   box.position.set(position[0], position[1], position[2]);
@@ -3440,8 +3487,64 @@ function addToyboxArena() {
   addSign("BROADCAST", [0, 7.0, 45.75], 0, "#2fc4bf");
   addSign("ROOF ROUTE", [15, 4.8, -17.72], Math.PI, "#93e43c");
   addSign("CENTER", [0, 2.35, -57.45], Math.PI, "#111827");
+  addUrbanSurfaceDetails();
+  trackArenaObject(createBakedGroundShadow(colliders, isCoarsePointer() ? 1024 : 2048));
   rebuildColliderGrid();
   finalizeStaticArenaBatches();
+}
+
+function addUrbanSurfaceDetails() {
+  const blocks = arenaObjects.filter((object): object is THREE.Mesh => object instanceof THREE.Mesh
+    && object.userData.staticBatchKind === "box"
+    && !Array.isArray(object.material) && !object.material.transparent
+    && object.position.y - object.scale.y / 2 < 0.3
+    && object.scale.y >= 4 && object.scale.x >= 4 && object.scale.z >= 3
+    && object.scale.x < 40 && object.scale.z < 40);
+  for (const block of blocks) {
+    const { x, y, z } = block.position;
+    const w = block.scale.x;
+    const d = block.scale.z;
+    const top = y + block.scale.y / 2;
+    for (const side of [-1, 1]) {
+      const front = z + side * (d / 2 + 0.035);
+      addDetailBox(`${block.name} sill`, [x, 0.26, front], [w, 0.34, 0.12], materials.dark);
+      addDetailBox(`${block.name} coping`, [x, top - 0.12, front], [w + 0.12, 0.16, 0.16], materials.wall);
+      for (let column = -w / 2 + 1.2; column < w / 2; column += 2.8) {
+        addDetailBox(`${block.name} facade joint`, [x + column, y, front], [0.035, block.scale.y - 0.4, 0.025], materials.metal);
+      }
+      for (let floor = 3; floor < top - 0.3; floor += 3.2) {
+        addDetailBox(`${block.name} floor band`, [x, floor, front], [w + 0.1, 0.09, 0.11], materials.metal);
+        addDetailBox(`${block.name} side band`, [x + side * (w / 2 + 0.035), floor, z], [0.11, 0.09, d + 0.1], materials.metal);
+      }
+      if (block.material !== materials.glazing) {
+        for (let floor = 1.85; floor < top - 1; floor += 3.2) {
+          for (let column = -w / 2 + 1.4; column < w / 2 - 0.8; column += 2.8) {
+            addDetailBox(`${block.name} window`, [x + column, floor, front], [1.42, 1.5, 0.055], materials.glazing);
+            addDetailBox(`${block.name} window sill`, [x + column, floor - 0.79, front], [1.62, 0.09, 0.2], materials.wall);
+            addDetailBox(`${block.name} window mullion`, [x + column, floor, front + side * 0.038], [0.04, 1.5, 0.025], materials.metal);
+          }
+          for (let column = -d / 2 + 1.4; column < d / 2 - 0.8; column += 2.8) {
+            const sideX = x + side * (w / 2 + 0.035);
+            addDetailBox(`${block.name} side window`, [sideX, floor, z + column], [0.055, 1.5, 1.42], materials.glazing);
+            addDetailBox(`${block.name} side sill`, [sideX, floor - 0.79, z + column], [0.2, 0.09, 1.62], materials.wall);
+          }
+        }
+      }
+    }
+  }
+  const asphalt = materials.asphalt;
+  for (const z of [-46, 42, 70]) {
+    addBox("asphalt lane", [0, 0.006, z], [174, 0.008, 5.8], asphalt, false);
+    for (let x = -80; x < 84; x += 8) {
+      addDetailBox("lane dash", [x, 0.018, z], [2.8, 0.008, 0.1], materials.wall);
+    }
+  }
+  for (const x of [-65, 65]) {
+    addBox("asphalt avenue", [x, 0.008, 0], [5.8, 0.008, 176], asphalt, false);
+    for (let z = -80; z < 82; z += 8) {
+      addDetailBox("avenue dash", [x, 0.02, z], [0.1, 0.008, 2.8], materials.wall);
+    }
+  }
 }
 
 function addOkakoJArena() {
@@ -3626,6 +3729,7 @@ function addSkyDome() {
   sky.frustumCulled = false;
   sky.renderOrder = -10;
   scene.add(sky);
+  skyDome = sky;
 }
 
 function addSky() {
@@ -3654,7 +3758,7 @@ function addSky() {
 
 function disposeWeaponView() {
   if (!weaponView) return;
-  camera.remove(weaponView);
+  weaponView.removeFromParent();
   weaponView.traverse((child) => disposeObjectResources(child));
   weaponView = null;
   muzzleFlashMesh = null;
@@ -3672,6 +3776,11 @@ function addWeapon() {
   const tracerMaterial = makeMaterial(gun.tracerColor, 0.38);
   const skinMaterial = makeMaterial(0xffc0a0, 0.76);
   const addPart = (mesh: THREE.Mesh, position: [number, number, number], rotation: [number, number, number] = [0, 0, 0]) => {
+    if (mesh.geometry instanceof THREE.BoxGeometry) {
+      const { width, height, depth } = mesh.geometry.parameters;
+      mesh.geometry.dispose();
+      mesh.geometry = new RoundedBoxGeometry(width, height, depth, 1, Math.min(0.018, width * 0.15, height * 0.15, depth * 0.15));
+    }
     mesh.position.set(position[0], position[1], position[2]);
     mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
     weapon.add(mesh);
@@ -3690,7 +3799,7 @@ function addWeapon() {
     [0.42, -0.29, -1.08 - barrelLength],
     [Math.PI / 2, 0, 0]
   );
-  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.052, receiverLength * 0.72), weaponMaterials.steel), [0.42, -0.055, -0.82]);
+  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.028, receiverLength * 0.72), weaponMaterials.steel), [0.42, -0.15, -0.82]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.18), weaponMaterials.steel), [0.27, -0.29, -1.1 - barrelLength], [0, 0, 0.12]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.18), weaponMaterials.steel), [0.57, -0.29, -1.1 - barrelLength], [0, 0, -0.12]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.56), accentMaterial), [0.22, -0.3, -0.72]);
@@ -3699,19 +3808,22 @@ function addWeapon() {
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, stockLength), weaponMaterials.polymer), [0.45, -0.34, -0.14], [-0.16, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.12), weaponMaterials.polymer), [0.45, -0.42, 0.18], [-0.18, 0, 0]);
   const magHeight = gun.kind === "smg" ? 0.54 : gun.kind === "shotgun" ? 0.18 : isScopedGun(gun) ? 0.28 : 0.38;
-  addPart(new THREE.Mesh(new THREE.BoxGeometry(0.19, magHeight, 0.26), weaponMaterials.metal), [0.42, -0.54, -0.68], [0.22, 0, 0]);
+  const magazine = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.19, magHeight, 0.26), weaponMaterials.metal), [0.42, -0.54, -0.68], [0.22, 0, 0]);
+  weapon.userData.magazine = magazine;
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.34, 0.14), weaponMaterials.polymer), [0.42, -0.54, -0.38], [-0.22, 0, 0]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.72), weaponMaterials.metal), [0.25, -0.21, -0.95]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.72), weaponMaterials.metal), [0.59, -0.21, -0.95]);
   if (isScopedGun(gun)) {
-    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.72, 16), weaponMaterials.polymer), [0.42, -0.08, -0.92], [0, 0, Math.PI / 2]);
-    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), weaponMaterials.metal), [0.78, -0.08, -0.92], [0, 0, Math.PI / 2]);
-    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), weaponMaterials.metal), [0.06, -0.08, -0.92], [0, 0, Math.PI / 2]);
+    addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.72, 16), weaponMaterials.polymer), [0.42, 0.04, -0.92], [Math.PI / 2, 0, 0]);
+    for (const z of [-1.3, -0.54]) {
+      addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 16), weaponMaterials.metal), [0.42, 0.04, z], [Math.PI / 2, 0, 0]);
+      addPart(new THREE.Mesh(new THREE.CircleGeometry(0.118, 20), materials.glass), [0.42, 0.04, z + 0.042]);
+    }
   } else {
-    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.06), materials.metal), [0.42, -0.08, -1.28]);
-    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.06), materials.metal), [0.42, -0.08, -0.58]);
-    addPart(new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.012, 8, 16), materials.yellow), [0.42, -0.08, -1.1], [0, Math.PI / 2, 0]);
-    addPart(new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.014, 8, 18), materials.dark), [0.42, -0.075, -0.46], [0, Math.PI / 2, 0]);
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.095, 0.04), weaponMaterials.steel), [0.42, -0.155, -1.28]);
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.06), weaponMaterials.metal), [0.42, -0.215, -0.58]);
+    addPart(new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.012, 8, 16), weaponMaterials.steel), [0.42, -0.08, -1.1]);
+    addPart(new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.014, 8, 18), weaponMaterials.metal), [0.42, -0.075, -0.46]);
   }
   if (gun.kind === "shotgun") {
     addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.96, 12), weaponMaterials.polymer), [0.42, -0.43, -1.18], [Math.PI / 2, 0, 0]);
@@ -3724,7 +3836,7 @@ function addWeapon() {
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.13, 0.26), weaponMaterials.steel), [0.64, -0.21, -0.82]);
   addPart(new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.016, 8, 18, Math.PI * 1.45), weaponMaterials.metal), [0.42, -0.47, -0.42], [Math.PI / 2, 0, 0.2]);
   for (let rail = 0; rail < 5; rail += 1) {
-    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.035, 0.055), weaponMaterials.metal), [0.42, -0.025, -0.56 - rail * 0.16]);
+    addPart(new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.018, 0.045), weaponMaterials.metal), [0.42, -0.128, -0.56 - rail * 0.16]);
   }
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), materials.rubber), [0.25, -0.68, -0.6], [0.08, 0.05, 0.18]);
   addPart(new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.24, 0.34), accentMaterial), [0.17, -0.84, -0.34], [0.12, -0.16, 0.1]);
@@ -3745,17 +3857,21 @@ function addWeapon() {
   flashCone.rotation.x = -Math.PI / 2;
   flashCone.position.z = -0.2;
   const flashLight = new THREE.PointLight(0xffd76b, 0, 4.5, 2);
-  muzzleFlash.add(flashCore, flashCone, flashLight);
+  muzzleFlash.add(flashCore, flashCone);
   muzzleFlash.position.set(0.42, -0.29, -1.19 - barrelLength);
+  flashLight.position.copy(muzzleFlash.position);
+  weapon.add(flashLight);
   muzzleFlash.visible = false;
   weapon.add(muzzleFlash);
   muzzleFlashMesh = muzzleFlash;
   muzzleFlashLight = flashLight;
 
-  weapon.scale.setScalar(0.61);
-  camera.add(weapon);
+  weapon.scale.setScalar(0.5);
+  weaponScene.add(weapon);
   weaponView = weapon;
-  scene.add(camera);
+  muzzleFlash.visible = true;
+  renderer.compile(weaponScene, weaponCamera);
+  muzzleFlash.visible = false;
 }
 
 function createPlayerMesh(player: PlayerState) {
@@ -4028,6 +4144,8 @@ function resize() {
   const { width, height } = viewportSize();
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+  weaponCamera.aspect = camera.aspect;
+  weaponCamera.updateProjectionMatrix();
   activePixelRatio = Math.min(activePixelRatio, maxPixelRatio());
   renderer.setPixelRatio(activePixelRatio);
   renderer.setSize(width, height, false);
@@ -4169,9 +4287,8 @@ canvas.addEventListener("pointerdown", (event) => {
     sendTeamPing();
     return;
   }
-  if (event.button === 2 && isScopedGun()) {
-    scoped = !scoped;
-    document.body.classList.toggle("scoped", scoped);
+  if (event.button === 2) {
+    toggleWeaponAim();
     return;
   }
   if (event.button !== 0) return;
@@ -4410,6 +4527,13 @@ closeScoreboard.addEventListener("click", () => scoreboard.classList.remove("ope
 function setSettingsOpen(open: boolean) {
   settingsPanel.classList.toggle("open", open);
   document.body.classList.toggle("settings-open", open);
+  if (open) {
+    desktopFiring = false;
+    mobileFiring = false;
+    releaseMobileStick();
+    keys.clear();
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
 }
 
 settingsButton.addEventListener("click", () => setSettingsOpen(!settingsPanel.classList.contains("open")));
@@ -4924,12 +5048,7 @@ mobileReload.addEventListener("pointerdown", (event) => {
 mobileScope.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (!isScopedGun()) {
-    showToast("DMR/AWMのみスコープ");
-    return;
-  }
-  scoped = !scoped;
-  document.body.classList.toggle("scoped", scoped);
+  toggleWeaponAim();
 });
 mobilePing.addEventListener("pointerdown", (event) => {
   event.preventDefault();
@@ -6599,17 +6718,18 @@ function move(delta: number) {
     localGrounded = false;
   }
 
-  if (reloadTimer > 0) {
-    reloadTimer -= delta;
-    if (reloadTimer <= 0) {
-      const completedIndex = reloadWeaponIndex;
-      reloadWeaponIndex = -1;
-      if (completedIndex >= 0 && completedIndex < guns.length) {
-        weaponAmmoStates[completedIndex].ammo = guns[completedIndex].magSize;
-        weaponAmmoStates[completedIndex].reserve = unlimitedReserveAmmo;
-        if (completedIndex === currentGunIndex) loadCurrentWeaponAmmo();
-      }
-    }
+}
+
+function updateReload(now: number) {
+  if (reloadWeaponIndex < 0) return;
+  reloadTimer = Math.max(0, (reloadEndsAt - now) / 1000);
+  if (reloadTimer > 0) return;
+  const completedIndex = reloadWeaponIndex;
+  reloadWeaponIndex = -1;
+  if (completedIndex < guns.length) {
+    weaponAmmoStates[completedIndex].ammo = guns[completedIndex].magSize;
+    weaponAmmoStates[completedIndex].reserve = unlimitedReserveAmmo;
+    if (completedIndex === currentGunIndex) loadCurrentWeaponAmmo();
   }
 }
 
@@ -6786,7 +6906,7 @@ function currentAimSpread(gun = currentGun()) {
     moving,
     sneaking,
     airborne,
-    scoped: scoped && isScopedGun(gun),
+    scoped,
     touch: isCoarsePointer()
   });
 }
@@ -6805,7 +6925,6 @@ function shoot() {
   self.lastShot = now;
   self.ammo -= 1;
   saveCurrentWeaponAmmo();
-  applyShotRecoil(gun);
   flashMuzzle();
   ejectShellCasing(gun);
   const spread = currentAimSpread(gun);
@@ -6824,11 +6943,13 @@ function shoot() {
       direction: { x: direction.x, y: direction.y, z: direction.z }
     });
   }
+  // Recoil affects the next shot, not the direction visible when this shot was fired.
+  applyShotRecoil(gun);
   shotBloom = Math.min(gun.maxBloom, shotBloom + gun.bloomPerShot);
 }
 
 function applyShotRecoil(gun: Gun) {
-  const scopeScale = scoped && isScopedGun(gun) ? 0.62 : 1;
+  const scopeScale = scoped ? 0.62 : 1;
   const pitchKick = gun.recoilPitch * scopeScale;
   const yawKick = ((Math.random() - 0.5) * gun.recoilYaw + gun.recoilDrift * (0.75 + Math.random() * 0.5)) * scopeScale;
   self.pitch = THREE.MathUtils.clamp(self.pitch + pitchKick, -1.15, 1.1);
@@ -6891,11 +7012,22 @@ function updateShellCasings(delta: number) {
 }
 
 function reload() {
-  if (reloadTimer > 0 || self.ammo === currentGun().magSize) return;
-  reloadTimer = 1.15;
+  if (!self.joined || players.get(self.id)?.eliminated || reloadTimer > 0 || self.ammo === currentGun().magSize) return;
+  const kind = currentGun().kind;
+  reloadDuration = kind === "awm" ? 1.6 : kind === "shotgun" ? 1.45 : kind === "smg" ? 0.95 : 1.15;
+  reloadTimer = reloadDuration;
+  reloadEndsAt = performance.now() + reloadDuration * 1000;
   reloadWeaponIndex = currentGunIndex;
+  scoped = false;
+  mobileScope.classList.remove("active");
+  document.body.classList.remove("scoped");
   playReloadSound();
-  showToast("リロード");
+}
+
+function toggleWeaponAim() {
+  scoped = !scoped;
+  document.body.classList.toggle("scoped", scoped && isScopedGun());
+  mobileScope.classList.toggle("active", scoped);
 }
 
 function switchGun(index: number) {
@@ -6906,6 +7038,7 @@ function switchGun(index: number) {
   loadCurrentWeaponAmmo();
   shotBloom = 0;
   scoped = false;
+  mobileScope.classList.remove("active");
   document.body.classList.remove("scoped");
   reloadTimer = 0;
   reloadWeaponIndex = -1;
@@ -6921,24 +7054,33 @@ function updateWeaponMotion(delta: number) {
     lastReticleGap = reticleGap;
     document.documentElement.style.setProperty("--reticle-gap", `${reticleGap.toFixed(1)}px`);
   }
-  weaponView.visible = true;
-  weaponSwayClock += delta * (keys.size > 0 ? 8 : 3.2);
-  weaponKick = Math.max(0, weaponKick - delta * 5.8);
+  const scopeTarget = scoped && reloadTimer <= 0 ? 1 : 0;
+  weaponAimBlend += (scopeTarget - weaponAimBlend) * (1 - Math.exp(-delta * 16));
+  weaponView.visible = !(isScopedGun() && weaponAimBlend > 0.92);
+  const motionScale = visualComfort || reducedMotionQuery.matches ? 0 : 1;
+  const walking = planarVelocity.lengthSq() > 0.08;
+  weaponSwayClock += delta * (walking ? 8 : 3.2);
+  weaponKick *= Math.exp(-delta * 15);
   const driving = Boolean(activeVehicleId);
-  const walkSway = driving ? 0.46 : keys.size > 0 ? 1 : 0.32;
-  const baseX = driving ? 0.4 : 0.34;
-  const baseY = driving ? -0.34 : -0.31;
-  const baseZ = driving ? -0.31 : -0.26;
+  const walkSway = (driving ? 0.46 : walking ? 1 : 0.32) * (1 - weaponAimBlend * 0.9) * motionScale;
+  const reloadPhase = reloadTimer > 0 ? 1 - reloadTimer / reloadDuration : 0;
+  const reloadDip = Math.sin(Math.PI * reloadPhase);
+  const baseX = THREE.MathUtils.lerp(driving ? 0.24 : 0.17, -0.21, weaponAimBlend);
+  const baseY = THREE.MathUtils.lerp(driving ? -0.23 : -0.16, 0.0375, weaponAimBlend);
+  const baseZ = THREE.MathUtils.lerp(-0.5, -0.3, weaponAimBlend);
   weaponView.position.set(
     baseX + Math.sin(weaponSwayClock) * 0.011 * walkSway,
-    baseY + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.009 * walkSway - weaponKick * 0.032,
-    baseZ + weaponKick * 0.14
+    baseY + Math.abs(Math.cos(weaponSwayClock * 0.9)) * 0.009 * walkSway - weaponKick * 0.032 - reloadDip * 0.22,
+    baseZ + weaponKick * 0.14 + reloadDip * 0.16
   );
   weaponView.rotation.set(
-    -weaponKick * 0.22 + Math.sin(weaponSwayClock * 0.8) * 0.006 * walkSway,
+    -weaponKick * 0.22 + Math.sin(weaponSwayClock * 0.8) * 0.006 * walkSway - reloadDip * 0.25,
     Math.sin(weaponSwayClock * 0.55) * 0.006 * walkSway,
-    Math.sin(weaponSwayClock) * 0.012 * walkSway
+    Math.sin(weaponSwayClock) * 0.012 * walkSway + reloadDip * 0.42
   );
+  const magazine = weaponView.userData.magazine as THREE.Mesh | undefined;
+  if (magazine) magazine.position.y = -0.54 - Math.sin(Math.PI * Math.min(1, reloadPhase * 1.6)) * 0.22;
+  reticle.classList.toggle("aiming", scoped && !isScopedGun());
   if (muzzleFlashMesh) {
     const firing = performance.now() < muzzleFlashUntil;
     muzzleFlashMesh.visible = firing;
@@ -7100,7 +7242,7 @@ function updateCamera(delta: number) {
     camera.position.copy(self.position);
     const grounded = localGrounded;
     const horizontalSpeed = planarVelocity.length();
-    const motionScale = reducedMotionQuery.matches ? 0 : isCoarsePointer() ? 0.46 : 1;
+    const motionScale = visualComfort || reducedMotionQuery.matches ? 0 : isCoarsePointer() ? 0.46 : 1;
     if (grounded && horizontalSpeed > 0.35 && motionScale > 0) {
       cameraBobPhase += delta * (5.2 + horizontalSpeed * 0.82);
     }
@@ -7122,9 +7264,9 @@ function updateCamera(delta: number) {
   const vehicleSpeed = activeVehicleId ? Math.abs(vehicleSnapshots.get(activeVehicleId)?.speed || 0) : 0;
   const targetFov = activeVehicleId
     ? THREE.MathUtils.clamp(74 + vehicleSpeed * 0.46, 74, 80)
-    : scoped && isScopedGun() ? 31 : 72;
+    : scoped ? (currentGun().kind === "awm" ? 24 : isScopedGun() ? 31 : 54) : 72;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
-    camera.fov += (targetFov - camera.fov) * 0.28;
+    camera.fov += (targetFov - camera.fov) * (1 - Math.exp(-delta * 16));
     camera.updateProjectionMatrix();
   }
 }
@@ -8480,7 +8622,11 @@ function updateHud(feed: FeedItem[]) {
   lastHudRenderedAt = now;
   const me = players.get(self.id);
   if (me) {
-    if (me.kills > lastSelfKills) addFlowReward(34 + Math.min(18, (me.kills - lastSelfKills - 1) * 6), "連続キル");
+    if (me.kills > lastSelfKills) {
+      addFlowReward(34 + Math.min(18, (me.kills - lastSelfKills - 1) * 6), "連続キル");
+      eliminationEl.textContent = `${me.kills - lastSelfKills > 1 ? `${me.kills - lastSelfKills} ` : ""}撃破  /  ${me.kills} KILLS`;
+      eliminationUntil = now + 1800;
+    }
     if (me.score > lastSelfScore && me.kills === lastSelfKills) addFlowReward(18, "チーム前進");
     if (me.health < lastSelfHealth - 12) addFlowReward(8, "立て直し");
     lastSelfKills = me.kills;
@@ -8493,7 +8639,7 @@ function updateHud(feed: FeedItem[]) {
   updateVehicleHud();
   healthEl.textContent = String(Math.round(me?.health ?? self.health));
   healthBar.style.width = `${THREE.MathUtils.clamp(((me?.health ?? self.health) / maxHealth) * 100, 0, 100)}%`;
-  ammoEl.textContent = reloadTimer > 0 ? "--" : String(self.ammo);
+  ammoEl.textContent = String(self.ammo);
   reserveAmmoEl.textContent = "∞";
   const gearTier = Math.max(0, Math.floor(Number(me?.equipmentTier) || 0));
   const gearText = gearTier > 0 ? ` / 装備Lv.${gearTier}` : "";
@@ -8502,8 +8648,8 @@ function updateHud(feed: FeedItem[]) {
   weaponRangeEl.textContent = activeVehicle
     ? `ROADSTER · ${vehicleKmh}km/h`
     : reloadTimer > 0
-    ? `リロード中 / MED ${me?.healPacks ?? 0}${gearText}`
-    : `${currentGun().name} · ${currentGun().range}m · MED ${me?.healPacks ?? 0}${gearText}`;
+    ? `リロード中${gearText}`
+    : `有効射程 ${currentGun().range}m${gearText}`;
   const movingMode = keys.has("ShiftLeft") ? "SNEAK" : movementSprinting ? "RUN" : "WALK";
   const shieldLeft = Math.max(0, ((me?.shieldUntil || 0) - Date.now()) / 1000);
   const spawnSafeLeft = Math.max(0, ((me?.spawnProtectedUntil || 0) - Date.now()) / 1000);
@@ -8525,13 +8671,15 @@ function updateHud(feed: FeedItem[]) {
   movementStatusEl.parentElement?.classList.toggle("shielded", shieldLeft > 0);
   const charge = Math.min(8, me?.donPunchCharge ?? 0);
   const ready = charge >= 4;
+  const skillKey = isCoarsePointer() ? "" : "(Q)";
   donPunchButton.textContent = charge >= 8
-    ? "ドンパチ(Q) 発動"
+    ? `ドンパチ${skillKey} 発動`
     : charge >= 4
-      ? `アシナガバチ(Q) 発動  ドンパチ ${charge}/8`
-      : `アシナガバチ(Q) ${charge}/4`;
+      ? `アシナガバチ${skillKey} 発動  ドンパチ ${charge}/8`
+      : `アシナガバチ${skillKey} ${charge}/4`;
   donPunchButton.classList.toggle("ready", ready);
   donPunchButton.classList.toggle("super", charge >= 8);
+  donPunchButton.style.setProperty("--charge", `${charge / (charge >= 4 ? 8 : 4) * 100}%`);
   if (ready && !lastDonPunchReady) {
     addFlowReward(charge >= 8 ? 24 : 16, charge >= 8 ? "ドンパチ準備完了" : "必殺準備完了");
     showToast(charge >= 8 ? "ドンパチ発動可能" : "アシナガバチ発動可能");
@@ -8556,6 +8704,25 @@ function updateHud(feed: FeedItem[]) {
     lastMinimapRenderedAt = now;
     drawMinimap();
   }
+}
+
+function updateCombatReadout(now: number) {
+  if (now - lastCombatHudAt < 50) return;
+  lastCombatHudAt = now;
+  const me = players.get(self.id);
+  const hp = Math.round(me?.health ?? self.health);
+  document.body.classList.toggle("low-health", self.joined && hp > 0 && hp <= 60);
+  const ammoText = String(self.ammo);
+  if (ammoEl.textContent !== ammoText) ammoEl.textContent = ammoText;
+  weaponNameEl.textContent = currentGun().name;
+  ammoEl.parentElement?.classList.toggle("low-ammo", self.ammo <= Math.ceil(currentGun().magSize * 0.2));
+  const shieldLeft = Math.ceil(((me?.shieldUntil || 0) - Date.now()) / 1000);
+  combatStatusEl.textContent = shieldLeft > 0 ? `バリア ${shieldLeft}s  ·  回復 ${me?.healPacks ?? 0}` : `回復 ${me?.healPacks ?? 0}`;
+  reloadProgressEl.classList.toggle("active", reloadTimer > 0);
+  const progress = reloadTimer > 0 ? Math.round((1 - reloadTimer / reloadDuration) * 100) : 0;
+  reloadProgressEl.style.setProperty("--reload", `${progress}%`);
+  reloadProgressEl.setAttribute("aria-valuenow", String(progress));
+  eliminationEl.classList.toggle("show", self.joined && now < eliminationUntil);
 }
 
 function weaponDisplayName(weapon: unknown) {
@@ -9108,7 +9275,7 @@ function updateAdaptiveQuality(delta: number, now: number) {
       dynamicShadowsEnabled = false;
       renderer.shadowMap.enabled = false;
       if (sunLight) sunLight.castShadow = false;
-      shadowMaterial.opacity = 0.32;
+      shadowMaterial.opacity = 0.18;
       shadowMaterial.needsUpdate = true;
     }
   }
@@ -9256,7 +9423,8 @@ function applyMobileAimAssist(delta: number) {
 }
 
 function animate() {
-  const delta = Math.min(clock.getDelta(), 0.05);
+  const elapsed = clock.getDelta();
+  const delta = Math.min(elapsed, 0.05);
   const now = performance.now();
   if (document.hidden) {
     fpsWindowStartedAt = 0;
@@ -9267,7 +9435,9 @@ function animate() {
     return;
   }
   updateMeasuredFps(now);
-  updateAdaptiveQuality(delta, now);
+  updateAdaptiveQuality(Math.min(elapsed, 0.1), now);
+  if (self.joined) updateReload(now);
+  updateCombatReadout(now);
   updateMatchPhaseHud(now);
   const serverNow = Date.now() + serverClockOffsetMs;
   const clockSeconds = matchPhase === "countdown" && matchPhaseEndsAt > 0
@@ -9293,11 +9463,12 @@ function animate() {
   updateRemotePlayers(delta);
   if (self.joined) updateVehicleInteraction(now);
   if (self.joined) move(delta);
-  const mobileAimLocked = self.joined && matchPhase === "active" ? applyMobileAimAssist(delta) : false;
+  if (self.joined && matchPhase === "active" && !settingsPanel.classList.contains("open")) applyMobileAimAssist(delta);
   if (self.joined && matchPhase === "active" && desktopFiring) shoot();
-  if (self.joined && matchPhase === "active" && mobileFiring && mobileAimLocked) shoot();
+  if (self.joined && matchPhase === "active" && mobileFiring) shoot();
   updateKillcam();
   updateCamera(delta);
+  skyDome?.position.copy(camera.position);
   updateWeaponMotion(delta);
   updateTracers(delta);
   updateShellCasings(delta);
@@ -9309,7 +9480,15 @@ function animate() {
   updateBulletDecals();
   updateFireworks(delta);
   syncState(now);
-  if (!graphicsContextLost) renderer.render(scene, camera);
+  if (!graphicsContextLost) {
+    renderer.info.reset();
+    renderer.clear();
+    renderer.render(scene, camera);
+    if (self.joined && !isSpectating() && weaponView?.visible) {
+      renderer.clearDepth();
+      renderer.render(weaponScene, weaponCamera);
+    }
+  }
   publishPerformanceDiagnostics(now);
   requestAnimationFrame(animate);
 }

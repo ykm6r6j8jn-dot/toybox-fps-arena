@@ -1,0 +1,194 @@
+/* QUALITY 7.0: quiet edges, readable combat state, and an unobstructed center. */
+.weapon-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: #e1eeeb;
+}
+
+.health-card .combat-status {
+  display: block;
+  margin-top: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2ede9;
+}
+
+.reload-progress {
+  width: 100%;
+  height: 3px;
+  margin-top: 7px;
+  visibility: hidden;
+  overflow: hidden;
+  background: #ffffff30;
+}
+
+.reload-progress.active { visibility: visible; }
+.reload-progress i { display: block; height: 100%; width: var(--reload, 0%); background: #f6d878; }
+.ammo-card strong.low-ammo { color: #ffba82; }
+.comfort-setting input { width: 22px; height: 22px; accent-color: #84dda3; cursor: pointer; }
+.comfort-setting { cursor: pointer; }
+.center-reticle.aiming span { opacity: 0.42; }
+.mobile-scope.active { border-color: #d4ffe5; background: #356b55dc; }
+
+.elimination-notice {
+  position: fixed;
+  left: 50%;
+  top: 66%;
+  z-index: 12;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 9px 18px;
+  color: #ecfff4;
+  background: #17221de6;
+  border-bottom: 2px solid #9cdbb3;
+  border-radius: 3px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 140ms, transform 180ms;
+  pointer-events: none;
+}
+
+.elimination-notice.show { opacity: 1; transform: translate(-50%, 0); }
+body:not(.game-active) .elimination-notice { display: none; }
+body.game-active.low-health .health-bar span { background: #f27c6b; }
+body.game-active.low-health .health-card strong { color: #ffd5bf; }
+
+@media (min-width: 861px) and (pointer: fine) {
+  body.game-active .top-left,
+  body.game-active .top-right { top: 16px; gap: 6px; }
+  body.game-active .top-left { left: 20px; }
+  body.game-active .top-right { right: 20px; }
+  body.game-active .room-pill,
+  body.game-active .hud-button,
+  body.game-active .icon-button,
+  body.game-active .audio-unlock-button,
+  body.game-active .latency {
+    min-height: 40px;
+    height: 40px;
+    padding: 0 11px;
+    border-radius: 5px;
+    border: 1px solid #ffffff21;
+    background: #172125db;
+    box-shadow: 0 2px 7px #08141124;
+    backdrop-filter: none;
+    font-size: 12px;
+  }
+  body.game-active .icon-button { width: 40px; }
+  body.game-active .hud-button svg { width: 18px; height: 18px; }
+  body.game-active .room-pill > span { display: none; }
+  body.game-active .room-pill strong { font-size: 16px; }
+  body.game-active .top-center {
+    top: 16px;
+    gap: 0;
+    min-width: 186px;
+    height: 58px;
+    padding: 0;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid #ffffff30;
+    border-radius: 5px;
+    background: #172125e0;
+  }
+  body.game-active .top-center > strong {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    align-self: stretch;
+    font-size: 27px;
+    font-variant-numeric: tabular-nums;
+  }
+  body.game-active #blueScore { background: #287fa46b; }
+  body.game-active #redScore { background: #a54f4d61; }
+  body.game-active .score-orb {
+    width: 100px;
+    height: 58px;
+    padding: 3px 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+    backdrop-filter: none;
+    gap: 0;
+  }
+  body.game-active .score-orb span { font-size: 9px; }
+  body.game-active .score-orb strong { font-size: 18px; line-height: 1.05; }
+  body.game-active .score-orb small { font-size: 12px; font-variant-numeric: tabular-nums; }
+  body.game-active .minimap { top: 72px; left: 20px; width: 166px; height: 166px; border-width: 1px; box-shadow: none; }
+  body.game-active .minimap canvas { width: 166px; height: 166px; }
+  body.game-active .zone-status.active { top: 248px; left: 22px; min-width: 140px; }
+  body.game-active .feed { top: 76px; right: 20px; gap: 4px; }
+  body.game-active .feed div { padding: 6px 9px; font-size: 12px; background: #172125d4; border-radius: 4px; box-shadow: none; backdrop-filter: none; }
+  body.game-active .match-phase-banner { top: 108px; }
+  body.game-active .health-card strong,
+  body.game-active .ammo-card strong { font-size: 40px; font-variant-numeric: tabular-nums; }
+  body.game-active .health-card,
+  body.game-active .ammo-card { text-shadow: 0 1px 3px #071016, 0 2px 12px #07101680; }
+  body.game-active .health-card small,
+  body.game-active .ammo-card small { font-size: 15px; }
+  body.game-active .status-strip { left: 24px; bottom: 24px; }
+  body.game-active .health-card { gap: 10px; }
+  body.game-active .face { width: 44px; height: 44px; background-size: 38px; border: 1px solid #ffffffa0; background-color: #b2d377; }
+  body.game-active .health-bar { width: 188px; height: 9px; border: 1px solid #172125ba; border-radius: 1px; background: #172125c9; }
+  body.game-active .health-bar span { background: #a5e6b6; border-radius: 1px; }
+  body.game-active .health-card .combat-status { font-size: 11px; }
+  body.game-active .health-card::after,
+  body.game-active .ammo-card::after { display: none; }
+  body.game-active .ammo-card { right: 26px; bottom: 24px; min-width: 160px; gap: 3px; }
+  body.game-active .ammo-card > span { font-size: 11px; }
+  body.game-active .movement-card { display: none; }
+  body.game-active .chat-panel { bottom: 140px; left: 24px; width: 248px; opacity: 0.7; }
+  body.game-active .chat-panel:focus-within { opacity: 1; }
+  body.game-active .damage-feed { top: 130px; width: 220px; }
+  body.game-active .damage-card { padding: 7px 9px; border-radius: 4px; background: #172125d9; box-shadow: none; backdrop-filter: none; }
+  body.game-active:not(.celebrating) .donpunch-button {
+    left: 50%;
+    right: auto;
+    bottom: 24px;
+    width: 220px;
+    min-height: 42px;
+    padding: 6px 12px 8px;
+    transform: translateX(-50%);
+    border: 1px solid #ffffff24;
+    border-radius: 5px;
+    color: #e5eee8;
+    background: #172125e6;
+    font-size: 12px;
+    white-space: normal;
+    overflow: hidden;
+    box-shadow: none;
+  }
+  body.game-active .donpunch-button::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: var(--charge, 0%); background: #a8dfa8; }
+  body.game-active .donpunch-button.ready { border-color: #a8dfa8; background: #365347ed; color: #fff; }
+  body.game-active .donpunch-button.super { border-color: #f6d878; background: #665632ed; }
+  body.game-active .vehicle-status.show { bottom: 80px; }
+}
+
+@media (min-width: 861px) and (max-width: 1120px) and (pointer: fine) {
+  body.game-active #inviteButton span,
+  body.game-active #scoreboardToggle .keycap { display: none; }
+  body.game-active .top-center { min-width: 148px; }
+  body.game-active .score-orb { width: 72px; }
+  body.game-active .score-orb strong { font-size: 13px; }
+  body.game-active .top-center > strong { width: 38px; font-size: 23px; }
+}
+
+@media (pointer: coarse), (max-height: 520px) and (orientation: landscape) {
+  body.game-active .ammo-card { min-width: 72px; min-height: 66px; gap: 1px; }
+  body.game-active .weapon-name { font-size: 11px; }
+  body.game-active .health-card .combat-status { font-size: 10px; margin-top: 3px; }
+  body.game-active .health-bar span { background: #a5e6b6; }
+  body.game-active .reload-progress { margin-top: 4px; }
+  body.game-active .elimination-notice { top: 63%; min-width: 128px; padding: 6px 10px; font-size: 11px; }
+  body.game-active .damage-feed { max-height: 68px; overflow: hidden; }
+  body.game-active .damage-card:nth-child(n + 3) { display: none; }
+  body.scoped .center-reticle { width: min(62vh, 320px); height: min(62vh, 320px); }
+  body.game-active .mobile-action { border: 1px solid #ffffff58; background: #172125ad; }
+  body.game-active .mobile-scope.active { background: #356b55dc; border-color: #d4ffe5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elimination-notice { transition: none; }
+}
