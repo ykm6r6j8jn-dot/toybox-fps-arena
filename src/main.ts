@@ -4995,7 +4995,7 @@ mobileFire.addEventListener("pointerdown", (event) => {
   mobileFireLastX = event.clientX;
   mobileFireLastY = event.clientY;
   capturePointer(mobileFire, event.pointerId);
-  if (findMobileAimTarget()) shoot();
+  shoot();
 });
 mobileFire.addEventListener("pointermove", (event) => {
   if (mobileFirePointer !== event.pointerId || !mobileFiring) return;

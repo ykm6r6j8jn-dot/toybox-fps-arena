@@ -29,6 +29,8 @@
 .comfort-setting { cursor: pointer; }
 .center-reticle.aiming span { opacity: 0.42; }
 .mobile-scope.active { border-color: #d4ffe5; background: #356b55dc; }
+.scoreboard:not(.open) { visibility: hidden; pointer-events: none; }
+.scoreboard.open { overflow-y: auto; overscroll-behavior: contain; }
 
 .elimination-notice {
   position: fixed;
