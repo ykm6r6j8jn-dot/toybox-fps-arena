@@ -10,7 +10,9 @@ npm run dev:typing
 
 ポート5190のトップページを開くとゲームが表示されます。既存の `npm run dev` / `npm start` では `/typing.html` で遊べます。本番配信前は `npm run build` を実行してください。
 
-公開先は `https://ykm6r6j8jn-dot.github.io/toybox-fps-arena/` です。GitHub PagesのSourceをGitHub Actionsに設定すると、`main` へのpushで `Publish MOCHI TYPE` がテスト・ビルド・公開を実行します。Pages用のビルドでは配信パスを指定し、`typing.html` をトップページにも配置します。既存のNode/Render用ビルドは引き続きFPSをトップページに配信します。
+静的ホスティング用のゲーム単体ビルドは `npm run build:typing`、公開するフォルダーは `dist-typing` です。トップページでMOCHI TYPEが開き、画像・フォント・ゲームコードを同梱します。相対パスを使うため、ドメイン直下とサブフォルダーの両方で配信できます。ホスティング側がビルド設定を受け付ける場合は、Node.js 22で依存関係をインストールし、このコマンドと出力フォルダーを指定します。
+
+GitHub Pagesで公開する場合のURLは `https://ykm6r6j8jn-dot.github.io/toybox-fps-arena/` です。GitHub PagesのSourceをGitHub Actionsに設定すると、`main` へのpushで `Publish MOCHI TYPE` がテスト・ビルド・公開を実行します。Pages用のビルドでは配信パスを指定し、`typing.html` をトップページにも配置します。既存のNode/Render用ビルドは引き続きFPSをトップページに配信します。
 
 - Spaceまたはスタートボタンで開始。IMEをOFFにしてローマ字入力。
 - 3段階の難易度と82個のお題。`shi/si`, `chi/ti`, `tsu/tu`, `sha/sya`, 子音の重ね打ちや `ltu/xtu` などに対応。
