@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "node server.mjs",
+    "dev:typing": "vite --host 0.0.0.0 --port 5190",
     "build": "vite build",
     "start": "NODE_ENV=production node server.mjs",
     "preview": "NODE_ENV=production node server.mjs",
@@ -17,6 +18,7 @@
     "ios:open": "npx cap open ios",
     "test:smoke": "node scripts/smoke-multiplayer.mjs",
     "test:controls": "node scripts/control-physics-test.mjs",
+    "test:typing": "node scripts/typing-systems-test.mjs",
     "test:systems": "node scripts/gameplay-systems-test.mjs",
     "test:economy": "node scripts/economy-systems-test.mjs",
     "test:progression": "node scripts/progression-systems-test.mjs",
