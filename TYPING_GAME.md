@@ -10,6 +10,8 @@ npm run dev:typing
 
 ポート5190のトップページを開くとゲームが表示されます。既存の `npm run dev` / `npm start` では `/typing.html` で遊べます。本番配信前は `npm run build` を実行してください。
 
+公開先は `https://ykm6r6j8jn-dot.github.io/toybox-fps-arena/` です。GitHub PagesのSourceをGitHub Actionsに設定すると、`main` へのpushで `Publish MOCHI TYPE` がテスト・ビルド・公開を実行します。Pages用のビルドでは配信パスを指定し、`typing.html` をトップページにも配置します。既存のNode/Render用ビルドは引き続きFPSをトップページに配信します。
+
 - Spaceまたはスタートボタンで開始。IMEをOFFにしてローマ字入力。
 - 3段階の難易度と82個のお題。`shi/si`, `chi/ti`, `tsu/tu`, `sha/sya`, 子音の重ね打ちや `ltu/xtu` などに対応。
 - ミスなしでお題を10こ完成すると、8秒間スコアが2倍。ミスしても入力済みの文字は消えません。
