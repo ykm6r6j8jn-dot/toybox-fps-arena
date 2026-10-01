@@ -3,6 +3,13 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 const { chromium } = createRequire(resolve(process.env.MOCHI_QA_ROOT, 'check.cjs'))('playwright');
 const url = process.env.MOCHI_PUBLIC_URL;
+async function openContent(page) {
+  if ((await page.title()).includes('External Content Notice')) {
+    await page.getByRole('button', {name: 'Open the page'}).click();
+    await page.waitForFunction(() => document.title.includes('MOCHI TYPE'));
+    await page.waitForLoadState('networkidle');
+  }
+}
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({viewport: {width: 1536, height: 1024}});
@@ -12,6 +19,7 @@ try {
   await page.clock.install();
   const response = await page.goto(url, {waitUntil: 'networkidle', timeout: 120000});
   assert.equal(response.status(), 200);
+  await openContent(page);
   assert.match(await page.title(), /MOCHI TYPE/);
   await page.evaluate(() => document.fonts.ready);
   assert.ok(await page.locator('#mascot').evaluate(image => image.complete && image.naturalWidth > 0));
@@ -36,6 +44,7 @@ try {
   assert.equal(await page.locator('#resultWords').textContent(), '10こ');
   const score = await page.locator('#resultScore').textContent();
   await page.reload({waitUntil: 'networkidle'});
+  await openContent(page);
   assert.equal(await page.locator('#bestScore').textContent(), score);
   await page.setViewportSize({width: 390, height: 844});
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
