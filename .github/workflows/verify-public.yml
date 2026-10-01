@@ -1,0 +1,26 @@
+name: Verify public MOCHI TYPE
+on:
+  push:
+    branches: [publish/mochi-type]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-game:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install browser verification tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/mochi-public-check" --no-save --package-lock=false playwright
+          "$RUNNER_TEMP/mochi-public-check/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify the public game
+        env:
+          MOCHI_QA_ROOT: ${{ runner.temp }}/mochi-public-check
+          MOCHI_PUBLIC_URL: https://rawcdn.githack.com/${{ github.repository }}/${{ github.sha }}/index.html
+        run: |
+          node scripts/verify-public.mjs
+          printf 'Verified public game: %s\n' "$MOCHI_PUBLIC_URL" >> "$GITHUB_STEP_SUMMARY"

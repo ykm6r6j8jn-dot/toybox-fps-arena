@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#faf7f2" />
+    <meta
+      name="description"
+      content="打つほど、もちもち。コンボとフィーバーで指がはずむ、60秒の日本語タイピングゲーム。"
+    />
+    <title>MOCHI TYPE — 打つほど、もちもち。</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='20' fill='%23ffe3d9'/%3E%3Cellipse cx='32' cy='36' rx='22' ry='18' fill='%23fffaf5'/%3E%3Ccircle cx='24' cy='35' r='3' fill='%23493d38'/%3E%3Ccircle cx='40' cy='35' r='3' fill='%23493d38'/%3E%3Cpath d='M28 42q4 4 8 0' fill='none' stroke='%23493d38' stroke-width='2'/%3E%3C/svg%3E"
+    />
+    <script type="module" crossorigin src="./assets/typing-B2T7dHBG.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/typing-TepqxBqG.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./typing.html" aria-label="MOCHI TYPE ホーム"
+        ><span class="brand-mochi mochi-sprite" aria-hidden="true"></span
+        ><span>MOCHI TYPE</span></a
+      >
+      <nav aria-label="メインナビゲーション">
+        <button class="nav-button active" id="navPlay" type="button">
+          あそぶ
+        </button>
+        <button class="nav-button" id="navCollection" type="button">
+          もち図鑑
+        </button>
+        <button class="nav-button" id="navHelp" type="button">あそび方</button>
+      </nav>
+      <button
+        class="sound-button"
+        id="soundButton"
+        type="button"
+        aria-pressed="true"
+      ></button>
+    </header>
+
+    <main class="page-shell">
+      <div class="intro">
+        <h1>打つほど、もちもち。</h1>
+        <p>指がはずむ、60秒のもち育てタイピング。</p>
+      </div>
+      <div class="game-layout">
+        <div class="play-column">
+          <section class="arena" id="arena" aria-label="タイピングゲーム">
+            <div class="game-hud">
+              <div class="time-stat">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 6v6l4 2" /></svg
+                ><span>のこり</span><strong id="time">60.0</strong
+                ><span class="unit">s</span>
+              </div>
+              <div class="score-stat">
+                <span>SCORE</span><strong id="score">0</strong>
+              </div>
+              <div class="combo-stat">
+                <span>COMBO</span><strong id="combo">0</strong>
+              </div>
+            </div>
+            <div
+              class="time-track"
+              role="progressbar"
+              aria-label="残り時間"
+              aria-valuemin="0"
+              aria-valuemax="60"
+              aria-valuenow="60"
+              id="timeTrack"
+            >
+              <span id="timeFill"></span>
+            </div>
+            <div class="mascot-stage" id="mascotStage">
+              <span class="petal petal-a" aria-hidden="true">✿</span
+              ><span class="petal petal-b" aria-hidden="true">✿</span
+              ><span class="petal petal-c" aria-hidden="true">✿</span>
+              <img
+                class="mascot"
+                id="mascot"
+                src="./typing/mochi-strawberry.png"
+                width="1254"
+                height="1254"
+                alt="いちごをのせた、にこにこのもち"
+              />
+              <span class="reward-pop" id="rewardPop" aria-hidden="true"></span>
+              <span class="fever-badge" id="feverBadge" hidden
+                >フィーバー！ スコア ×2</span
+              >
+            </div>
+            <div class="typing-prompt" id="typingPrompt">
+              <h2 id="phrase">もちもちのしあわせ</h2>
+              <p class="reading" id="reading">もちもちのしあわせ</p>
+              <div class="romaji" id="romaji" aria-label="ローマ字のお題">
+                <span class="typed" id="typed"></span
+                ><span class="remaining" id="remaining"
+                  >mochimochinoshiawase</span
+                >
+              </div>
+              <input
+                id="typingCapture"
+                class="typing-capture"
+                type="text"
+                inputmode="text"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                aria-label="ローマ字を入力"
+              />
+            </div>
+            <div class="game-action">
+              <button
+                class="primary-button start-button"
+                id="startButton"
+                type="button"
+              >
+                <kbd>Space</kbd><span>スペースでスタート</span>
+              </button>
+              <div class="playing-status" id="playingStatus" hidden>
+                <span class="live-dot"></span
+                ><span id="playHint">お題をローマ字で入力しよう</span
+                ><button id="pauseButton" type="button" aria-label="一時停止">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 5v14M16 5v14" />
+                  </svg>
+                </button>
+              </div>
+              <p class="input-hint" id="inputHint">
+                ローマ字入力であそぼう · IMEはOFFに
+              </p>
+            </div>
+            <div class="fever-row">
+              <svg class="flame-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 2c1 5 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7 0 4 2 4 2 4s2-4 1-10Z"
+                /></svg
+              ><strong>もちもちフィーバー</strong>
+              <div
+                class="fever-track"
+                role="progressbar"
+                aria-label="次のフィーバーまでのコンボ"
+                aria-valuemin="0"
+                aria-valuemax="10"
+                aria-valuenow="0"
+                id="feverTrack"
+              >
+                <span id="feverFill"></span>
+              </div>
+              <span class="fever-label" id="feverLabel">10コンボで発動</span>
+            </div>
+            <div class="countdown-overlay" id="countdownOverlay" hidden>
+              <span id="countdownNumber">3</span>
+              <p>指の準備はいい？</p>
+            </div>
+          </section>
+          <div class="difficulty-row">
+            <span>お題のむずかしさ</span>
+            <div
+              class="difficulty-switch"
+              role="group"
+              aria-label="お題のむずかしさ"
+            >
+              <button type="button" data-difficulty="easy" aria-pressed="false">
+                のんびり</button
+              ><button
+                type="button"
+                data-difficulty="normal"
+                aria-pressed="false"
+              >
+                ふつう</button
+              ><button
+                type="button"
+                data-difficulty="hard"
+                class="selected"
+                aria-pressed="true"
+              >
+                むずかしい
+              </button>
+            </div>
+          </div>
+        </div>
+        <aside class="sidebar" aria-label="ミッションと記録">
+          <section class="mission-panel">
+            <h2>
+              <svg class="leaf-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 3C7 1 3 8 5 15c2 6 15 4 15-12Z" />
+                <path d="M3 22 15 9" /></svg
+              >今日のもちミッション
+            </h2>
+            <div class="mission-row">
+              <span class="mission-symbol sakura-symbol" aria-hidden="true"
+                >✿</span
+              ><span>10コンボをつなごう</span
+              ><span class="mission-value"
+                ><strong id="missionCombo">0</strong> / 10</span
+              >
+            </div>
+            <div class="mission-row">
+              <svg class="leaf-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 3C7 1 3 8 5 15c2 6 15 4 15-12Z" />
+                <path d="M3 22 15 9" /></svg
+              ><span>もちを15こ作ろう</span
+              ><span class="mission-value"
+                ><strong id="missionWords">0</strong> / 15</span
+              >
+            </div>
+          </section>
+          <section class="best-panel">
+            <h2>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M8 3h8v5c0 4-2 6-4 6s-4-2-4-6V3Zm0 2H4v3c0 3 2 4 5 4m7-7h4v3c0 3-2 4-5 4M12 14v5m-4 2h8"
+                /></svg
+              >マイベスト
+            </h2>
+            <strong id="bestScore">0</strong><span>SCORE</span>
+            <p id="bestHint">最初の記録をつくろう</p>
+            <span class="best-flower" aria-hidden="true">✿</span>
+          </section>
+          <button
+            class="unlock-panel"
+            id="unlockButton"
+            type="button"
+            aria-label="もち図鑑を開く"
+          >
+            <span
+              class="next-mochi mochi-sprite"
+              id="nextMochi"
+              aria-hidden="true"
+            ></span
+            ><span
+              ><span class="unlock-label" id="unlockLabel">次のもちまで</span
+              ><span class="unlock-counter" id="unlockCounter"
+                >あと <strong>20</strong> こ</span
+              ></span
+            >
+          </button>
+        </aside>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <p>うまく打てなくても大丈夫。もう一回、がいちばん楽しい。</p>
+      <span><kbd>Esc</kbd> 一時停止</span>
+    </footer>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="pauseDialog" class="game-dialog compact-dialog">
+      <div class="dialog-content">
+        <span class="dialog-mochi mochi-sprite" aria-hidden="true"></span>
+        <h2>ちょっと、ひとやすみ。</h2>
+        <p>おもちも指も、のんびりしよう。</p>
+        <button id="resumeButton" class="primary-button" type="button">
+          つづきからあそぶ</button
+        ><button id="restartButton" class="text-button" type="button">
+          最初からやりなおす</button
+        ><button id="quitButton" class="text-button muted" type="button">
+          ホームに戻る
+        </button>
+      </div>
+    </dialog>
+    <dialog id="resultDialog" class="game-dialog result-dialog">
+      <div class="dialog-content">
+        <p class="result-greeting">おつかれさま！</p>
+        <h2 id="resultRank">もちもち職人</h2>
+        <div class="result-score">
+          <strong id="resultScore">0</strong><span>SCORE</span>
+        </div>
+        <p id="resultBest" class="result-best"></p>
+        <div class="result-stats">
+          <div><strong id="resultWords">0</strong><span>作ったもち</span></div>
+          <div><strong id="resultCombo">0</strong><span>最高コンボ</span></div>
+          <div>
+            <strong id="resultAccuracy">100%</strong><span>正確率</span>
+          </div>
+          <div><strong id="resultWpm">0</strong><span>WPM</span></div>
+        </div>
+        <div id="resultReward" class="result-reward"></div>
+        <button id="retryButton" class="primary-button" type="button">
+          もう一回、もちもち！</button
+        ><button id="resultHomeButton" class="text-button" type="button">
+          ホームに戻る
+        </button>
+      </div>
+    </dialog>
+    <dialog id="collectionDialog" class="game-dialog collection-dialog">
+      <div class="dialog-content">
+        <button
+          class="close-button"
+          type="button"
+          data-close="collectionDialog"
+          aria-label="もち図鑑を閉じる"
+        >
+          ×
+        </button>
+        <h2>もち図鑑</h2>
+        <p>打って、つくって、もちをあつめよう。</p>
+        <div class="collection-summary" id="collectionSummary"></div>
+        <div class="collection-grid" id="collectionGrid"></div>
+        <p class="collection-note">
+          記録と図鑑は、このブラウザーに保存されます。
+        </p>
+      </div>
+    </dialog>
+    <dialog id="helpDialog" class="game-dialog help-dialog">
+      <div class="dialog-content">
+        <button
+          class="close-button"
+          type="button"
+          data-close="helpDialog"
+          aria-label="あそび方を閉じる"
+        >
+          ×
+        </button>
+        <h2>もちもちの、あそび方。</h2>
+        <ol class="help-steps">
+          <li>
+            <span>1</span>
+            <div>
+              <h3>60秒で、もちをつくろう</h3>
+              <p>
+                スペースかスタートボタンで開始。表示されたひらがなを、ローマ字で入力します。
+              </p>
+            </div>
+          </li>
+          <li>
+            <span>2</span>
+            <div>
+              <h3>10コンボで、フィーバー！</h3>
+              <p>
+                ミスせずお題を10こ完成すると、8秒間スコアが2倍に。ミスしても、入力はそのまま続けられます。
+              </p>
+            </div>
+          </li>
+          <li>
+            <span>3</span>
+            <div>
+              <h3>新しいもちと、出会おう</h3>
+              <p>
+                作ったもちが20・50・100・200こになると、図鑑に仲間がふえます。毎日のミッションもチャレンジ。
+              </p>
+            </div>
+          </li>
+        </ol>
+        <div class="spelling-help">
+          <h3>打ち方は、あなたのくせで。</h3>
+          <p>
+            <kbd>shi</kbd> / <kbd>si</kbd>、<kbd>chi</kbd> / <kbd>ti</kbd>、<kbd
+              >tsu</kbd
+            >
+            / <kbd>tu</kbd>、<kbd>sha</kbd> /
+            <kbd>sya</kbd>、小さい「っ」は子音を重ねるか
+            <kbd>ltu</kbd>。どちらもOK。
+          </p>
+        </div>
+        <p class="help-note">
+          IMEはOFF（半角英数）に。スマートフォンは英字キーボードで、ローマ字部分をタップ。Escで一時停止でき、別のタブに移動しても時間は止まります。
+        </p>
+        <button class="primary-button" type="button" data-close="helpDialog">
+          わかった、あそぼう！
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>
