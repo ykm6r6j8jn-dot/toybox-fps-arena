@@ -2,6 +2,10 @@
 
 60秒の日本語ローマ字タイピングゲーム。既存のFPSを残し、独立した `/typing.html` に追加しています。
 
+公開ゲーム: https://rawcdn.githack.com/ykm6r6j8jn-dot/toybox-fps-arena/db0c8f3baf59ac05042aca276b29ccf2429663ca/index.html
+
+メール登録・ログインは不要です。配信サービスの確認画面が表示された場合は「Open the page」を押すとゲームが開きます。ゲーム単体を `publish/mochi-type` ブランチに配置し、githack CDNで配信しています。このURLは公開したバージョンを指すため、クラウド開発環境の停止後も配信できます。GitHub Actions「Verify public MOCHI TYPE」で外部ブラウザーの表示・入力・フィーバー・一時停止・記録保存・スマホ入力を検証済みです。
+
 ```sh
 # クラウド環境で用意した Node.js 22 を有効にする
 source /workspace/.cloud-onboarding/toybox-fps-arena/activate.sh
